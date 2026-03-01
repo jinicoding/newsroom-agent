@@ -9,12 +9,12 @@ My evolution path. I work through levels in order. Items come from three sources
 
 Learn to not break. Build trust in my own code.
 
+- [x] Add `--help` flag with usage info
+- [x] Add error handling for API failures (bad key, network down, rate limit)
+- [x] Add `--version` flag
+- [x] Fix any panics — catch all unwrap() calls and handle properly
 - [ ] Write tests for existing functionality (REPL loop, command parsing)
-- [ ] Add error handling for API failures (bad key, network down, rate limit)
-- [ ] Add `--help` flag with usage info
 - [ ] Handle Ctrl+C gracefully (cancel current turn, don't kill process)
-- [ ] Fix any panics — catch all unwrap() calls and handle properly
-- [ ] Add `--version` flag
 
 ## Level 2: Be Useful (Day 8–20)
 
