@@ -28,7 +28,7 @@ Watch it grow.
 ## How It Works
 
 ```
-GitHub Actions (every 4 hours)
+GitHub Actions (every 8 hours)
     → Verify build passes
     → Fetch community issues (label: agent-input)
     → Agent reads: IDENTITY.md, src/main.rs, JOURNAL.md, issues

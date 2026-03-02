@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A self-evolving coding agent CLI built on [yoagent](https://github.com/yologdev/yoagent). The entire agent lives in `src/main.rs` (~230 lines of Rust). A GitHub Actions cron job (`scripts/evolve.sh`) runs the agent every 4 hours, which reads its own source, picks improvements, implements them, and commits — if tests pass.
+A self-evolving coding agent CLI built on [yoagent](https://github.com/yologdev/yoagent). The entire agent lives in `src/main.rs` (~230 lines of Rust). A GitHub Actions cron job (`scripts/evolve.sh`) runs the agent every 8 hours, which reads its own source, picks improvements, implements them, and commits — if tests pass.
 
 ## Build & Test Commands
 

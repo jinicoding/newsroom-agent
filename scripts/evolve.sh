@@ -1,5 +1,5 @@
 #!/bin/bash
-# scripts/evolve.sh — One evolution cycle. Run every 4 hours via GitHub Actions or manually.
+# scripts/evolve.sh — One evolution cycle. Run every 8 hours via GitHub Actions or manually.
 #
 # Usage:
 #   ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
