@@ -294,6 +294,8 @@ async fn main() {
                 println!("  /save [path]       Save session to file (default: yoyo-session.json)");
                 println!("  /load [path]       Load session from file");
                 println!("  /diff              Show git diff summary of uncommitted changes");
+    println!("  /undo              Revert all uncommitted changes");
+                println!("  /undo              Revert all uncommitted changes (git checkout)");
                 println!();
                 println!("  Multi-line input:");
                 println!("  End a line with \\ to continue on the next line");
@@ -416,6 +418,33 @@ async fn main() {
                             println!("{DIM}  (no uncommitted changes){RESET}\n");
                         } else {
                             println!("{DIM}{diff}{RESET}");
+                        }
+                    }
+                    _ => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
+                }
+                continue;
+            }
+            "/undo" => {
+                // Revert all uncommitted changes (equivalent to git checkout -- .)
+                match std::process::Command::new("git")
+                    .args(["diff", "--stat"])
+                    .output()
+                {
+                    Ok(output) if output.status.success() => {
+                        let diff = String::from_utf8_lossy(&output.stdout);
+                        if diff.trim().is_empty() {
+                            println!("{DIM}  (nothing to undo — no uncommitted changes){RESET}\n");
+                        } else {
+                            println!("{DIM}{diff}{RESET}");
+                            match std::process::Command::new("git")
+                                .args(["checkout", "--", "."])
+                                .output()
+                            {
+                                Ok(o) if o.status.success() => {
+                                    println!("{GREEN}  ✓ reverted all uncommitted changes{RESET}\n");
+                                }
+                                _ => eprintln!("{RED}  error: failed to revert changes{RESET}\n"),
+                            }
                         }
                     }
                     _ => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
@@ -825,13 +854,13 @@ mod tests {
     fn test_command_help_recognized() {
         let commands = [
             "/help", "/quit", "/exit", "/clear", "/compact", "/status", "/tokens", "/save",
-            "/load", "/diff",
+            "/load", "/diff", "/undo",
         ];
         for cmd in &commands {
             assert!(
                 [
                     "/help", "/quit", "/exit", "/clear", "/compact", "/status", "/tokens", "/save",
-                    "/load", "/diff"
+                    "/load", "/diff", "/undo"
                 ]
                 .contains(cmd),
                 "Command not recognized: {cmd}"
