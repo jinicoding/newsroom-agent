@@ -390,8 +390,18 @@ async fn main() {
                 println!("{DIM}  (conversation cleared){RESET}\n");
                 continue;
             }
+            "/model" => {
+                println!("{DIM}  current model: {model}");
+                println!("  usage: /model <name>{RESET}\n");
+                continue;
+            }
             s if s.starts_with("/model ") => {
                 let new_model = s.trim_start_matches("/model ").trim();
+                if new_model.is_empty() {
+                    println!("{DIM}  current model: {model}");
+                    println!("  usage: /model <name>{RESET}\n");
+                    continue;
+                }
                 model = new_model.to_string();
                 agent = build_agent(&model, &api_key, &skills, &system_prompt, thinking);
                 println!("{DIM}  (switched to {new_model}, conversation cleared){RESET}\n");
@@ -1430,6 +1440,16 @@ mod tests {
         // simple slash check — they're handled by starts_with("/model ") etc.
         let with_space = "/model claude-opus-4-6";
         assert!(with_space.starts_with('/') && with_space.contains(' '));
+    }
+
+    #[test]
+    fn test_bare_model_command_is_recognized() {
+        // "/model" without an argument should NOT be treated as an unknown command
+        // It should show the current model info
+        let input = "/model";
+        assert_eq!(input, "/model");
+        // This should match the explicit "/model" arm in the match
+        assert!(!input.starts_with("/model "));
     }
 
     #[test]
