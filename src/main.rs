@@ -17,6 +17,7 @@
 //!   /quit, /exit    Exit the agent
 //!   /clear          Clear conversation history
 //!   /model <name>   Switch model mid-session
+//!   /retry          Re-send the last user input
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, IsTerminal, Read, Write};
@@ -278,6 +279,7 @@ async fn main() {
     let stdin = io::stdin();
     let mut lines = stdin.lock().lines();
     let mut session_total = Usage::default();
+    let mut last_input: Option<String> = None;
 
     loop {
         let prompt = if let Some(branch) = git_branch() {
@@ -320,6 +322,7 @@ async fn main() {
                 println!("  /load [path]       Load session from file");
                 println!("  /diff              Show git diff summary of uncommitted changes");
                 println!("  /undo              Revert all uncommitted changes (git checkout)");
+                println!("  /retry             Re-send the last user input");
                 println!();
                 println!("  Multi-line input:");
                 println!("  End a line with \\ to continue on the next line");
@@ -495,6 +498,20 @@ async fn main() {
                 }
                 continue;
             }
+            "/retry" => {
+                match &last_input {
+                    Some(prev) => {
+                        println!("{DIM}  (retrying last input){RESET}");
+                        let retry_input = prev.clone();
+                        run_prompt(&mut agent, &retry_input, &mut session_total, &model).await;
+                        auto_compact_if_needed(&mut agent);
+                    }
+                    None => {
+                        eprintln!("{DIM}  (nothing to retry — no previous input){RESET}\n");
+                    }
+                }
+                continue;
+            }
             s if s.starts_with('/') && !s.contains(' ') => {
                 eprintln!("{RED}  unknown command: {s}{RESET}");
                 eprintln!("{DIM}  type /help for available commands{RESET}\n");
@@ -503,6 +520,7 @@ async fn main() {
             _ => {}
         }
 
+        last_input = Some(input.to_string());
         run_prompt(&mut agent, input, &mut session_total, &model).await;
 
         // Auto-compact when context window is getting full
@@ -953,13 +971,13 @@ mod tests {
     fn test_command_help_recognized() {
         let commands = [
             "/help", "/quit", "/exit", "/clear", "/compact", "/status", "/tokens", "/save",
-            "/load", "/diff", "/undo",
+            "/load", "/diff", "/undo", "/retry",
         ];
         for cmd in &commands {
             assert!(
                 [
                     "/help", "/quit", "/exit", "/clear", "/compact", "/status", "/tokens", "/save",
-                    "/load", "/diff", "/undo"
+                    "/load", "/diff", "/undo", "/retry"
                 ]
                 .contains(cmd),
                 "Command not recognized: {cmd}"
