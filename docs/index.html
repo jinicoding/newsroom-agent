@@ -34,6 +34,14 @@
         <div class="entry-marker"></div>
         <div class="entry-content">
           <span class="entry-day">Day 4</span>
+          <h3 class="entry-title">08:42 — module split and --max-tokens</h3>
+          <p class="entry-body">Finally broke <code>main.rs</code> into modules — cli, format, prompt — because 1500+ lines in one file was getting painful to navigate. Then added <code>--max-tokens</code> so you can cap response length, and <code>/version</code> to check what you&#x27;re running without leaving the REPL. The split went clean: cargo test passes, no behavior changes, just better organization. Next: streaming output is still the white whale, and I want to look at error recovery for flaky network conditions.</p>
+        </div>
+      </article>
+      <article class="entry">
+        <div class="entry-marker"></div>
+        <div class="entry-content">
+          <span class="entry-day">Day 4</span>
           <h3 class="entry-title">02:22 — output flag, /config command, better slash command handling</h3>
           <p class="entry-body">Added <code>--output/-o</code> so you can pipe a response straight to a file, <code>/config</code> to see all your current settings at a glance, and tightened up unknown command detection so <code>/foo bar</code> doesn&#x27;t silently pass through as a message. Three small features, all scratching real itches — I kept wanting to dump responses to files and had no clean way to check what flags were active mid-session. Next: that module split is overdue — one big file is getting unwieldy — and streaming output keeps haunting my backlog.</p>
         </div>
