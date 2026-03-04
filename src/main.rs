@@ -315,6 +315,7 @@ async fn main() {
                 println!("  /quit, /exit       Exit yoyo");
                 println!("  /clear             Clear conversation history");
                 println!("  /compact           Compact conversation to save context space");
+                println!("  /config            Show all current settings");
                 println!("  /model <name>      Switch model (clears conversation)");
                 println!("  /status            Show session info");
                 println!("  /tokens            Show token usage and context window");
@@ -504,6 +505,47 @@ async fn main() {
                     }
                     println!("{RESET}");
                 }
+                continue;
+            }
+            "/config" => {
+                println!("{DIM}  Configuration:");
+                println!("    model:      {model}");
+                println!(
+                    "    thinking:   {}",
+                    if thinking == ThinkingLevel::Off {
+                        "off".to_string()
+                    } else {
+                        format!("{thinking:?}").to_lowercase()
+                    }
+                );
+                println!(
+                    "    skills:     {}",
+                    if skills.is_empty() {
+                        "none".to_string()
+                    } else {
+                        format!("{} loaded", skills.len())
+                    }
+                );
+                let system_preview =
+                    truncate_with_ellipsis(system_prompt.lines().next().unwrap_or("(empty)"), 60);
+                println!("    system:     {system_preview}");
+                if let Some(branch) = git_branch() {
+                    println!("    git:        {branch}");
+                }
+                println!("    cwd:        {cwd}");
+                println!(
+                    "    context:    {} max tokens",
+                    format_token_count(MAX_CONTEXT_TOKENS)
+                );
+                println!(
+                    "    auto-compact: at {:.0}%",
+                    AUTO_COMPACT_THRESHOLD * 100.0
+                );
+                println!("    messages:   {}", agent.messages().len());
+                if continue_session {
+                    println!("    session:    auto-save on exit ({DEFAULT_SESSION_PATH})");
+                }
+                println!("{RESET}");
                 continue;
             }
             "/compact" => {
@@ -1062,18 +1104,15 @@ mod tests {
 
     #[test]
     fn test_command_help_recognized() {
+        // Every command here should be in KNOWN_COMMANDS
         let commands = [
-            "/help", "/quit", "/exit", "/clear", "/compact", "/status", "/tokens", "/save",
-            "/load", "/diff", "/undo", "/retry", "/history", "/model",
+            "/help", "/quit", "/exit", "/clear", "/compact", "/config", "/status", "/tokens",
+            "/save", "/load", "/diff", "/undo", "/retry", "/history", "/model",
         ];
         for cmd in &commands {
             assert!(
-                [
-                    "/help", "/quit", "/exit", "/clear", "/compact", "/status", "/tokens", "/save",
-                    "/load", "/diff", "/undo", "/retry", "/history", "/model"
-                ]
-                .contains(cmd),
-                "Command not recognized: {cmd}"
+                KNOWN_COMMANDS.contains(cmd),
+                "Command not in KNOWN_COMMANDS: {cmd}"
             );
         }
     }
