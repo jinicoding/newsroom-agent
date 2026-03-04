@@ -60,6 +60,11 @@ fn build_agent(
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
 
+    // Check --no-color before any output (must happen before parse_args prints anything)
+    if args.iter().any(|a| a == "--no-color") {
+        disable_color();
+    }
+
     let Some(config) = parse_args(&args) else {
         return; // --help or --version was handled
     };

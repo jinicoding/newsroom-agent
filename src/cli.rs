@@ -42,6 +42,7 @@ pub fn print_help() {
     println!("  --system-file <f> Read system prompt from file");
     println!("  --prompt, -p <t>  Run a single prompt and exit (no REPL)");
     println!("  --output, -o <f>  Write final response text to a file");
+    println!("  --no-color        Disable colored output (also respects NO_COLOR env)");
     println!("  --continue, -c    Resume last saved session");
     println!("  --help, -h        Show this help message");
     println!("  --version, -V     Show version");

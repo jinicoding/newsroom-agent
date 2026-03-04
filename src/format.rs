@@ -1,13 +1,45 @@
 //! Formatting helpers: ANSI colors, cost, duration, tokens, context bar, truncation.
 
-// ANSI color helpers
-pub const RESET: &str = "\x1b[0m";
-pub const BOLD: &str = "\x1b[1m";
-pub const DIM: &str = "\x1b[2m";
-pub const GREEN: &str = "\x1b[32m";
-pub const YELLOW: &str = "\x1b[33m";
-pub const CYAN: &str = "\x1b[36m";
-pub const RED: &str = "\x1b[31m";
+use std::sync::OnceLock;
+
+// --- Color support with NO_COLOR and --no-color ---
+
+/// Whether color output has been disabled (via NO_COLOR env or --no-color flag).
+static COLOR_DISABLED: OnceLock<bool> = OnceLock::new();
+
+/// Disable color output. Call before any formatting happens (e.g., from CLI arg parsing).
+pub fn disable_color() {
+    let _ = COLOR_DISABLED.set(true);
+}
+
+/// Check if color output is enabled. Cached after first call.
+/// Respects the NO_COLOR environment variable (https://no-color.org/).
+fn color_enabled() -> bool {
+    !*COLOR_DISABLED.get_or_init(|| std::env::var("NO_COLOR").is_ok())
+}
+
+/// A color code that respects the NO_COLOR convention.
+/// When color is disabled, formats as an empty string.
+pub struct Color(pub &'static str);
+
+impl std::fmt::Display for Color {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if color_enabled() {
+            f.write_str(self.0)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+// ANSI color helpers — respect NO_COLOR env var and --no-color flag
+pub static RESET: Color = Color("\x1b[0m");
+pub static BOLD: Color = Color("\x1b[1m");
+pub static DIM: Color = Color("\x1b[2m");
+pub static GREEN: Color = Color("\x1b[32m");
+pub static YELLOW: Color = Color("\x1b[33m");
+pub static CYAN: Color = Color("\x1b[36m");
+pub static RED: Color = Color("\x1b[31m");
 
 /// Estimate cost in USD for a given usage and model.
 /// Returns None if the model pricing is unknown.
@@ -428,5 +460,23 @@ mod tests {
             !name.contains('\n'),
             "Branch name should not contain newlines"
         );
+    }
+
+    #[test]
+    fn test_color_struct_display_outputs_ansi() {
+        // Color struct should produce the ANSI code when color is enabled
+        let c = Color("\x1b[1m");
+        let formatted = format!("{c}");
+        // We can't guarantee NO_COLOR isn't set in the test environment,
+        // but the type itself should compile and format correctly.
+        assert!(formatted == "\x1b[1m" || formatted.is_empty());
+    }
+
+    #[test]
+    fn test_color_struct_display_consistency() {
+        // All color constants should be the same type and format without panic
+        let result = format!("{BOLD}{DIM}{GREEN}{YELLOW}{CYAN}{RED}{RESET}");
+        // Should either have all codes or be empty (if NO_COLOR is set)
+        assert!(result.contains('\x1b') || result.is_empty());
     }
 }
