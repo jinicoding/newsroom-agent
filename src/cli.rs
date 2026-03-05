@@ -57,6 +57,7 @@ pub fn print_help() {
     println!("  /compact          Compact conversation to save context space");
     println!("  /config           Show all current settings");
     println!("  /context          Show loaded project context files");
+    println!("  /init             Create a starter YOYO.md project context file");
     println!("  /model <name>     Switch model mid-session");
     println!("  /status           Show session info");
     println!("  /tokens           Show token usage and context window");

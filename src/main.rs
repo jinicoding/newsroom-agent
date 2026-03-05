@@ -189,6 +189,7 @@ async fn main() {
                 println!("  /compact           Compact conversation to save context space");
                 println!("  /config            Show all current settings");
                 println!("  /context           Show loaded project context files");
+                println!("  /init              Create a starter YOYO.md project context file");
                 println!("  /model <name>      Switch model (clears conversation)");
                 println!("  /status            Show session info");
                 println!("  /tokens            Show token usage and context window");
@@ -519,13 +520,50 @@ async fn main() {
                 if files.is_empty() {
                     println!("{DIM}  No project context files found.");
                     println!("  Searched for: {}", PROJECT_CONTEXT_FILES.join(", "));
-                    println!("  Create YOYO.md, CLAUDE.md, or .yoyo/instructions.md to add project context.{RESET}\n");
+                    println!("  Create YOYO.md, CLAUDE.md, or .yoyo/instructions.md to add project context.");
+                    println!("  Or run /init to create a starter YOYO.md.{RESET}\n");
                 } else {
                     println!("{DIM}  Project context files:");
                     for (name, lines) in &files {
                         println!("    {name} ({lines} lines)");
                     }
                     println!("{RESET}");
+                }
+                continue;
+            }
+            "/init" => {
+                let path = "YOYO.md";
+                if std::path::Path::new(path).exists() {
+                    println!("{DIM}  {path} already exists — not overwriting.{RESET}\n");
+                } else {
+                    let template = concat!(
+                        "# Project Context\n",
+                        "\n",
+                        "<!-- This file is read by yoyo at startup to understand your project. -->\n",
+                        "<!-- Customize it with project-specific instructions, conventions, and context. -->\n",
+                        "\n",
+                        "## About This Project\n",
+                        "\n",
+                        "<!-- Describe what this project does and its tech stack. -->\n",
+                        "\n",
+                        "## Coding Conventions\n",
+                        "\n",
+                        "<!-- List any coding standards, naming conventions, or patterns to follow. -->\n",
+                        "\n",
+                        "## Build & Test\n",
+                        "\n",
+                        "<!-- How to build, test, and run the project. -->\n",
+                        "\n",
+                        "## Important Files\n",
+                        "\n",
+                        "<!-- List key files and directories the agent should know about. -->\n",
+                    );
+                    match std::fs::write(path, template) {
+                        Ok(_) => println!(
+                            "{GREEN}  ✓ Created {path} — edit it to add project context.{RESET}\n"
+                        ),
+                        Err(e) => eprintln!("{RED}  error creating {path}: {e}{RESET}\n"),
+                    }
                 }
                 continue;
             }
@@ -668,7 +706,7 @@ fn collect_multiline(first_line: &str, lines: &mut io::Lines<io::StdinLock<'_>>)
 /// Known REPL command prefixes. Used to detect unknown slash commands.
 const KNOWN_COMMANDS: &[&str] = &[
     "/help", "/quit", "/exit", "/clear", "/compact", "/status", "/tokens", "/save", "/load",
-    "/diff", "/undo", "/retry", "/history", "/model", "/config", "/context", "/version",
+    "/diff", "/undo", "/retry", "/history", "/model", "/config", "/context", "/init", "/version",
 ];
 
 /// Check if a slash-prefixed input is an unknown command.
@@ -711,9 +749,9 @@ mod tests {
     #[test]
     fn test_command_help_recognized() {
         let commands = [
-            "/help", "/quit", "/exit", "/clear", "/compact", "/config", "/context", "/status",
-            "/tokens", "/save", "/load", "/diff", "/undo", "/retry", "/history", "/model",
-            "/version",
+            "/help", "/quit", "/exit", "/clear", "/compact", "/config", "/context", "/init",
+            "/status", "/tokens", "/save", "/load", "/diff", "/undo", "/retry", "/history",
+            "/model", "/version",
         ];
         for cmd in &commands {
             assert!(
