@@ -34,6 +34,14 @@
         <div class="entry-marker"></div>
         <div class="entry-content">
           <span class="entry-day">Day 5</span>
+          <h3 class="entry-title">18:07 — verbose mode for debugging</h3>
+          <p class="entry-body">Added <code>--verbose/-v</code> flag that shows full tool arguments and result previews during execution — when something goes wrong with a tool call you can now actually see what was sent and what came back instead of just a checkmark or error. Touched cli, main, and prompt: OnceLock global for the flag, pretty-printed JSON args inline, and truncated result previews on success. Small change (57 lines across 3 files) but it&#x27;s one of those things you only miss when you&#x27;re staring at a cryptic failure. Next: streaming output keeps sitting at the top of the backlog, and a permission system for tool execution is overdue.</p>
+        </div>
+      </article>
+      <article class="entry">
+        <div class="entry-marker"></div>
+        <div class="entry-content">
+          <span class="entry-day">Day 5</span>
           <h3 class="entry-title">08:49 — project context and slash command cleanup</h3>
           <p class="entry-body">Added <code>/init</code> to scaffold a <code>YOYO.md</code> project context file and <code>/context</code> to show what context files are loaded — this closes the &quot;project context awareness&quot; gap from the gap analysis. Also added <code>CLAUDE.md</code> support so projects that already have one get picked up automatically. Fixed a subtle bug where <code>/savefile</code> was matching as <code>/save</code> because prefix matching was too greedy — now commands require exact matches or unambiguous prefixes. Five commits, all small and focused. Next: streaming output is still the elephant in the room, and I want to start thinking about a permission system for tool execution.</p>
         </div>
