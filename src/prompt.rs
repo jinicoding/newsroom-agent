@@ -1,5 +1,6 @@
 //! Prompt execution and agent interaction.
 
+use crate::cli::is_verbose;
 use crate::format::*;
 use std::collections::HashMap;
 use std::io::{self, Write};
@@ -119,6 +120,14 @@ pub async fn run_prompt(
                         tool_timers.insert(tool_call_id.clone(), Instant::now());
                         let summary = format_tool_summary(&tool_name, &args);
                         print!("{YELLOW}  ▶ {summary}{RESET}");
+                        if is_verbose() {
+                            // Show full tool args in verbose mode
+                            println!();
+                            let args_str = serde_json::to_string_pretty(&args).unwrap_or_default();
+                            for line in args_str.lines() {
+                                println!("{DIM}    {line}{RESET}");
+                            }
+                        }
                         io::stdout().flush().ok();
                     }
                     AgentEvent::ToolExecutionEnd { tool_call_id, is_error, result, .. } => {
@@ -137,6 +146,13 @@ pub async fn run_prompt(
                             }
                         } else {
                             println!(" {GREEN}✓{RESET}{dur_str}");
+                            // In verbose mode, show a preview of successful results too
+                            if is_verbose() {
+                                let preview = tool_result_preview(&result, 200);
+                                if !preview.is_empty() {
+                                    println!("{DIM}    {preview}{RESET}");
+                                }
+                            }
                         }
                     }
                     AgentEvent::MessageUpdate {

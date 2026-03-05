@@ -27,6 +27,20 @@ pub struct Config {
     pub continue_session: bool,
     pub output_path: Option<String>,
     pub prompt_arg: Option<String>,
+    pub verbose: bool,
+}
+
+/// Whether verbose output is enabled. Set once at startup.
+static VERBOSE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Enable verbose output.
+pub fn enable_verbose() {
+    let _ = VERBOSE.set(true);
+}
+
+/// Check if verbose output is enabled.
+pub fn is_verbose() -> bool {
+    *VERBOSE.get_or_init(|| false)
 }
 
 /// Project context file names, checked in order. All found files are concatenated.
@@ -47,6 +61,7 @@ pub fn print_help() {
     println!("  --prompt, -p <t>  Run a single prompt and exit (no REPL)");
     println!("  --output, -o <f>  Write final response text to a file");
     println!("  --no-color        Disable colored output (also respects NO_COLOR env)");
+    println!("  --verbose, -v     Show debug info (API errors, request details)");
     println!("  --continue, -c    Resume last saved session");
     println!("  --help, -h        Show this help message");
     println!("  --version, -V     Show version");
@@ -373,6 +388,8 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         .and_then(|i| args.get(i + 1))
         .cloned();
 
+    let verbose = args.iter().any(|a| a == "--verbose" || a == "-v");
+
     Some(Config {
         model,
         api_key,
@@ -383,6 +400,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         continue_session,
         output_path,
         prompt_arg,
+        verbose,
     })
 }
 
@@ -670,5 +688,17 @@ thinking = "high"
         for name in PROJECT_CONTEXT_FILES {
             assert!(!name.is_empty());
         }
+    }
+
+    #[test]
+    fn test_verbose_flag_parsing() {
+        let args_short = ["yoyo".to_string(), "-v".to_string()];
+        assert!(args_short.iter().any(|a| a == "--verbose" || a == "-v"));
+
+        let args_long = ["yoyo".to_string(), "--verbose".to_string()];
+        assert!(args_long.iter().any(|a| a == "--verbose" || a == "-v"));
+
+        let args_none = ["yoyo".to_string()];
+        assert!(!args_none.iter().any(|a| a == "--verbose" || a == "-v"));
     }
 }

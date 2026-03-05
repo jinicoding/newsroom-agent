@@ -70,6 +70,10 @@ async fn main() {
         return; // --help or --version was handled
     };
 
+    if config.verbose {
+        enable_verbose();
+    }
+
     let mut model = config.model;
     let api_key = config.api_key;
     let skills = config.skills;
@@ -142,6 +146,9 @@ async fn main() {
     }
     if !skills.is_empty() {
         println!("{DIM}  skills: {} loaded{RESET}", skills.len());
+    }
+    if is_verbose() {
+        println!("{DIM}  verbose: on{RESET}");
     }
     if let Some(branch) = git_branch() {
         println!("{DIM}  git:   {branch}{RESET}");
@@ -475,6 +482,10 @@ async fn main() {
                 let system_preview =
                     truncate_with_ellipsis(system_prompt.lines().next().unwrap_or("(empty)"), 60);
                 println!("    system:     {system_preview}");
+                println!(
+                    "    verbose:    {}",
+                    if is_verbose() { "on" } else { "off" }
+                );
                 if let Some(branch) = git_branch() {
                     println!("    git:        {branch}");
                 }
