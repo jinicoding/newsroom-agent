@@ -526,14 +526,17 @@ fi
 # If the file exists but contains no issue_number: lines (agent wrote prose instead
 # of structured response), replace it with a partial entry for the top issue.
 if [ -f ISSUE_RESPONSE.md ] && ! grep -q "^issue_number:" ISSUE_RESPONSE.md 2>/dev/null; then
-    echo "  ISSUE_RESPONSE.md has no valid entries — writing acknowledgment for top issue."
-    TOP_ISSUE=$(grep -oP '### Issue #\K[0-9]+' "$ISSUES_FILE" 2>/dev/null | head -1)
+    TOP_ISSUE=$(grep -oE '### Issue #[0-9]+' "$ISSUES_FILE" 2>/dev/null | head -1 | grep -oE '[0-9]+')
     if [ -n "$TOP_ISSUE" ]; then
+        echo "  ISSUE_RESPONSE.md has no valid entries — writing acknowledgment for issue #${TOP_ISSUE}."
         cat > ISSUE_RESPONSE.md <<ACKEOF
 issue_number: ${TOP_ISSUE}
 status: partial
 comment: Acknowledged this issue but focused on other priorities this session. Will revisit.
 ACKEOF
+    else
+        echo "  ISSUE_RESPONSE.md has no valid entries and no issues found to acknowledge — removing invalid file."
+        rm -f ISSUE_RESPONSE.md
     fi
 fi
 

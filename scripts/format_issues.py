@@ -70,7 +70,7 @@ def select_issues(issues, sponsor_logins=None, pick=3, day=0):
     # Rotate through non-sponsor issues using day as offset
     remaining_slots = pick - len(sponsors)
     if rest:
-        offset = (day * remaining_slots) % len(rest)
+        offset = day % len(rest)
         rotated = rest[offset:] + rest[:offset]
         selected = rotated[:remaining_slots]
     else:
