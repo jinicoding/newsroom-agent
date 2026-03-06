@@ -78,7 +78,7 @@ async fn main() {
     let api_key = config.api_key;
     let skills = config.skills;
     let system_prompt = config.system_prompt;
-    let thinking = config.thinking;
+    let mut thinking = config.thinking;
     let max_tokens = config.max_tokens;
     let continue_session = config.continue_session;
     let output_path = config.output_path;
@@ -199,6 +199,9 @@ async fn main() {
                 println!("  /cost              Show estimated session cost");
                 println!("  /init              Create a starter YOYO.md project context file");
                 println!("  /model <name>      Switch model (clears conversation)");
+                println!(
+                    "  /think [level]     Show or change thinking level (off/low/medium/high)"
+                );
                 println!("  /status            Show session info");
                 println!("  /tokens            Show token usage and context window");
                 println!("  /save [path]       Save session to file (default: yoyo-session.json)");
@@ -330,6 +333,44 @@ async fn main() {
                     max_tokens,
                 );
                 println!("{DIM}  (switched to {new_model}, conversation cleared){RESET}\n");
+                continue;
+            }
+            "/think" => {
+                let level_str = thinking_level_name(thinking);
+                println!("{DIM}  thinking: {level_str}");
+                println!("  usage: /think <off|minimal|low|medium|high>{RESET}\n");
+                continue;
+            }
+            s if s.starts_with("/think ") => {
+                let level_str = s.trim_start_matches("/think ").trim();
+                if level_str.is_empty() {
+                    let current = thinking_level_name(thinking);
+                    println!("{DIM}  thinking: {current}");
+                    println!("  usage: /think <off|minimal|low|medium|high>{RESET}\n");
+                    continue;
+                }
+                let new_thinking = parse_thinking_level(level_str);
+                if new_thinking == thinking {
+                    let current = thinking_level_name(thinking);
+                    println!("{DIM}  thinking already set to {current}{RESET}\n");
+                    continue;
+                }
+                thinking = new_thinking;
+                // Rebuild agent with new thinking level, preserving conversation
+                let saved = agent.save_messages().ok();
+                agent = build_agent(
+                    &model,
+                    &api_key,
+                    &skills,
+                    &system_prompt,
+                    thinking,
+                    max_tokens,
+                );
+                if let Some(json) = saved {
+                    let _ = agent.restore_messages(&json);
+                }
+                let level_name = thinking_level_name(thinking);
+                println!("{DIM}  (thinking set to {level_name}, conversation preserved){RESET}\n");
                 continue;
             }
             s if s == "/save" || s.starts_with("/save ") => {
@@ -479,14 +520,7 @@ async fn main() {
             "/config" => {
                 println!("{DIM}  Configuration:");
                 println!("    model:      {model}");
-                println!(
-                    "    thinking:   {}",
-                    if thinking == ThinkingLevel::Off {
-                        "off".to_string()
-                    } else {
-                        format!("{thinking:?}").to_lowercase()
-                    }
-                );
+                println!("    thinking:   {}", thinking_level_name(thinking));
                 println!(
                     "    max_tokens: {}",
                     max_tokens
@@ -736,11 +770,22 @@ fn collect_multiline(first_line: &str, lines: &mut io::Lines<io::StdinLock<'_>>)
     buf
 }
 
+/// Format a ThinkingLevel as a display string.
+fn thinking_level_name(level: ThinkingLevel) -> &'static str {
+    match level {
+        ThinkingLevel::Off => "off",
+        ThinkingLevel::Minimal => "minimal",
+        ThinkingLevel::Low => "low",
+        ThinkingLevel::Medium => "medium",
+        ThinkingLevel::High => "high",
+    }
+}
+
 /// Known REPL command prefixes. Used to detect unknown slash commands.
 const KNOWN_COMMANDS: &[&str] = &[
     "/help", "/quit", "/exit", "/clear", "/compact", "/cost", "/status", "/tokens", "/save",
-    "/load", "/diff", "/undo", "/retry", "/history", "/model", "/config", "/context", "/init",
-    "/version",
+    "/load", "/diff", "/undo", "/retry", "/history", "/model", "/think", "/config", "/context",
+    "/init", "/version",
 ];
 
 /// Check if a slash-prefixed input is an unknown command.
@@ -785,7 +830,7 @@ mod tests {
         let commands = [
             "/help", "/quit", "/exit", "/clear", "/compact", "/config", "/context", "/init",
             "/status", "/tokens", "/save", "/load", "/diff", "/undo", "/retry", "/history",
-            "/model", "/version",
+            "/model", "/think", "/version",
         ];
         for cmd in &commands {
             assert!(
@@ -847,6 +892,15 @@ mod tests {
         assert!(!is_unknown_command("/config"));
         assert!(!is_unknown_command("/context"));
         assert!(!is_unknown_command("/version"));
+    }
+
+    #[test]
+    fn test_thinking_level_name() {
+        assert_eq!(thinking_level_name(ThinkingLevel::Off), "off");
+        assert_eq!(thinking_level_name(ThinkingLevel::Minimal), "minimal");
+        assert_eq!(thinking_level_name(ThinkingLevel::Low), "low");
+        assert_eq!(thinking_level_name(ThinkingLevel::Medium), "medium");
+        assert_eq!(thinking_level_name(ThinkingLevel::High), "high");
     }
 
     #[test]

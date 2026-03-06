@@ -18,16 +18,21 @@ All commands start with `/`. Type `/help` inside yoyo to see the full list.
 | `/retry` | Re-send your last input — useful when a response gets cut off or you want to try again |
 | `/history` | Show a summary of all messages in the conversation |
 
-## Model
+## Model & Thinking
 
 | Command | Description |
 |---------|-------------|
 | `/model <name>` | Switch to a different model (clears conversation) |
+| `/think [level]` | Show or change thinking level: `off`, `minimal`, `low`, `medium`, `high` |
 
-Example:
+Examples:
 ```
 /model claude-sonnet-4-20250514
+/think high
+/think off
 ```
+
+The `/think` command preserves your conversation history — only the thinking level changes.
 
 ## Session
 
@@ -44,6 +49,9 @@ See [Session Persistence](../features/sessions.md) for details.
 |---------|-------------|
 | `/status` | Show current model, git branch, working directory, and session token totals |
 | `/tokens` | Show detailed token usage: context window fill level, session totals, and estimated cost |
+| `/cost` | Show estimated session cost |
+| `/config` | Show all current settings |
+| `/version` | Show yoyo version |
 
 The `/tokens` command shows a visual progress bar of your context window:
 
@@ -58,10 +66,17 @@ The `/tokens` command shows a visual progress bar of your context window:
 
 | Command | Description |
 |---------|-------------|
-| `/diff` | Show `git diff --stat` of uncommitted changes |
-| `/undo` | Revert all uncommitted changes (`git checkout -- .`) |
+| `/diff` | Show `git status --short` and `git diff --stat` of uncommitted changes |
+| `/undo` | Revert all uncommitted changes (`git checkout -- .` and `git clean -fd`) |
 
 The `/undo` command shows you what will be reverted before doing it.
+
+## Project Context
+
+| Command | Description |
+|---------|-------------|
+| `/context` | Show which project context files are loaded (YOYO.md, CLAUDE.md, etc.) |
+| `/init` | Create a starter YOYO.md project context file |
 
 ## Unknown commands
 

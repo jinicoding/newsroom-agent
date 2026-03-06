@@ -74,6 +74,7 @@ pub fn print_help() {
     println!("  /context          Show loaded project context files");
     println!("  /init             Create a starter YOYO.md project context file");
     println!("  /model <name>     Switch model mid-session");
+    println!("  /think [level]    Show or change thinking level (off/low/medium/high)");
     println!("  /status           Show session info");
     println!("  /tokens           Show token usage and context window");
     println!("  /save [path]      Save session to file");
