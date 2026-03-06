@@ -125,6 +125,19 @@ pub fn parse_thinking_level(s: &str) -> ThinkingLevel {
     }
 }
 
+/// Clamp temperature to the valid 0.0–1.0 range, warning if out of bounds.
+pub fn clamp_temperature(t: f32) -> f32 {
+    if t < 0.0 {
+        eprintln!("{YELLOW}warning:{RESET} Temperature {t} is below 0.0, clamping to 0.0");
+        0.0
+    } else if t > 1.0 {
+        eprintln!("{YELLOW}warning:{RESET} Temperature {t} is above 1.0, clamping to 1.0");
+        1.0
+    } else {
+        t
+    }
+}
+
 /// Load project context from YOYO.md or .yoyo/instructions.md.
 /// Returns the combined content of all found files, or None if none exist.
 pub fn load_project_context() -> Option<String> {
@@ -397,7 +410,8 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
             file_config
                 .get("temperature")
                 .and_then(|s| s.parse::<f32>().ok())
-        });
+        })
+        .map(clamp_temperature);
 
     let output_path = args
         .iter()
@@ -765,5 +779,24 @@ thinking = "high"
 
         let args_none = ["yoyo".to_string()];
         assert!(!args_none.iter().any(|a| a == "--verbose" || a == "-v"));
+    }
+
+    #[test]
+    fn test_clamp_temperature_in_range() {
+        assert_eq!(clamp_temperature(0.0), 0.0);
+        assert_eq!(clamp_temperature(0.5), 0.5);
+        assert_eq!(clamp_temperature(1.0), 1.0);
+    }
+
+    #[test]
+    fn test_clamp_temperature_below_zero() {
+        assert_eq!(clamp_temperature(-0.5), 0.0);
+        assert_eq!(clamp_temperature(-100.0), 0.0);
+    }
+
+    #[test]
+    fn test_clamp_temperature_above_one() {
+        assert_eq!(clamp_temperature(1.5), 1.0);
+        assert_eq!(clamp_temperature(99.0), 1.0);
     }
 }
