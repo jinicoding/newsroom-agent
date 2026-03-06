@@ -20,6 +20,10 @@ TIMEOUT="${TIMEOUT:-3600}"
 BIRTH_DATE="2026-02-28"
 DATE=$(date +%Y-%m-%d)
 SESSION_TIME=$(date +%H:%M)
+# Security nonce for content boundary markers (prevents spoofing)
+BOUNDARY_NONCE=$(python3 -c "import os; print(os.urandom(16).hex())" 2>/dev/null || echo "fallback-$(date +%s)")
+BOUNDARY_BEGIN="[BOUNDARY-${BOUNDARY_NONCE}-BEGIN]"
+BOUNDARY_END="[BOUNDARY-${BOUNDARY_NONCE}-END]"
 # Compute calendar day (works on both macOS and Linux)
 if date -j &>/dev/null; then
     DAY=$(( ($(date +%s) - $(date -j -f "%Y-%m-%d" "$BIRTH_DATE" +%s)) / 86400 ))
@@ -156,7 +160,7 @@ if command -v gh &>/dev/null; then
     SELF_ISSUES=$(gh issue list --repo "$REPO" --state open \
         --label "agent-self" --limit 5 \
         --json number,title,body \
-        --jq '.[] | "[USER-SUBMITTED CONTENT BEGIN]\n### Issue #\(.number): \(.title)\n\(.body)\n[USER-SUBMITTED CONTENT END]\n"' 2>/dev/null || true)
+        --jq '.[] | "'"$BOUNDARY_BEGIN"'\n### Issue #\(.number): \(.title)\n\(.body)\n'"$BOUNDARY_END"'\n"' 2>/dev/null || true)
     if [ -n "$SELF_ISSUES" ]; then
         echo "  $(echo "$SELF_ISSUES" | grep -c '^### Issue') self-issues loaded."
     else
@@ -171,7 +175,7 @@ if command -v gh &>/dev/null; then
     HELP_ISSUES=$(gh issue list --repo "$REPO" --state open \
         --label "agent-help-wanted" --limit 5 \
         --json number,title,body,comments \
-        --jq '.[] | "[USER-SUBMITTED CONTENT BEGIN]\n### Issue #\(.number): \(.title)\n\(.body)\n\(if (.comments | length) > 0 then "⚠️ Human replied:\n" + (.comments | map(.body) | join("\n---\n")) else "No replies yet." end)\n[USER-SUBMITTED CONTENT END]\n"' 2>/dev/null || true)
+        --jq '.[] | "'"$BOUNDARY_BEGIN"'\n### Issue #\(.number): \(.title)\n\(.body)\n\(if (.comments | length) > 0 then "⚠️ Human replied:\n" + (.comments | map(.body) | join("\n---\n")) else "No replies yet." end)\n'"$BOUNDARY_END"'\n"' 2>/dev/null || true)
     if [ -n "$HELP_ISSUES" ]; then
         echo "  $(echo "$HELP_ISSUES" | grep -c '^### Issue') help-wanted issues loaded."
     else
@@ -503,30 +507,8 @@ comment: Worked on this issue. ${COMMIT_REF}"
     fi
 fi
 
-# Rebuild website
-echo "→ Rebuilding website..."
-python3 scripts/build_site.py
-echo "  Site rebuilt."
-
-# Rebuild mdbook docs (skip gracefully if mdbook not installed)
-if command -v mdbook &>/dev/null; then
-    echo "→ Rebuilding docs..."
-    mdbook build guide/ || echo "  mdbook build failed (non-fatal)"
-    echo "  Docs rebuilt."
-else
-    echo "  mdbook not installed — skipping docs rebuild."
-fi
-
-# Commit any remaining uncommitted changes (journal, day counter, site, etc.)
-git add -A
-if ! git diff --cached --quiet; then
-    git commit -m "Day $DAY ($SESSION_TIME): session wrap-up"
-    echo "  Committed session wrap-up."
-else
-    echo "  No uncommitted changes remaining."
-fi
-
 # ── Step 7: Handle issue responses ──
+# Process BEFORE wrap-up commit so ISSUE_RESPONSE.md is deleted and not committed
 process_issue_block() {
     local block="$1"
     local issue_num status comment
@@ -579,6 +561,29 @@ if [ -f ISSUE_RESPONSE.md ]; then
     fi
 
     rm -f ISSUE_RESPONSE.md
+fi
+
+# Rebuild website
+echo "→ Rebuilding website..."
+python3 scripts/build_site.py
+echo "  Site rebuilt."
+
+# Rebuild mdbook docs (skip gracefully if mdbook not installed)
+if command -v mdbook &>/dev/null; then
+    echo "→ Rebuilding docs..."
+    mdbook build guide/ || echo "  mdbook build failed (non-fatal)"
+    echo "  Docs rebuilt."
+else
+    echo "  mdbook not installed — skipping docs rebuild."
+fi
+
+# Commit any remaining uncommitted changes (journal, day counter, site, etc.)
+git add -A
+if ! git diff --cached --quiet; then
+    git commit -m "Day $DAY ($SESSION_TIME): session wrap-up"
+    echo "  Committed session wrap-up."
+else
+    echo "  No uncommitted changes remaining."
 fi
 
 # ── Step 7b: Tag known-good state ──
