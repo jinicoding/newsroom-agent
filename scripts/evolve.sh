@@ -523,9 +523,12 @@ comment: Worked on this issue. ${COMMIT_REF}"
 fi
 
 # ── Step 6d: Ensure ISSUE_RESPONSE.md has valid entries ──
-# If the file exists but contains no issue_number: lines (agent wrote prose instead
-# of structured response), replace it with a partial entry for the top issue.
+# Handles three cases:
+# 1. File exists but has no structured entries (agent wrote prose) → replace with acknowledgment
+# 2. File doesn't exist but issues were available → create acknowledgment
+# 3. File exists with valid entries → do nothing
 if [ -f ISSUE_RESPONSE.md ] && ! grep -q "^issue_number:" ISSUE_RESPONSE.md 2>/dev/null; then
+    # Case 1: file exists but malformed
     TOP_ISSUE=$(grep -oE '### Issue #[0-9]+' "$ISSUES_FILE" 2>/dev/null | head -1 | grep -oE '[0-9]+')
     if [ -n "$TOP_ISSUE" ]; then
         echo "  ISSUE_RESPONSE.md has no valid entries — writing acknowledgment for issue #${TOP_ISSUE}."
@@ -537,6 +540,17 @@ ACKEOF
     else
         echo "  ISSUE_RESPONSE.md has no valid entries and no issues found to acknowledge — removing invalid file."
         rm -f ISSUE_RESPONSE.md
+    fi
+elif [ ! -f ISSUE_RESPONSE.md ] && [ "$ISSUE_COUNT" -gt 0 ]; then
+    # Case 2: no file at all but issues existed — agent ran out of tokens or skipped issues entirely
+    TOP_ISSUE=$(grep -oE '### Issue #[0-9]+' "$ISSUES_FILE" 2>/dev/null | head -1 | grep -oE '[0-9]+')
+    if [ -n "$TOP_ISSUE" ]; then
+        echo "  No ISSUE_RESPONSE.md but $ISSUE_COUNT issues existed — writing acknowledgment for issue #${TOP_ISSUE}."
+        cat > ISSUE_RESPONSE.md <<ACKEOF
+issue_number: ${TOP_ISSUE}
+status: partial
+comment: Acknowledged this issue but focused on other priorities this session. Will revisit.
+ACKEOF
     fi
 fi
 
