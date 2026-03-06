@@ -22,7 +22,7 @@ All commands start with `/`. Type `/help` inside yoyo to see the full list.
 
 | Command | Description |
 |---------|-------------|
-| `/model <name>` | Switch to a different model (clears conversation) |
+| `/model <name>` | Switch to a different model (preserves conversation) |
 | `/think [level]` | Show or change thinking level: `off`, `minimal`, `low`, `medium`, `high` |
 
 Examples:
@@ -32,7 +32,7 @@ Examples:
 /think off
 ```
 
-The `/think` command preserves your conversation history — only the thinking level changes.
+The `/think` command preserves your conversation history — only the thinking level changes. The `/model` command also preserves conversation.
 
 ## Session
 

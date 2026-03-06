@@ -198,7 +198,7 @@ async fn main() {
                 println!("  /context           Show loaded project context files");
                 println!("  /cost              Show estimated session cost");
                 println!("  /init              Create a starter YOYO.md project context file");
-                println!("  /model <name>      Switch model (clears conversation)");
+                println!("  /model <name>      Switch model (preserves conversation)");
                 println!(
                     "  /think [level]     Show or change thinking level (off/low/medium/high)"
                 );
@@ -325,6 +325,8 @@ async fn main() {
                     continue;
                 }
                 model = new_model.to_string();
+                // Rebuild agent with new model, preserving conversation
+                let saved = agent.save_messages().ok();
                 agent = build_agent(
                     &model,
                     &api_key,
@@ -333,7 +335,10 @@ async fn main() {
                     thinking,
                     max_tokens,
                 );
-                println!("{DIM}  (switched to {new_model}, conversation cleared){RESET}\n");
+                if let Some(json) = saved {
+                    let _ = agent.restore_messages(&json);
+                }
+                println!("{DIM}  (switched to {new_model}, conversation preserved){RESET}\n");
                 continue;
             }
             "/think" => {
