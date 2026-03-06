@@ -42,6 +42,7 @@ fn build_agent(
     system_prompt: &str,
     thinking: ThinkingLevel,
     max_tokens: Option<u32>,
+    temperature: Option<f32>,
 ) -> Agent {
     let mut agent = Agent::new(AnthropicProvider)
         .with_system_prompt(system_prompt)
@@ -52,6 +53,9 @@ fn build_agent(
         .with_tools(default_tools());
     if let Some(max) = max_tokens {
         agent = agent.with_max_tokens(max);
+    }
+    if let Some(temp) = temperature {
+        agent.temperature = Some(temp);
     }
     agent
 }
@@ -80,6 +84,7 @@ async fn main() {
     let system_prompt = config.system_prompt;
     let mut thinking = config.thinking;
     let max_tokens = config.max_tokens;
+    let temperature = config.temperature;
     let continue_session = config.continue_session;
     let output_path = config.output_path;
 
@@ -90,6 +95,7 @@ async fn main() {
         &system_prompt,
         thinking,
         max_tokens,
+        temperature,
     );
 
     // --continue / -c: resume last saved session
@@ -143,6 +149,9 @@ async fn main() {
     println!("{DIM}  model: {model}{RESET}");
     if thinking != ThinkingLevel::Off {
         println!("{DIM}  thinking: {thinking:?}{RESET}");
+    }
+    if let Some(temp) = temperature {
+        println!("{DIM}  temperature: {temp:.1}{RESET}");
     }
     if !skills.is_empty() {
         println!("{DIM}  skills: {} loaded{RESET}", skills.len());
@@ -308,6 +317,7 @@ async fn main() {
                     &system_prompt,
                     thinking,
                     max_tokens,
+                    temperature,
                 );
                 println!("{DIM}  (conversation cleared){RESET}\n");
                 continue;
@@ -334,6 +344,7 @@ async fn main() {
                     &system_prompt,
                     thinking,
                     max_tokens,
+                    temperature,
                 );
                 if let Some(json) = saved {
                     let _ = agent.restore_messages(&json);
@@ -371,6 +382,7 @@ async fn main() {
                     &system_prompt,
                     thinking,
                     max_tokens,
+                    temperature,
                 );
                 if let Some(json) = saved {
                     let _ = agent.restore_messages(&json);
@@ -551,6 +563,12 @@ async fn main() {
                     max_tokens
                         .map(|m| m.to_string())
                         .unwrap_or_else(|| "default (8192)".to_string())
+                );
+                println!(
+                    "    temperature: {}",
+                    temperature
+                        .map(|t| format!("{t:.1}"))
+                        .unwrap_or_else(|| "default".to_string())
                 );
                 println!(
                     "    skills:     {}",

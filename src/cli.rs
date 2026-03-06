@@ -24,6 +24,7 @@ pub struct Config {
     pub system_prompt: String,
     pub thinking: ThinkingLevel,
     pub max_tokens: Option<u32>,
+    pub temperature: Option<f32>,
     pub continue_session: bool,
     pub output_path: Option<String>,
     pub prompt_arg: Option<String>,
@@ -55,6 +56,7 @@ pub fn print_help() {
     println!("  --model <name>    Model to use (default: claude-opus-4-6)");
     println!("  --thinking <lvl>  Enable extended thinking (off, minimal, low, medium, high)");
     println!("  --max-tokens <n>  Maximum output tokens per response (default: 8192)");
+    println!("  --temperature <f> Sampling temperature (0.0-1.0, default: model default)");
     println!("  --skills <dir>    Directory containing skill files");
     println!("  --system <text>   Custom system prompt (overrides default)");
     println!("  --system-file <f> Read system prompt from file");
@@ -254,6 +256,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         "--model",
         "--thinking",
         "--max-tokens",
+        "--temperature",
         "--skills",
         "--system",
         "--system-file",
@@ -378,6 +381,24 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
                 .and_then(|s| s.parse::<u32>().ok())
         });
 
+    let temperature = args
+        .iter()
+        .position(|a| a == "--temperature")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| {
+            s.parse::<f32>().ok().or_else(|| {
+                eprintln!(
+                    "{YELLOW}warning:{RESET} Invalid --temperature value '{s}', using default"
+                );
+                None
+            })
+        })
+        .or_else(|| {
+            file_config
+                .get("temperature")
+                .and_then(|s| s.parse::<f32>().ok())
+        });
+
     let output_path = args
         .iter()
         .position(|a| a == "--output" || a == "-o")
@@ -399,6 +420,7 @@ pub fn parse_args(args: &[String]) -> Option<Config> {
         system_prompt,
         thinking,
         max_tokens,
+        temperature,
         continue_session,
         output_path,
         prompt_arg,
@@ -690,6 +712,47 @@ thinking = "high"
         for name in PROJECT_CONTEXT_FILES {
             assert!(!name.is_empty());
         }
+    }
+
+    #[test]
+    fn test_temperature_flag_parsing() {
+        let args = [
+            "yoyo".to_string(),
+            "--temperature".to_string(),
+            "0.7".to_string(),
+        ];
+        let temp = args
+            .iter()
+            .position(|a| a == "--temperature")
+            .and_then(|i| args.get(i + 1))
+            .and_then(|s| s.parse::<f32>().ok());
+        assert_eq!(temp, Some(0.7));
+    }
+
+    #[test]
+    fn test_temperature_flag_missing() {
+        let args = ["yoyo".to_string()];
+        let temp = args
+            .iter()
+            .position(|a| a == "--temperature")
+            .and_then(|i| args.get(i + 1))
+            .and_then(|s| s.parse::<f32>().ok());
+        assert_eq!(temp, None);
+    }
+
+    #[test]
+    fn test_temperature_flag_invalid() {
+        let args = [
+            "yoyo".to_string(),
+            "--temperature".to_string(),
+            "not_a_number".to_string(),
+        ];
+        let temp = args
+            .iter()
+            .position(|a| a == "--temperature")
+            .and_then(|i| args.get(i + 1))
+            .and_then(|s| s.parse::<f32>().ok());
+        assert_eq!(temp, None);
     }
 
     #[test]
