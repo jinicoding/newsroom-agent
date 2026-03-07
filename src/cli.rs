@@ -84,6 +84,7 @@ pub fn print_help() {
     println!("  /cost             Show estimated session cost");
     println!("  /diff             Show git diff summary of uncommitted changes");
     println!("  /health           Run health checks (build, test, clippy, fmt)");
+    println!("  /pr [number]      List open PRs, or view details of a specific PR");
     println!("  /history          Show summary of conversation messages");
     println!("  /search <query>   Search conversation history for matching messages");
     println!("  /init             Create a starter YOYO.md project context file");

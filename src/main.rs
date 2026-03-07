@@ -21,6 +21,7 @@
 //!   /model <name>   Switch model mid-session
 //!   /search <query> Search conversation history
 //!   /tree [depth]   Show project directory tree
+//!   /pr [number]    List open PRs or view a specific PR
 //!   /retry          Re-send the last user input
 
 mod cli;
@@ -320,6 +321,7 @@ async fn main() {
                 println!("  /load [path]       Load session from file");
                 println!("  /diff              Show git diff summary of uncommitted changes");
                 println!("  /undo              Revert all uncommitted changes (git checkout)");
+                println!("  /pr [number]       List open PRs, or view details of a specific PR");
                 println!("  /health            Run health checks (build, test, clippy, fmt)");
                 println!("  /retry             Re-send the last user input");
                 println!("  /run <cmd>         Run a shell command directly (no AI, no tokens)");
@@ -898,6 +900,65 @@ async fn main() {
                 println!("  Runs a shell command directly (no AI, no tokens).{RESET}\n");
                 continue;
             }
+            s if s == "/pr" || s.starts_with("/pr ") => {
+                let arg = s.strip_prefix("/pr").unwrap_or("").trim();
+                if arg.is_empty() {
+                    // List open pull requests
+                    match std::process::Command::new("gh")
+                        .args(["pr", "list", "--limit", "10"])
+                        .output()
+                    {
+                        Ok(output) if output.status.success() => {
+                            let text = String::from_utf8_lossy(&output.stdout);
+                            if text.trim().is_empty() {
+                                println!("{DIM}  (no open pull requests){RESET}\n");
+                            } else {
+                                println!("{DIM}  Open pull requests:");
+                                for line in text.lines() {
+                                    println!("    {line}");
+                                }
+                                println!("{RESET}");
+                            }
+                        }
+                        Ok(output) => {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            eprintln!("{RED}  error: {}{RESET}\n", stderr.trim());
+                        }
+                        Err(_) => {
+                            eprintln!("{RED}  error: `gh` CLI not found. Install it from https://cli.github.com{RESET}\n");
+                        }
+                    }
+                } else {
+                    // View a specific PR
+                    match arg.parse::<u32>() {
+                        Ok(_) => {
+                            match std::process::Command::new("gh")
+                                .args(["pr", "view", arg])
+                                .output()
+                            {
+                                Ok(output) if output.status.success() => {
+                                    let text = String::from_utf8_lossy(&output.stdout);
+                                    println!("{DIM}{text}{RESET}");
+                                }
+                                Ok(output) => {
+                                    let stderr = String::from_utf8_lossy(&output.stderr);
+                                    eprintln!("{RED}  error: {}{RESET}\n", stderr.trim());
+                                }
+                                Err(_) => {
+                                    eprintln!("{RED}  error: `gh` CLI not found. Install it from https://cli.github.com{RESET}\n");
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            println!("{DIM}  usage: /pr          List open pull requests");
+                            println!(
+                                "         /pr <number>  View details of a specific PR{RESET}\n"
+                            );
+                        }
+                    }
+                }
+                continue;
+            }
             s if s.starts_with('/') && is_unknown_command(s) => {
                 let cmd = s.split_whitespace().next().unwrap_or(s);
                 eprintln!("{RED}  unknown command: {cmd}{RESET}");
@@ -1179,7 +1240,7 @@ fn format_tree_from_paths(paths: &[String], max_depth: usize) -> String {
 const KNOWN_COMMANDS: &[&str] = &[
     "/help", "/quit", "/exit", "/clear", "/compact", "/cost", "/status", "/tokens", "/save",
     "/load", "/diff", "/undo", "/health", "/retry", "/history", "/search", "/model", "/think",
-    "/config", "/context", "/init", "/version", "/run", "/tree",
+    "/config", "/context", "/init", "/version", "/run", "/tree", "/pr",
 ];
 
 /// Check if a slash-prefixed input is an unknown command.
@@ -1224,7 +1285,7 @@ mod tests {
         let commands = [
             "/help", "/quit", "/exit", "/clear", "/compact", "/config", "/context", "/init",
             "/status", "/tokens", "/save", "/load", "/diff", "/undo", "/health", "/retry", "/run",
-            "/history", "/search", "/model", "/think", "/version", "/tree",
+            "/history", "/search", "/model", "/think", "/version", "/tree", "/pr",
         ];
         for cmd in &commands {
             assert!(
@@ -1465,6 +1526,39 @@ mod tests {
         assert!(!is_unknown_command("/tree"));
         assert!(!is_unknown_command("/tree 2"));
         assert!(!is_unknown_command("/tree 5"));
+    }
+
+    #[test]
+    fn test_pr_command_recognized() {
+        assert!(!is_unknown_command("/pr"));
+        assert!(!is_unknown_command("/pr 42"));
+        assert!(!is_unknown_command("/pr 123"));
+    }
+
+    #[test]
+    fn test_pr_command_matching() {
+        // /pr should match exact or with space separator, not /print etc.
+        let pr_matches = |s: &str| s == "/pr" || s.starts_with("/pr ");
+        assert!(pr_matches("/pr"));
+        assert!(pr_matches("/pr 42"));
+        assert!(pr_matches("/pr 123"));
+        assert!(!pr_matches("/print"));
+        assert!(!pr_matches("/process"));
+    }
+
+    #[test]
+    fn test_pr_number_parsing() {
+        // Verify we can parse a PR number from /pr <number>
+        let input = "/pr 42";
+        let arg = input.strip_prefix("/pr").unwrap_or("").trim();
+        assert_eq!(arg, "42");
+        assert!(arg.parse::<u32>().is_ok());
+        assert_eq!(arg.parse::<u32>().unwrap(), 42);
+
+        // Bare /pr has empty arg
+        let input_bare = "/pr";
+        let arg_bare = input_bare.strip_prefix("/pr").unwrap_or("").trim();
+        assert!(arg_bare.is_empty());
     }
 
     #[test]

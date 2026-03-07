@@ -84,9 +84,12 @@ The `/run` command (or `!` shortcut) lets you execute shell commands without goi
 |---------|-------------|
 | `/diff` | Show `git status --short` and `git diff --stat` of uncommitted changes |
 | `/undo` | Revert all uncommitted changes (`git checkout -- .` and `git clean -fd`) |
+| `/pr [number]` | List open PRs (`gh pr list`), or view a specific PR (`gh pr view <number>`) |
 | `/health` | Run health checks: build, test, clippy, fmt — reports pass/fail with timing |
 
 The `/undo` command shows you what will be reverted before doing it.
+
+The `/pr` command is a quick wrapper around the [GitHub CLI](https://cli.github.com). Use `/pr` to list the 10 most recent open pull requests, or `/pr 42` to see details of PR #42. For commenting, merging, or closing PRs, use `/run gh pr ...` or ask the agent directly — it has full bash access.
 
 The `/health` command runs `cargo build`, `cargo test`, `cargo clippy`, and `cargo fmt --check`, reporting each result with timing. Useful for verifying the agent hasn't broken itself.
 
