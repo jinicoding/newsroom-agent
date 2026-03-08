@@ -86,6 +86,9 @@ The `/run` command (or `!` shortcut) lets you execute shell commands without goi
 | `/diff` | Show `git status --short` and `git diff --stat` of uncommitted changes |
 | `/undo` | Revert all uncommitted changes (`git checkout -- .` and `git clean -fd`) |
 | `/pr [number]` | List open PRs (`gh pr list`), or view a specific PR (`gh pr view <number>`) |
+| `/pr <number> diff` | Show the diff of a PR (`gh pr diff <number>`) |
+| `/pr <number> comment <text>` | Add a comment to a PR (`gh pr comment <number>`) |
+| `/pr <number> checkout` | Checkout a PR branch locally (`gh pr checkout <number>`) |
 | `/health` | Run health checks: build, test, clippy, fmt — reports pass/fail with timing |
 
 The `/commit` command helps you commit staged changes quickly:
@@ -95,7 +98,15 @@ The `/commit` command helps you commit staged changes quickly:
 
 The `/undo` command shows you what will be reverted before doing it.
 
-The `/pr` command is a quick wrapper around the [GitHub CLI](https://cli.github.com). Use `/pr` to list the 10 most recent open pull requests, or `/pr 42` to see details of PR #42. For commenting, merging, or closing PRs, use `/run gh pr ...` or ask the agent directly — it has full bash access.
+The `/pr` command is a quick wrapper around the [GitHub CLI](https://cli.github.com):
+
+- `/pr` — list the 10 most recent open pull requests
+- `/pr 42` — view details of PR #42
+- `/pr 42 diff` — show the diff for PR #42
+- `/pr 42 comment looks good!` — add a comment to PR #42
+- `/pr 42 checkout` — checkout PR #42's branch locally
+
+For merging or closing PRs, use `/run gh pr ...` or ask the agent directly — it has full bash access.
 
 The `/health` command runs `cargo build`, `cargo test`, `cargo clippy`, and `cargo fmt --check`, reporting each result with timing. Useful for verifying the agent hasn't broken itself.
 
