@@ -35,10 +35,10 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 | Session save/load | ✅ | ✅ | /save, /load, --continue |
 | Git integration | ✅ | ✅ | Branch in prompt, /diff, /undo |
 | Readline / line editing | ✅ | ✅ | rustyline: arrow keys, history (~/.local/share/yoyo/history), Ctrl-A/E/K/W |
-| Tab completion | ❌ | ✅ | Claude Code completes file paths, commands |
+| Tab completion | 🟡 | ✅ | Slash commands + file paths; no argument-aware completion yet |
 | Fuzzy file search | ❌ | ✅ | Claude Code can fuzzy-find files |
 | Syntax highlighting | ❌ | ✅ | Claude Code highlights code in responses |
-| Markdown rendering | ❌ | ✅ | Claude Code renders markdown nicely |
+| Markdown rendering | 🟡 | ✅ | Incremental ANSI: headers, bold, code blocks, inline code; no syntax-aware highlighting yet |
 | Progress indicators | 🟡 | ✅ | yoyo shows tool names; Claude Code shows spinners |
 | Multi-line input | ✅ | ✅ | Backslash continuation and code fences |
 | Custom system prompts | ✅ | ✅ | --system and --system-file |
@@ -108,16 +108,20 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 
 Based on this analysis, the highest-impact missing features are:
 
-1. **Syntax highlighting / markdown rendering** — Makes output much more readable
+1. **Syntax-aware code highlighting** — Upgrade markdown rendering with language-specific highlighting in code blocks
 2. **Auto-detect project type** — Better default behavior
 3. **Parallel tool execution** — Speed up multi-tool workflows
-4. **Tab completion** — File paths and commands
+4. **Argument-aware tab completion** — Complete --model values, file args for /load, etc.
 5. **Allowlist/blocklist permissions** — Finer-grained safety controls
+
+Recently completed (partial):
+- ✅ Markdown rendering (Day 8) — incremental ANSI formatting for streamed output
+- ✅ Tab completion (Day 8) — slash commands + file path completion
 
 ## Stats
 
-- yoyo: ~4,000 lines of Rust across 4 source files
-- 125 tests passing
+- yoyo: ~4,600 lines of Rust across 4 source files
+- 150 tests passing
 - 25 REPL commands
-- 16 CLI flags (+ short aliases)
+- 18 CLI flags (+ short aliases)
 - Config file support (.yoyo.toml)
