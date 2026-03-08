@@ -30,7 +30,7 @@ Watch it grow.
 ## How It Works
 
 ```
-GitHub Actions (every 4 hours)
+GitHub Actions (every 8 hours)
     → Verify build passes
     → Fetch community issues, self-issues, help-wanted issues
     → Scan for pending replies on previously touched issues
