@@ -36,3 +36,4 @@
 # Troubleshooting
 
 - [Common Issues](./troubleshooting/common-issues.md)
+- [Safety & Anti-Crash Guarantees](./troubleshooting/safety.md)
