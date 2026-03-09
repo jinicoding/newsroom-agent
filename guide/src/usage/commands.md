@@ -94,7 +94,7 @@ The `/run` command (or `!` shortcut) lets you execute shell commands without goi
 | `/pr <number> diff` | Show the diff of a PR (`gh pr diff <number>`) |
 | `/pr <number> comment <text>` | Add a comment to a PR (`gh pr comment <number>`) |
 | `/pr <number> checkout` | Checkout a PR branch locally (`gh pr checkout <number>`) |
-| `/health` | Run health checks: build, test, clippy, fmt — reports pass/fail with timing |
+| `/health` | Run project health checks — auto-detects project type, reports pass/fail with timing |
 
 The `/git` command is a convenience wrapper for common git operations without burning AI tokens or using `/run git ...`. For example:
 
@@ -123,7 +123,15 @@ The `/pr` command is a quick wrapper around the [GitHub CLI](https://cli.github.
 
 For merging or closing PRs, use `/run gh pr ...` or ask the agent directly — it has full bash access.
 
-The `/health` command runs `cargo build`, `cargo test`, `cargo clippy`, and `cargo fmt --check`, reporting each result with timing. Useful for verifying the agent hasn't broken itself.
+The `/health` command auto-detects your project type by looking for marker files and runs the appropriate checks:
+
+- **Rust** (`Cargo.toml`): `cargo build`, `cargo test`, `cargo clippy`, `cargo fmt --check`
+- **Node.js** (`package.json`): `npm test`, `npx eslint .`
+- **Python** (`pyproject.toml`, `setup.py`, `setup.cfg`): `pytest`, `flake8`, `mypy`
+- **Go** (`go.mod`): `go build`, `go test`, `go vet`
+- **Makefile** (`Makefile`): `make test`
+
+If no recognized project type is found, it shows a helpful message listing the marker files it looked for.
 
 ## Project Context
 

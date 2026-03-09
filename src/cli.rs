@@ -105,7 +105,7 @@ pub fn print_help() {
     println!("  /cost             Show estimated session cost");
     println!("  /diff             Show git diff summary of uncommitted changes");
     println!("  /git <subcmd>     Quick git: status, log [n], add <path>, stash, stash pop");
-    println!("  /health           Run health checks (build, test, clippy, fmt)");
+    println!("  /health           Run project health checks (auto-detects project type)");
     println!("  /pr [number]      List open PRs, or view details of a specific PR");
     println!("  /history          Show summary of conversation messages");
     println!("  /search <query>   Search conversation history for matching messages");

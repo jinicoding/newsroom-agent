@@ -616,7 +616,9 @@ async fn main() {
                 println!(
                     "                     /pr <n> diff | /pr <n> comment <text> | /pr <n> checkout"
                 );
-                println!("  /health            Run health checks (build, test, clippy, fmt)");
+                println!(
+                    "  /health            Run project health checks (auto-detects project type)"
+                );
                 println!("  /retry             Re-send the last user input");
                 println!("  /run <cmd>         Run a shell command directly (no AI, no tokens)");
                 println!("  !<cmd>             Shortcut for /run");
@@ -951,8 +953,21 @@ async fn main() {
                 continue;
             }
             "/health" => {
+                let project_type =
+                    detect_project_type(&std::env::current_dir().unwrap_or_default());
+                println!("{DIM}  Detected project: {project_type}{RESET}");
+                if project_type == ProjectType::Unknown {
+                    println!(
+                        "{DIM}  No recognized project found. Looked for: Cargo.toml, package.json, pyproject.toml, setup.py, go.mod, Makefile{RESET}\n"
+                    );
+                    continue;
+                }
                 println!("{DIM}  Running health checks...{RESET}");
-                let results = run_health_check();
+                let results = run_health_check_for_project(&project_type);
+                if results.is_empty() {
+                    println!("{DIM}  No checks configured for {project_type}{RESET}\n");
+                    continue;
+                }
                 let all_passed = results.iter().all(|(_, passed, _)| *passed);
                 for (name, passed, detail) in &results {
                     let icon = if *passed {
@@ -1714,19 +1729,103 @@ fn thinking_level_name(level: ThinkingLevel) -> &'static str {
     }
 }
 
-/// Run health checks (build, test, clippy, fmt) and return results.
-/// Each result is (name, passed, detail_message).
-fn run_health_check() -> Vec<(&'static str, bool, String)> {
-    let mut checks: Vec<(&str, &[&str])> = vec![("build", &["cargo", "build"])];
-    // Skip "cargo test" when built with #[cfg(test)] to avoid infinite recursion
-    // (test_health_check_function → run_health_check → cargo test → test_health_check_function → …)
-    #[cfg(not(test))]
-    checks.push(("test", &["cargo", "test"]));
-    checks.push((
-        "clippy",
-        &["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
-    ));
-    checks.push(("fmt", &["cargo", "fmt", "--", "--check"]));
+/// Detected project type based on marker files in the working directory.
+#[derive(Debug, Clone, PartialEq)]
+enum ProjectType {
+    Rust,
+    Node,
+    Python,
+    Go,
+    Make,
+    Unknown,
+}
+
+impl std::fmt::Display for ProjectType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProjectType::Rust => write!(f, "Rust (Cargo)"),
+            ProjectType::Node => write!(f, "Node.js (npm)"),
+            ProjectType::Python => write!(f, "Python"),
+            ProjectType::Go => write!(f, "Go"),
+            ProjectType::Make => write!(f, "Makefile"),
+            ProjectType::Unknown => write!(f, "Unknown"),
+        }
+    }
+}
+
+/// Detect project type by checking for marker files in the given directory.
+/// Checks in priority order: Cargo.toml → package.json → pyproject.toml/setup.py → go.mod → Makefile
+fn detect_project_type(dir: &std::path::Path) -> ProjectType {
+    if dir.join("Cargo.toml").exists() {
+        ProjectType::Rust
+    } else if dir.join("package.json").exists() {
+        ProjectType::Node
+    } else if dir.join("pyproject.toml").exists()
+        || dir.join("setup.py").exists()
+        || dir.join("setup.cfg").exists()
+    {
+        ProjectType::Python
+    } else if dir.join("go.mod").exists() {
+        ProjectType::Go
+    } else if dir.join("Makefile").exists() || dir.join("makefile").exists() {
+        ProjectType::Make
+    } else {
+        ProjectType::Unknown
+    }
+}
+
+/// Return health check commands for a given project type.
+/// Each entry is (check_name, command_args).
+/// Under #[cfg(test)], "test" checks are excluded to avoid infinite recursion.
+#[allow(clippy::vec_init_then_push, unused_mut)]
+fn health_checks_for_project(project_type: &ProjectType) -> Vec<(&'static str, Vec<&'static str>)> {
+    match project_type {
+        ProjectType::Rust => {
+            let mut checks = vec![("build", vec!["cargo", "build"])];
+            #[cfg(not(test))]
+            checks.push(("test", vec!["cargo", "test"]));
+            checks.push((
+                "clippy",
+                vec!["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
+            ));
+            checks.push(("fmt", vec!["cargo", "fmt", "--", "--check"]));
+            checks
+        }
+        ProjectType::Node => {
+            let mut checks: Vec<(&str, Vec<&str>)> = vec![];
+            #[cfg(not(test))]
+            checks.push(("test", vec!["npm", "test"]));
+            checks.push(("lint", vec!["npx", "eslint", "."]));
+            checks
+        }
+        ProjectType::Python => {
+            let mut checks: Vec<(&str, Vec<&str>)> = vec![];
+            #[cfg(not(test))]
+            checks.push(("test", vec!["python", "-m", "pytest"]));
+            checks.push(("lint", vec!["python", "-m", "flake8", "."]));
+            checks.push(("typecheck", vec!["python", "-m", "mypy", "."]));
+            checks
+        }
+        ProjectType::Go => {
+            let mut checks = vec![("build", vec!["go", "build", "./..."])];
+            #[cfg(not(test))]
+            checks.push(("test", vec!["go", "test", "./..."]));
+            checks.push(("vet", vec!["go", "vet", "./..."]));
+            checks
+        }
+        ProjectType::Make => {
+            let mut checks: Vec<(&str, Vec<&str>)> = vec![];
+            #[cfg(not(test))]
+            checks.push(("test", vec!["make", "test"]));
+            checks
+        }
+        ProjectType::Unknown => vec![],
+    }
+}
+
+/// Run health checks for a specific project type. Returns (name, passed, detail) tuples.
+fn run_health_check_for_project(project_type: &ProjectType) -> Vec<(&'static str, bool, String)> {
+    let checks = health_checks_for_project(project_type);
 
     let mut results = Vec::new();
     for (name, args) in checks {
@@ -2094,8 +2193,10 @@ mod tests {
 
     #[test]
     fn test_health_check_function() {
-        // run_health_check skips "cargo test" under #[cfg(test)] to avoid recursion
-        let results = run_health_check();
+        // run_health_check_for_project skips "cargo test" under #[cfg(test)] to avoid recursion
+        let project_type = detect_project_type(&std::env::current_dir().unwrap());
+        assert_eq!(project_type, ProjectType::Rust);
+        let results = run_health_check_for_project(&project_type);
         assert!(
             !results.is_empty(),
             "Health check should return at least one result"
@@ -2111,6 +2212,131 @@ mod tests {
             !results.iter().any(|(name, _, _)| *name == "test"),
             "cargo test check should be skipped to avoid recursion"
         );
+    }
+
+    #[test]
+    fn test_detect_project_type_rust() {
+        // Current directory has Cargo.toml, so should detect Rust
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(detect_project_type(&cwd), ProjectType::Rust);
+    }
+
+    #[test]
+    fn test_detect_project_type_node() {
+        let tmp = std::env::temp_dir().join("yoyo_test_node");
+        let _ = std::fs::create_dir_all(&tmp);
+        std::fs::write(tmp.join("package.json"), "{}").unwrap();
+        assert_eq!(detect_project_type(&tmp), ProjectType::Node);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_detect_project_type_python_pyproject() {
+        let tmp = std::env::temp_dir().join("yoyo_test_python_pyproject");
+        let _ = std::fs::create_dir_all(&tmp);
+        std::fs::write(tmp.join("pyproject.toml"), "[project]").unwrap();
+        assert_eq!(detect_project_type(&tmp), ProjectType::Python);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_detect_project_type_python_setup_py() {
+        let tmp = std::env::temp_dir().join("yoyo_test_python_setup");
+        let _ = std::fs::create_dir_all(&tmp);
+        std::fs::write(tmp.join("setup.py"), "").unwrap();
+        assert_eq!(detect_project_type(&tmp), ProjectType::Python);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_detect_project_type_go() {
+        let tmp = std::env::temp_dir().join("yoyo_test_go");
+        let _ = std::fs::create_dir_all(&tmp);
+        std::fs::write(tmp.join("go.mod"), "module example.com/test").unwrap();
+        assert_eq!(detect_project_type(&tmp), ProjectType::Go);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_detect_project_type_makefile() {
+        let tmp = std::env::temp_dir().join("yoyo_test_make");
+        let _ = std::fs::create_dir_all(&tmp);
+        std::fs::write(tmp.join("Makefile"), "test:\n\techo ok").unwrap();
+        assert_eq!(detect_project_type(&tmp), ProjectType::Make);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_detect_project_type_unknown() {
+        let tmp = std::env::temp_dir().join("yoyo_test_unknown");
+        let _ = std::fs::create_dir_all(&tmp);
+        // Empty dir — no marker files
+        assert_eq!(detect_project_type(&tmp), ProjectType::Unknown);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_detect_project_type_priority_rust_over_makefile() {
+        // If both Cargo.toml and Makefile exist, Rust wins
+        let tmp = std::env::temp_dir().join("yoyo_test_priority");
+        let _ = std::fs::create_dir_all(&tmp);
+        std::fs::write(tmp.join("Cargo.toml"), "[package]").unwrap();
+        std::fs::write(tmp.join("Makefile"), "test:").unwrap();
+        assert_eq!(detect_project_type(&tmp), ProjectType::Rust);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_health_checks_for_rust_project() {
+        let checks = health_checks_for_project(&ProjectType::Rust);
+        let names: Vec<&str> = checks.iter().map(|(n, _)| *n).collect();
+        assert!(names.contains(&"build"), "Rust should have build check");
+        assert!(names.contains(&"clippy"), "Rust should have clippy check");
+        assert!(names.contains(&"fmt"), "Rust should have fmt check");
+        // test is excluded under cfg(test)
+        assert!(
+            !names.contains(&"test"),
+            "test should be excluded in cfg(test)"
+        );
+    }
+
+    #[test]
+    fn test_health_checks_for_node_project() {
+        let checks = health_checks_for_project(&ProjectType::Node);
+        let names: Vec<&str> = checks.iter().map(|(n, _)| *n).collect();
+        assert!(names.contains(&"lint"), "Node should have lint check");
+    }
+
+    #[test]
+    fn test_health_checks_for_go_project() {
+        let checks = health_checks_for_project(&ProjectType::Go);
+        let names: Vec<&str> = checks.iter().map(|(n, _)| *n).collect();
+        assert!(names.contains(&"build"), "Go should have build check");
+        assert!(names.contains(&"vet"), "Go should have vet check");
+    }
+
+    #[test]
+    fn test_health_checks_for_python_project() {
+        let checks = health_checks_for_project(&ProjectType::Python);
+        let names: Vec<&str> = checks.iter().map(|(n, _)| *n).collect();
+        assert!(names.contains(&"lint"), "Python should have lint check");
+        assert!(names.contains(&"typecheck"), "Python should have typecheck");
+    }
+
+    #[test]
+    fn test_health_checks_for_unknown_returns_empty() {
+        let checks = health_checks_for_project(&ProjectType::Unknown);
+        assert!(checks.is_empty(), "Unknown project should return no checks");
+    }
+
+    #[test]
+    fn test_project_type_display() {
+        assert_eq!(format!("{}", ProjectType::Rust), "Rust (Cargo)");
+        assert_eq!(format!("{}", ProjectType::Node), "Node.js (npm)");
+        assert_eq!(format!("{}", ProjectType::Python), "Python");
+        assert_eq!(format!("{}", ProjectType::Go), "Go");
+        assert_eq!(format!("{}", ProjectType::Make), "Makefile");
+        assert_eq!(format!("{}", ProjectType::Unknown), "Unknown");
     }
 
     #[test]
