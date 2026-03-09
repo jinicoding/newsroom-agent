@@ -1,6 +1,6 @@
 # Gap Analysis: yoyo vs Claude Code
 
-Last updated: Day 8 (2026-03-08)
+Last updated: Day 9 (2026-03-09)
 
 This document tracks the feature gap between yoyo and Claude Code, used to inform development priorities when there are no community issues to address.
 
@@ -39,7 +39,7 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 | Fuzzy file search | ❌ | ✅ | Claude Code can fuzzy-find files |
 | Syntax highlighting | ❌ | ✅ | Claude Code highlights code in responses |
 | Markdown rendering | 🟡 | ✅ | Incremental ANSI: headers, bold, code blocks, inline code; no syntax-aware highlighting yet |
-| Progress indicators | 🟡 | ✅ | yoyo shows tool names; Claude Code shows spinners |
+| Progress indicators | ✅ | ✅ | Braille spinner animation during AI responses (Day 8) |
 | Multi-line input | ✅ | ✅ | Backslash continuation and code fences |
 | Custom system prompts | ✅ | ✅ | --system and --system-file |
 | Extended thinking control | ✅ | ✅ | --thinking flag |
@@ -69,7 +69,7 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 | Feature | yoyo | Claude Code | Notes |
 |---------|------|-------------|-------|
 | Project context files | ✅ | ✅ | yoyo reads YOYO.md, CLAUDE.md, and .yoyo/instructions.md |
-| Auto-detect project type | ❌ | ✅ | Claude Code detects language, framework, build system |
+| Auto-detect project type | 🟡 | ✅ | `detect_project_type` in `/health` and `/fix` (Rust, Node, Python, Go, Make); not yet used for auto-detecting test runner outside those commands |
 | Git-aware file selection | ❌ | ✅ | Claude Code prioritizes recently changed files |
 | Codebase indexing | ❌ | ✅ | Claude Code indexes for faster search |
 
@@ -78,9 +78,9 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 | Feature | yoyo | Claude Code | Notes |
 |---------|------|-------------|-------|
 | Run tests | 🟡 | ✅ | yoyo can via bash; Claude Code auto-detects test runner |
-| Auto-fix lint errors | ❌ | ✅ | Claude Code can fix clippy/eslint warnings |
+| Auto-fix lint errors | 🟡 | ✅ | `/fix` runs checks, sends failures to AI for fixing (Day 9); not yet automatic like `clippy --fix` |
 | PR description generation | ❌ | ✅ | Claude Code generates PR descriptions |
-| Commit message generation | ❌ | ✅ | Claude Code suggests commit messages |
+| Commit message generation | ✅ | ✅ | `/commit` with heuristic-based message generation from staged diff (Day 8) |
 | Multi-file refactoring | 🟡 | ✅ | yoyo can via tools; Claude Code is better at coordinating |
 
 ## Configuration
@@ -110,12 +110,16 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 Based on this analysis, the highest-impact missing features are:
 
 1. **Syntax-aware code highlighting** — Upgrade markdown rendering with language-specific highlighting in code blocks
-2. **Auto-detect project type** — Better default behavior
-3. **Parallel tool execution** — Speed up multi-tool workflows
-4. **Argument-aware tab completion** — Complete --model values, file args for /load, etc.
-5. **Allowlist/blocklist permissions** — Finer-grained safety controls
+2. **Parallel tool execution** — Speed up multi-tool workflows
+3. **Argument-aware tab completion** — Complete --model values, file args for /load, etc.
+4. **Allowlist/blocklist permissions** — Finer-grained safety controls
+5. **Git-aware file selection** — Prioritize recently changed files for context
 
 Recently completed:
+- ✅ Auto-fix lint errors (Day 9) — `/fix` command runs checks and sends failures to AI
+- ✅ Project type detection (Day 9) — `detect_project_type` for Rust, Node, Python, Go, Make
+- ✅ Commit message generation (Day 8) — `/commit` with heuristic-based message generation
+- ✅ Progress indicators (Day 8) — braille spinner animation during AI responses
 - ✅ Multi-provider support (Day 8) — 10+ providers via `--provider` flag
 - ✅ MCP server support (Day 8) — connect to MCP servers via `--mcp`
 - ✅ Markdown rendering (Day 8) — incremental ANSI formatting for streamed output
@@ -123,9 +127,9 @@ Recently completed:
 
 ## Stats
 
-- yoyo: ~5,700 lines of Rust across 4 source files
-- 181 tests passing
-- 27 REPL commands
+- yoyo: ~6,300 lines of Rust across 4 source files
+- 207 tests passing
+- 28 REPL commands
 - 20 CLI flags (+ short aliases)
 - 10+ provider backends
 - MCP server support
