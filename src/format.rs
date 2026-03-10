@@ -40,6 +40,226 @@ pub static GREEN: Color = Color("\x1b[32m");
 pub static YELLOW: Color = Color("\x1b[33m");
 pub static CYAN: Color = Color("\x1b[36m");
 pub static RED: Color = Color("\x1b[31m");
+pub static BOLD_CYAN: Color = Color("\x1b[1;36m");
+
+// --- Syntax highlighting for code blocks ---
+
+/// Languages recognized for syntax highlighting.
+fn normalize_lang(lang: &str) -> Option<&'static str> {
+    match lang.to_lowercase().as_str() {
+        "rust" | "rs" => Some("rust"),
+        "python" | "py" => Some("python"),
+        "javascript" | "js" | "typescript" | "ts" | "jsx" | "tsx" => Some("js"),
+        "go" | "golang" => Some("go"),
+        "sh" | "bash" | "shell" | "zsh" => Some("shell"),
+        _ => None,
+    }
+}
+
+/// Get the keyword list for a normalized language.
+fn lang_keywords(lang: &str) -> &'static [&'static str] {
+    match lang {
+        "rust" => &[
+            "fn", "let", "mut", "if", "else", "for", "while", "loop", "match", "return", "use",
+            "mod", "pub", "struct", "enum", "impl", "trait", "where", "async", "await", "move",
+            "self", "super", "crate", "const", "static", "type", "as", "in", "ref", "true",
+            "false", "Some", "None", "Ok", "Err",
+        ],
+        "python" => &[
+            "def", "class", "if", "elif", "else", "for", "while", "return", "import", "from", "as",
+            "with", "try", "except", "finally", "raise", "yield", "lambda", "pass", "break",
+            "continue", "and", "or", "not", "in", "is", "None", "True", "False", "self", "async",
+            "await",
+        ],
+        "js" => &[
+            "function",
+            "const",
+            "let",
+            "var",
+            "if",
+            "else",
+            "for",
+            "while",
+            "return",
+            "import",
+            "export",
+            "from",
+            "class",
+            "new",
+            "this",
+            "async",
+            "await",
+            "try",
+            "catch",
+            "finally",
+            "throw",
+            "typeof",
+            "instanceof",
+            "true",
+            "false",
+            "null",
+            "undefined",
+            "switch",
+            "case",
+            "default",
+            "break",
+            "continue",
+            "interface",
+            "type",
+            "enum",
+        ],
+        "go" => &[
+            "func",
+            "var",
+            "const",
+            "if",
+            "else",
+            "for",
+            "range",
+            "return",
+            "import",
+            "package",
+            "type",
+            "struct",
+            "interface",
+            "map",
+            "chan",
+            "go",
+            "defer",
+            "select",
+            "case",
+            "switch",
+            "default",
+            "break",
+            "continue",
+            "nil",
+            "true",
+            "false",
+        ],
+        "shell" => &[
+            "if", "then", "else", "elif", "fi", "for", "while", "do", "done", "case", "esac",
+            "function", "return", "exit", "echo", "export", "local", "readonly", "set", "unset",
+            "in", "true", "false",
+        ],
+        _ => &[],
+    }
+}
+
+/// Get the line-comment prefix for a normalized language.
+fn comment_prefix(lang: &str) -> &'static str {
+    match lang {
+        "python" | "shell" => "#",
+        _ => "//",
+    }
+}
+
+/// Apply syntax-aware ANSI highlighting to a single code line.
+///
+/// Colorizes keywords (bold cyan), strings (green), comments (dim), and numbers (yellow).
+/// Falls back to DIM when language is unrecognized.
+pub fn highlight_code_line(lang: &str, line: &str) -> String {
+    let norm = match normalize_lang(lang) {
+        Some(n) => n,
+        None => return format!("{DIM}{line}{RESET}"),
+    };
+
+    let cp = comment_prefix(norm);
+    let trimmed = line.trim_start();
+
+    // Full-line comment detection
+    if trimmed.starts_with(cp) {
+        return format!("{DIM}{line}{RESET}");
+    }
+    // Shell also supports # comments even when norm isn't "shell"
+    // but we only check the language-appropriate prefix above
+
+    let keywords = lang_keywords(norm);
+    let chars: Vec<char> = line.chars().collect();
+    let len = chars.len();
+    let mut result = String::with_capacity(line.len() + 64);
+    let mut i = 0;
+
+    while i < len {
+        let ch = chars[i];
+
+        // Check for inline comment: // or # (at current position)
+        if i + 1 < len && chars[i] == '/' && chars[i + 1] == '/' && cp == "//" {
+            // Rest of line is a comment
+            let rest: String = chars[i..].iter().collect();
+            result.push_str(&format!("{DIM}{rest}{RESET}"));
+            break;
+        }
+        if ch == '#' && cp == "#" {
+            let rest: String = chars[i..].iter().collect();
+            result.push_str(&format!("{DIM}{rest}{RESET}"));
+            break;
+        }
+
+        // String literals: "..." or '...'
+        if ch == '"' || ch == '\'' {
+            let quote = ch;
+            let mut s = String::new();
+            s.push(ch);
+            i += 1;
+            while i < len {
+                let c = chars[i];
+                s.push(c);
+                i += 1;
+                if c == '\\' && i < len {
+                    s.push(chars[i]);
+                    i += 1;
+                } else if c == quote {
+                    break;
+                }
+            }
+            result.push_str(&format!("{GREEN}{s}{RESET}"));
+            continue;
+        }
+
+        // Numbers: digit sequences (possibly with . for floats)
+        if ch.is_ascii_digit()
+            && (i == 0 || !chars[i - 1].is_ascii_alphanumeric() && chars[i - 1] != '_')
+        {
+            let mut num = String::new();
+            while i < len && (chars[i].is_ascii_digit() || chars[i] == '.' || chars[i] == '_') {
+                num.push(chars[i]);
+                i += 1;
+            }
+            // Don't color if followed by an alpha char (it's part of an identifier)
+            if i < len && (chars[i].is_ascii_alphabetic() || chars[i] == '_') {
+                result.push_str(&num);
+            } else {
+                result.push_str(&format!("{YELLOW}{num}{RESET}"));
+            }
+            continue;
+        }
+
+        // Word: check for keyword
+        if ch.is_ascii_alphabetic() || ch == '_' {
+            let mut word = String::new();
+            let start = i;
+            while i < len && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+                word.push(chars[i]);
+                i += 1;
+            }
+            // Only highlight if it's a standalone keyword (not part of a larger identifier)
+            let before_ok = start == 0
+                || (!chars[start - 1].is_ascii_alphanumeric() && chars[start - 1] != '_');
+            let after_ok = i >= len || (!chars[i].is_ascii_alphanumeric() && chars[i] != '_');
+            if before_ok && after_ok && keywords.contains(&word.as_str()) {
+                result.push_str(&format!("{BOLD_CYAN}{word}{RESET}"));
+            } else {
+                result.push_str(&word);
+            }
+            continue;
+        }
+
+        result.push(ch);
+        i += 1;
+    }
+
+    result
+}
 
 /// Get pricing rates (per MTok) for a model.
 /// Returns (input, cache_write, cache_read, output) or None if model is unknown.
@@ -307,8 +527,12 @@ impl MarkdownRenderer {
         }
 
         if self.in_code_block {
-            // Code block content: dim
-            return format!("{DIM}{line}{RESET}");
+            // Code block content: syntax highlight if language is known, else dim
+            return if let Some(ref lang) = self.code_lang {
+                highlight_code_line(lang, line)
+            } else {
+                format!("{DIM}{line}{RESET}")
+            };
         }
 
         // Header: # at line start → BOLD+CYAN
@@ -773,7 +997,10 @@ mod tests {
         let full = format!("{out}{flushed}");
         // Language should be captured and fence dimmed
         assert!(full.contains(&format!("{DIM}```rust{RESET}")));
-        assert!(full.contains(&format!("{DIM}let x = 1;{RESET}")));
+        // "let" should be keyword-highlighted, not just DIM
+        assert!(full.contains(&format!("{BOLD_CYAN}let{RESET}")));
+        // Number should be yellow
+        assert!(full.contains(&format!("{YELLOW}1{RESET}")));
     }
 
     #[test]
@@ -833,9 +1060,11 @@ mod tests {
     fn test_md_multiple_code_blocks() {
         let input = "text\n```\nblock1\n```\nmiddle\n```python\nblock2\n```\nend\n";
         let out = render_full(input);
+        // Untagged code block → DIM fallback
         assert!(out.contains(&format!("{DIM}block1{RESET}")));
         assert!(out.contains("middle"));
-        assert!(out.contains(&format!("{DIM}block2{RESET}")));
+        // Python-tagged code block → syntax highlighted (no keyword match, plain output)
+        assert!(out.contains("block2"));
         assert!(out.contains("end"));
     }
 
@@ -907,6 +1136,155 @@ mod tests {
         let out = render_full(input);
         assert!(out.contains("fn main()"));
         assert!(out.contains("println!"));
+    }
+
+    // --- Syntax highlighting tests ---
+
+    #[test]
+    fn test_highlight_rust_keywords() {
+        let out = highlight_code_line("rust", "    let mut x = 42;");
+        assert!(out.contains(&format!("{BOLD_CYAN}let{RESET}")));
+        assert!(out.contains(&format!("{BOLD_CYAN}mut{RESET}")));
+        assert!(out.contains(&format!("{YELLOW}42{RESET}")));
+    }
+
+    #[test]
+    fn test_highlight_rust_fn() {
+        let out = highlight_code_line("rust", "fn main() {");
+        assert!(out.contains(&format!("{BOLD_CYAN}fn{RESET}")));
+        assert!(out.contains("main"));
+    }
+
+    #[test]
+    fn test_highlight_rust_string() {
+        let out = highlight_code_line("rs", r#"let s = "hello world";"#);
+        assert!(out.contains(&format!("{GREEN}\"hello world\"{RESET}")));
+    }
+
+    #[test]
+    fn test_highlight_rust_comment() {
+        let out = highlight_code_line("rust", "    // this is a comment");
+        assert!(out.contains(&format!("{DIM}")));
+        assert!(out.contains("this is a comment"));
+    }
+
+    #[test]
+    fn test_highlight_rust_full_line_comment() {
+        let out = highlight_code_line("rust", "// full line comment");
+        assert_eq!(out, format!("{DIM}// full line comment{RESET}"));
+    }
+
+    #[test]
+    fn test_highlight_python_keywords() {
+        let out = highlight_code_line("python", "def hello(self):");
+        assert!(out.contains(&format!("{BOLD_CYAN}def{RESET}")));
+        assert!(out.contains(&format!("{BOLD_CYAN}self{RESET}")));
+    }
+
+    #[test]
+    fn test_highlight_python_comment() {
+        let out = highlight_code_line("py", "# a comment");
+        assert_eq!(out, format!("{DIM}# a comment{RESET}"));
+    }
+
+    #[test]
+    fn test_highlight_js_keywords() {
+        let out = highlight_code_line("javascript", "const x = async () => {");
+        assert!(out.contains(&format!("{BOLD_CYAN}const{RESET}")));
+        assert!(out.contains(&format!("{BOLD_CYAN}async{RESET}")));
+    }
+
+    #[test]
+    fn test_highlight_ts_alias() {
+        let out = highlight_code_line("ts", "let y = 10;");
+        assert!(out.contains(&format!("{BOLD_CYAN}let{RESET}")));
+        assert!(out.contains(&format!("{YELLOW}10{RESET}")));
+    }
+
+    #[test]
+    fn test_highlight_go_keywords() {
+        let out = highlight_code_line("go", "func main() {");
+        assert!(out.contains(&format!("{BOLD_CYAN}func{RESET}")));
+    }
+
+    #[test]
+    fn test_highlight_shell_keywords() {
+        let out = highlight_code_line("bash", "if [ -f file ]; then");
+        assert!(out.contains(&format!("{BOLD_CYAN}if{RESET}")));
+        assert!(out.contains(&format!("{BOLD_CYAN}then{RESET}")));
+    }
+
+    #[test]
+    fn test_highlight_shell_comment() {
+        let out = highlight_code_line("sh", "# shell comment");
+        assert_eq!(out, format!("{DIM}# shell comment{RESET}"));
+    }
+
+    #[test]
+    fn test_highlight_unknown_lang_falls_back_to_dim() {
+        let out = highlight_code_line("haskell", "main = putStrLn");
+        assert_eq!(out, format!("{DIM}main = putStrLn{RESET}"));
+    }
+
+    #[test]
+    fn test_highlight_empty_line() {
+        let out = highlight_code_line("rust", "");
+        assert_eq!(out, "");
+    }
+
+    #[test]
+    fn test_highlight_no_false_keyword_in_identifier() {
+        // "letter" contains "let" but should NOT be highlighted
+        let out = highlight_code_line("rust", "let letter = 1;");
+        assert!(out.contains(&format!("{BOLD_CYAN}let{RESET}")));
+        // "letter" should appear plain
+        assert!(out.contains("letter"));
+        // Make sure "letter" isn't colored as keyword
+        let letter_highlighted = format!("{BOLD_CYAN}letter{RESET}");
+        assert!(!out.contains(&letter_highlighted));
+    }
+
+    #[test]
+    fn test_highlight_string_with_escape() {
+        let out = highlight_code_line("rust", r#"let s = "he\"llo";"#);
+        assert!(out.contains(&format!("{GREEN}")));
+        assert!(out.contains(&format!("{BOLD_CYAN}let{RESET}")));
+    }
+
+    #[test]
+    fn test_highlight_inline_comment_after_code() {
+        let out = highlight_code_line("rust", "let x = 1; // comment");
+        assert!(out.contains(&format!("{BOLD_CYAN}let{RESET}")));
+        assert!(out.contains(&format!("{DIM}// comment{RESET}")));
+    }
+
+    #[test]
+    fn test_highlight_number_float() {
+        let out = highlight_code_line("rust", "let pi = 3.14;");
+        assert!(out.contains(&format!("{YELLOW}3.14{RESET}")));
+    }
+
+    #[test]
+    fn test_normalize_lang_aliases() {
+        assert_eq!(normalize_lang("rust"), Some("rust"));
+        assert_eq!(normalize_lang("rs"), Some("rust"));
+        assert_eq!(normalize_lang("Python"), Some("python"));
+        assert_eq!(normalize_lang("JS"), Some("js"));
+        assert_eq!(normalize_lang("typescript"), Some("js"));
+        assert_eq!(normalize_lang("tsx"), Some("js"));
+        assert_eq!(normalize_lang("golang"), Some("go"));
+        assert_eq!(normalize_lang("zsh"), Some("shell"));
+        assert_eq!(normalize_lang("haskell"), None);
+    }
+
+    #[test]
+    fn test_highlight_renders_through_markdown() {
+        // End-to-end: markdown renderer should use highlighting for tagged blocks
+        let input = "```rust\nfn main() {\n    return 42;\n}\n```\n";
+        let out = render_full(input);
+        assert!(out.contains(&format!("{BOLD_CYAN}fn{RESET}")));
+        assert!(out.contains(&format!("{BOLD_CYAN}return{RESET}")));
+        assert!(out.contains(&format!("{YELLOW}42{RESET}")));
     }
 
     // --- Spinner tests ---
