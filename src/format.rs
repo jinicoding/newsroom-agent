@@ -376,23 +376,6 @@ pub fn truncate(s: &str, max: usize) -> &str {
     }
 }
 
-/// Get the current git branch name, if we're in a git repo.
-pub fn git_branch() -> Option<String> {
-    std::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .output()
-        .ok()
-        .and_then(|o| {
-            if o.status.success() {
-                String::from_utf8(o.stdout)
-                    .ok()
-                    .map(|s| s.trim().to_string())
-            } else {
-                None
-            }
-        })
-}
-
 /// Format a human-readable summary for a tool execution.
 pub fn format_tool_summary(tool_name: &str, args: &serde_json::Value) -> String {
     match tool_name {
@@ -934,19 +917,6 @@ mod tests {
     fn test_format_tool_summary_unknown_tool() {
         let args = serde_json::json!({});
         assert_eq!(format_tool_summary("custom_tool", &args), "custom_tool");
-    }
-
-    #[test]
-    fn test_git_branch_returns_something_in_repo() {
-        let branch = git_branch();
-        // Outside a git repo (e.g. cargo-mutants temp dir), branch is None — that's fine
-        if let Some(name) = branch {
-            assert!(!name.is_empty(), "Branch name should not be empty");
-            assert!(
-                !name.contains('\n'),
-                "Branch name should not contain newlines"
-            );
-        }
     }
 
     #[test]
