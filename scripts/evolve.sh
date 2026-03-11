@@ -509,6 +509,7 @@ TEOF
 
     # ── Per-task verification gate ──
     TASK_OK=true
+    REVERT_REASON=""
 
     # Check 1: Protected files (committed + staged + unstaged)
     PROTECTED_CHANGES=""
@@ -519,6 +520,7 @@ TEOF
         echo "    BLOCKED: Task $TASK_NUM — git diff failed (cannot verify protected files)"
         echo "    Error: $PROTECTED_CHANGES"
         TASK_OK=false
+        REVERT_REASON="git diff failed — could not verify protected files"
     fi
     # Check staged (indexed) changes
     if [ "$TASK_OK" = true ]; then
@@ -529,6 +531,7 @@ TEOF
             echo "    BLOCKED: Task $TASK_NUM — git diff --cached failed"
             echo "    Error: $PROTECTED_STAGED"
             TASK_OK=false
+            REVERT_REASON="git diff --cached failed"
         elif [ -n "$PROTECTED_STAGED" ]; then
             PROTECTED_CHANGES="${PROTECTED_CHANGES}${PROTECTED_CHANGES:+
 }${PROTECTED_STAGED}"
@@ -543,6 +546,7 @@ TEOF
             echo "    BLOCKED: Task $TASK_NUM — git diff (working tree) failed"
             echo "    Error: $PROTECTED_UNSTAGED"
             TASK_OK=false
+            REVERT_REASON="git diff (working tree) failed"
         elif [ -n "$PROTECTED_UNSTAGED" ]; then
             PROTECTED_CHANGES="${PROTECTED_CHANGES}${PROTECTED_CHANGES:+
 }${PROTECTED_UNSTAGED}"
@@ -551,6 +555,7 @@ TEOF
     if [ "$TASK_OK" = true ] && [ -n "$PROTECTED_CHANGES" ]; then
         echo "    BLOCKED: Task $TASK_NUM modified protected files: $PROTECTED_CHANGES"
         TASK_OK=false
+        REVERT_REASON="Modified protected files: $PROTECTED_CHANGES"
     fi
 
     # Check 2: Build + tests (capture output for diagnostics)
@@ -559,10 +564,12 @@ TEOF
             echo "    BLOCKED: Task $TASK_NUM broke the build"
             echo "$BUILD_OUT" | tail -20 | sed 's/^/      /'
             TASK_OK=false
+            REVERT_REASON="Build failed"
         elif ! TEST_OUT=$(cargo test 2>&1); then
             echo "    BLOCKED: Task $TASK_NUM broke tests"
             echo "$TEST_OUT" | tail -20 | sed 's/^/      /'
             TASK_OK=false
+            REVERT_REASON="Tests failed"
         fi
     fi
 
@@ -576,6 +583,33 @@ TEOF
         fi
         git clean -fd 2>/dev/null || true
         TASK_FAILURES=$((TASK_FAILURES + 1))
+
+        # File an issue so future sessions know what was reverted
+        if command -v gh &>/dev/null; then
+            ISSUE_TITLE="Task reverted: ${task_title:0:200}"
+            ISSUE_BODY="**Day $DAY, Task $TASK_NUM** was automatically reverted by the verification gate.
+
+**Reason:** $REVERT_REASON
+
+**What was attempted:**
+$TASK_DESC"
+
+            # Check for existing issue to avoid duplicates
+            EXISTING_ISSUE=$(gh issue list --repo "$REPO" --state open \
+                --label "agent-self" --search "Task reverted: ${task_title}" \
+                --json number --jq '.[0].number' 2>/dev/null || true)
+
+            if [ -n "$EXISTING_ISSUE" ]; then
+                gh issue comment "$EXISTING_ISSUE" --repo "$REPO" \
+                    --body "Reverted again on Day $DAY. Reason: $REVERT_REASON" 2>/dev/null || true
+                echo "    Updated existing issue #$EXISTING_ISSUE"
+            else
+                gh issue create --repo "$REPO" \
+                    --title "$ISSUE_TITLE" \
+                    --body "$ISSUE_BODY" \
+                    --label "agent-self" 2>/dev/null || echo "    WARNING: Could not file revert issue"
+            fi
+        fi
     else
         echo "    Task $TASK_NUM: verified OK"
     fi
