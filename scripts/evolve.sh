@@ -109,7 +109,12 @@ fi
 echo ""
 
 # ── Step 0b: Load identity context ──
-source scripts/yoyo_context.sh
+if [ -f scripts/yoyo_context.sh ]; then
+    source scripts/yoyo_context.sh
+else
+    echo "WARNING: scripts/yoyo_context.sh not found — prompts will lack identity context" >&2
+    YOYO_CONTEXT=""
+fi
 
 # ── Step 1: Verify starting state ──
 echo "→ Checking build..."

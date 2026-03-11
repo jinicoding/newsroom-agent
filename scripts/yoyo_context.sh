@@ -17,17 +17,28 @@ _YOYO_REPO="${YOYO_REPO:-.}"
 
 _IDENTITY=""
 if [ -f "$_YOYO_REPO/IDENTITY.md" ]; then
-    _IDENTITY=$(cat "$_YOYO_REPO/IDENTITY.md")
+    _IDENTITY=$(cat "$_YOYO_REPO/IDENTITY.md") || {
+        echo "WARNING: Failed to read IDENTITY.md" >&2
+        _IDENTITY=""
+    }
+else
+    echo "WARNING: IDENTITY.md not found at $_YOYO_REPO/IDENTITY.md" >&2
 fi
 
 _PERSONALITY=""
 if [ -f "$_YOYO_REPO/PERSONALITY.md" ]; then
-    _PERSONALITY=$(cat "$_YOYO_REPO/PERSONALITY.md")
+    _PERSONALITY=$(cat "$_YOYO_REPO/PERSONALITY.md") || {
+        echo "WARNING: Failed to read PERSONALITY.md" >&2
+        _PERSONALITY=""
+    }
+else
+    echo "WARNING: PERSONALITY.md not found at $_YOYO_REPO/PERSONALITY.md" >&2
 fi
 
+# SOCIAL_LEARNINGS.md is optional — no warning if missing
 _SOCIAL_LEARNINGS=""
 if [ -f "$_YOYO_REPO/SOCIAL_LEARNINGS.md" ]; then
-    _SOCIAL_LEARNINGS=$(cat "$_YOYO_REPO/SOCIAL_LEARNINGS.md")
+    _SOCIAL_LEARNINGS=$(cat "$_YOYO_REPO/SOCIAL_LEARNINGS.md") || _SOCIAL_LEARNINGS=""
 fi
 
 YOYO_CONTEXT="=== WHO YOU ARE ===

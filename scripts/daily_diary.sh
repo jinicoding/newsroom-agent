@@ -76,7 +76,12 @@ if [ "$TARGET_DATE" != "unknown" ] && command -v gh &>/dev/null; then
 fi
 
 # --- Load identity context ---
-YOYO_REPO="$YOYO_REPO" source "$YOYO_REPO/scripts/yoyo_context.sh"
+if [ -f "$YOYO_REPO/scripts/yoyo_context.sh" ]; then
+    YOYO_REPO="$YOYO_REPO" source "$YOYO_REPO/scripts/yoyo_context.sh"
+else
+    echo "WARNING: yoyo_context.sh not found — prompts will lack identity context" >&2
+    YOYO_CONTEXT=""
+fi
 
 # --- Count stats ---
 COMMIT_COUNT=$(echo "$COMMITS" | grep -c "." 2>/dev/null || echo "0")
