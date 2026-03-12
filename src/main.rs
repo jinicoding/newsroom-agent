@@ -26,6 +26,7 @@
 //!   /model <name>   Switch model mid-session
 //!   /search <query> Search conversation history
 //!   /tree [depth]   Show project directory tree
+//!   /test           Auto-detect and run project tests
 //!   /pr [number]    List open PRs, view/diff/comment/checkout a PR
 //!   /retry          Re-send the last user input
 
@@ -796,6 +797,10 @@ async fn main() {
                 commands::handle_health();
                 continue;
             }
+            "/test" => {
+                commands::handle_test();
+                continue;
+            }
             "/fix" => {
                 if let Some(fix_prompt) =
                     commands::handle_fix(&mut agent, &mut session_total, &model).await
@@ -971,7 +976,7 @@ mod tests {
     use commands::{
         build_fix_prompt, build_project_tree, detect_project_type, format_tree_from_paths,
         health_checks_for_project, run_health_check_for_project, run_health_checks_full_output,
-        ProjectType,
+        test_command_for_project, ProjectType,
     };
 
     #[test]
@@ -1006,7 +1011,7 @@ mod tests {
             "/help", "/quit", "/exit", "/clear", "/compact", "/commit", "/config", "/context",
             "/cost", "/docs", "/fix", "/init", "/status", "/tokens", "/save", "/load", "/diff",
             "/undo", "/health", "/retry", "/run", "/history", "/search", "/model", "/think",
-            "/version", "/tree", "/pr", "/git",
+            "/version", "/tree", "/pr", "/git", "/test",
         ];
         for cmd in &commands {
             assert!(
@@ -1790,6 +1795,81 @@ mod tests {
         assert!(
             prompt.is_empty() || prompt.contains("Fix"),
             "Empty failures should produce empty or minimal prompt"
+        );
+    }
+
+    #[test]
+    fn test_test_command_recognized() {
+        assert!(!is_unknown_command("/test"));
+        assert!(
+            KNOWN_COMMANDS.contains(&"/test"),
+            "/test should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn test_test_command_for_rust_project() {
+        let cmd = test_command_for_project(&ProjectType::Rust);
+        assert!(cmd.is_some(), "Rust project should have a test command");
+        let (label, args) = cmd.unwrap();
+        assert!(
+            label.contains("cargo"),
+            "Rust test label should mention cargo"
+        );
+        assert_eq!(args[0], "cargo");
+        assert!(args.contains(&"test"));
+    }
+
+    #[test]
+    fn test_test_command_for_node_project() {
+        let cmd = test_command_for_project(&ProjectType::Node);
+        assert!(cmd.is_some(), "Node project should have a test command");
+        let (label, args) = cmd.unwrap();
+        assert!(label.contains("npm"), "Node test label should mention npm");
+        assert_eq!(args[0], "npm");
+        assert!(args.contains(&"test"));
+    }
+
+    #[test]
+    fn test_test_command_for_python_project() {
+        let cmd = test_command_for_project(&ProjectType::Python);
+        assert!(cmd.is_some(), "Python project should have a test command");
+        let (label, _args) = cmd.unwrap();
+        assert!(
+            label.contains("pytest"),
+            "Python test label should mention pytest"
+        );
+    }
+
+    #[test]
+    fn test_test_command_for_go_project() {
+        let cmd = test_command_for_project(&ProjectType::Go);
+        assert!(cmd.is_some(), "Go project should have a test command");
+        let (label, args) = cmd.unwrap();
+        assert!(label.contains("go"), "Go test label should mention go");
+        assert_eq!(args[0], "go");
+        assert!(args.contains(&"test"));
+    }
+
+    #[test]
+    fn test_test_command_for_make_project() {
+        let cmd = test_command_for_project(&ProjectType::Make);
+        assert!(cmd.is_some(), "Make project should have a test command");
+        let (label, args) = cmd.unwrap();
+        assert!(
+            label.contains("make"),
+            "Make test label should mention make"
+        );
+        assert_eq!(args[0], "make");
+        assert!(args.contains(&"test"));
+    }
+
+    #[test]
+    fn test_test_command_for_unknown_project() {
+        let cmd = test_command_for_project(&ProjectType::Unknown);
+        assert!(
+            cmd.is_none(),
+            "Unknown project should not have a test command"
         );
     }
 

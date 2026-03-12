@@ -24,7 +24,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/help", "/quit", "/exit", "/clear", "/compact", "/commit", "/cost", "/docs", "/fix",
     "/status", "/tokens", "/save", "/load", "/diff", "/undo", "/health", "/retry", "/history",
     "/search", "/model", "/think", "/config", "/context", "/init", "/version", "/run", "/tree",
-    "/pr", "/git",
+    "/pr", "/git", "/test",
 ];
 
 /// Check if a slash-prefixed input is an unknown command.
@@ -74,6 +74,7 @@ pub fn handle_help() {
     println!("  /retry             Re-send the last user input");
     println!("  /run <cmd>         Run a shell command directly (no AI, no tokens)");
     println!("  !<cmd>             Shortcut for /run");
+    println!("  /test              Auto-detect and run project tests (cargo test, npm test, etc.)");
     println!("  /history           Show summary of conversation messages");
     println!("  /search <query>    Search conversation history for matching messages");
     println!("  /tree [depth]      Show project directory tree (default depth: 3)");
@@ -972,6 +973,95 @@ pub async fn handle_fix(
     run_prompt(agent, &fix_prompt, session_total, model).await;
     auto_compact_if_needed(agent);
     Some(fix_prompt)
+}
+
+// ── /test ─────────────────────────────────────────────────────────────
+
+/// Return the test command for a given project type.
+pub fn test_command_for_project(
+    project_type: &ProjectType,
+) -> Option<(&'static str, Vec<&'static str>)> {
+    match project_type {
+        ProjectType::Rust => Some(("cargo test", vec!["cargo", "test"])),
+        ProjectType::Node => Some(("npm test", vec!["npm", "test"])),
+        ProjectType::Python => Some(("python -m pytest", vec!["python", "-m", "pytest"])),
+        ProjectType::Go => Some(("go test ./...", vec!["go", "test", "./..."])),
+        ProjectType::Make => Some(("make test", vec!["make", "test"])),
+        ProjectType::Unknown => None,
+    }
+}
+
+/// Handle the /test command: auto-detect project type and run tests.
+/// Returns a summary string suitable for AI context.
+pub fn handle_test() -> Option<String> {
+    let project_type = detect_project_type(&std::env::current_dir().unwrap_or_default());
+    println!("{DIM}  Detected project: {project_type}{RESET}");
+    if project_type == ProjectType::Unknown {
+        println!(
+            "{DIM}  No recognized project found. Looked for: Cargo.toml, package.json, pyproject.toml, setup.py, go.mod, Makefile{RESET}\n"
+        );
+        return None;
+    }
+
+    let (label, args) = match test_command_for_project(&project_type) {
+        Some(cmd) => cmd,
+        None => {
+            println!("{DIM}  No test command configured for {project_type}{RESET}\n");
+            return None;
+        }
+    };
+
+    println!("{DIM}  Running: {label}...{RESET}");
+    let start = std::time::Instant::now();
+    let output = std::process::Command::new(args[0])
+        .args(&args[1..])
+        .output();
+    let elapsed = format_duration(start.elapsed());
+
+    match output {
+        Ok(o) => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            let stderr = String::from_utf8_lossy(&o.stderr);
+
+            if !stdout.is_empty() {
+                print!("{stdout}");
+            }
+            if !stderr.is_empty() {
+                eprint!("{stderr}");
+            }
+
+            if o.status.success() {
+                println!("\n{GREEN}  ✓ Tests passed ({elapsed}){RESET}\n");
+                Some(format!("Tests passed ({elapsed}): {label}"))
+            } else {
+                let code = o.status.code().unwrap_or(-1);
+                println!("\n{RED}  ✗ Tests failed (exit {code}, {elapsed}){RESET}\n");
+                let mut summary = format!("Tests FAILED (exit {code}, {elapsed}): {label}");
+                // Include a preview of the error output for AI context
+                let error_text = if !stderr.is_empty() {
+                    stderr.to_string()
+                } else {
+                    stdout.to_string()
+                };
+                let lines: Vec<&str> = error_text.lines().collect();
+                let preview_lines = if lines.len() > 20 {
+                    &lines[lines.len() - 20..]
+                } else {
+                    &lines
+                };
+                summary.push_str("\n\nLast output:\n");
+                for line in preview_lines {
+                    summary.push_str(line);
+                    summary.push('\n');
+                }
+                Some(summary)
+            }
+        }
+        Err(e) => {
+            eprintln!("{RED}  ✗ Failed to run {label}: {e}{RESET}\n");
+            Some(format!("Failed to run {label}: {e}"))
+        }
+    }
 }
 
 // ── /tree ────────────────────────────────────────────────────────────────

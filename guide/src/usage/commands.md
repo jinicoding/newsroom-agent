@@ -122,6 +122,7 @@ The `/run` command (or `!` shortcut) lets you execute shell commands without goi
 | `/pr <number> comment <text>` | Add a comment to a PR (`gh pr comment <number>`) |
 | `/pr <number> checkout` | Checkout a PR branch locally (`gh pr checkout <number>`) |
 | `/health` | Run project health checks — auto-detects project type, reports pass/fail with timing |
+| `/test` | Auto-detect and run project tests — shows output with timing |
 | `/fix` | Auto-fix build/lint errors — runs health checks, sends failures to the AI agent for fixing |
 
 The `/git` command is a convenience wrapper for common git operations without burning AI tokens or using `/run git ...`. For example:
@@ -160,6 +161,8 @@ The `/health` command auto-detects your project type by looking for marker files
 - **Makefile** (`Makefile`): `make test`
 
 If no recognized project type is found, it shows a helpful message listing the marker files it looked for.
+
+The `/test` command is a focused shortcut that only runs the test suite for your project (e.g., `cargo test`, `npm test`, `python -m pytest`, `go test ./...`, `make test`). It auto-detects the project type the same way `/health` does, but runs just the tests — with full output and timing. This is handy for a quick test run without the full suite of lint/build checks that `/health` performs.
 
 The `/fix` command goes one step further than `/health` — it runs the same health checks, but when any check fails, it sends the full error output to the AI agent with a prompt to fix the issues. The AI reads the relevant files, understands the errors, and applies fixes using its tools. After fixing, it re-runs the checks to verify. This is particularly useful for quickly resolving lint warnings, format issues, or build errors.
 

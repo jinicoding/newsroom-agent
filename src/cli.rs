@@ -256,6 +256,7 @@ pub fn print_help() {
     println!("  /run <cmd>        Run a shell command directly (no AI, no tokens)");
     println!("  /save [path]      Save session to file");
     println!("  /status           Show session info");
+    println!("  /test             Auto-detect and run project tests");
     println!("  /think [level]    Show or change thinking level (off/low/medium/high)");
     println!("  /tokens           Show token usage and context window");
     println!("  /tree [depth]     Show project directory tree (default depth: 3)");
