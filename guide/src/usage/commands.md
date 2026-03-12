@@ -210,8 +210,24 @@ The `/fix` command goes one step further than `/health` — it runs the same hea
 | Command | Description |
 |---------|-------------|
 | `/context` | Show which project context files are loaded (YOYO.md is primary; CLAUDE.md supported for compatibility) |
+| `/find <pattern>` | Fuzzy-search project files by name — respects `.gitignore`, ranked by relevance |
 | `/init` | Create a starter YOYO.md project context file |
 | `/tree [depth]` | Show project directory tree (default depth: 3, respects `.gitignore`) |
+
+The `/find` command does fuzzy substring matching across all tracked files in your project (via `git ls-files`, falling back to a directory walk if not in a git repo). Results are ranked by relevance — filename matches score higher than directory matches, and matches at the start of the filename rank highest.
+
+```
+/find main
+  3 files matching 'main':
+    src/main.rs
+    docs/book/index.html
+    scripts/main_helper.sh
+
+/find .toml
+  2 files matching '.toml':
+    Cargo.toml
+    guide/book.toml
+```
 
 The `/tree` command uses `git ls-files` to show tracked files in a visual tree structure, automatically respecting your `.gitignore`. You can specify a depth limit:
 

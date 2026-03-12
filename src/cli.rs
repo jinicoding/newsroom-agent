@@ -244,6 +244,7 @@ pub fn print_help() {
     println!("  /context          Show loaded project context files (YOYO.md)");
     println!("  /cost             Show estimated session cost");
     println!("  /diff             Show git diff summary of uncommitted changes");
+    println!("  /find <pattern>   Fuzzy-search project files by name");
     println!("  /git <subcmd>     Quick git: status, log [n], add <path>, stash, stash pop");
     println!("  /health           Run project health checks (auto-detects project type)");
     println!("  /pr [number]      List open PRs, or view details of a specific PR");

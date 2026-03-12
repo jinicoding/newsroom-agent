@@ -21,6 +21,7 @@
 //!   /commit [msg]   Commit staged changes (AI-generates message if no msg)
 //!   /docs <crate>   Look up docs.rs documentation for a Rust crate
 //!   /docs <c> <i>   Look up a specific item within a crate
+//!   /find <pattern> Fuzzy-search project files by name
 //!   /fix            Auto-fix build/lint errors (runs checks, sends failures to AI)
 //!   /git <subcmd>   Quick git: status, log, add, diff, branch, stash
 //!   /model <name>   Switch model mid-session
@@ -493,9 +494,9 @@ mod tests {
     fn test_command_help_recognized() {
         let commands = [
             "/help", "/quit", "/exit", "/clear", "/compact", "/commit", "/config", "/context",
-            "/cost", "/docs", "/fix", "/init", "/status", "/tokens", "/save", "/load", "/diff",
-            "/undo", "/health", "/retry", "/run", "/history", "/search", "/model", "/think",
-            "/version", "/tree", "/pr", "/git", "/test", "/lint", "/spawn",
+            "/cost", "/docs", "/find", "/fix", "/init", "/status", "/tokens", "/save", "/load",
+            "/diff", "/undo", "/health", "/retry", "/run", "/history", "/search", "/model",
+            "/think", "/version", "/tree", "/pr", "/git", "/test", "/lint", "/spawn",
         ];
         for cmd in &commands {
             assert!(
@@ -1583,5 +1584,124 @@ mod tests {
             task,
             Some("analyze src/ and list all public functions".to_string())
         );
+    }
+
+    #[test]
+    fn test_find_command_recognized() {
+        assert!(!is_unknown_command("/find"));
+        assert!(!is_unknown_command("/find main"));
+        assert!(!is_unknown_command("/find .toml"));
+        assert!(
+            KNOWN_COMMANDS.contains(&"/find"),
+            "/find should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn test_fuzzy_score_basic_match() {
+        use commands::fuzzy_score;
+        // Pattern found in path → Some score
+        let score = fuzzy_score("src/main.rs", "main");
+        assert!(score.is_some(), "should match 'main' in 'src/main.rs'");
+        assert!(score.unwrap() > 0, "score should be positive");
+    }
+
+    #[test]
+    fn test_fuzzy_score_no_match() {
+        use commands::fuzzy_score;
+        let score = fuzzy_score("src/main.rs", "zzznotfound");
+        assert!(score.is_none(), "should not match 'zzznotfound'");
+    }
+
+    #[test]
+    fn test_fuzzy_score_case_insensitive() {
+        use commands::fuzzy_score;
+        let score_lower = fuzzy_score("src/main.rs", "main");
+        let score_upper = fuzzy_score("src/main.rs", "MAIN");
+        assert!(score_lower.is_some());
+        assert!(score_upper.is_some());
+        // Both should match with same score
+        assert_eq!(score_lower, score_upper);
+    }
+
+    #[test]
+    fn test_fuzzy_score_filename_match_higher() {
+        use commands::fuzzy_score;
+        // "main" matches in filename for "src/main.rs" but only in dir for "main/other.rs"
+        let filename_score = fuzzy_score("src/main.rs", "main");
+        let dir_score = fuzzy_score("main_stuff/other.rs", "main");
+        assert!(filename_score.is_some());
+        assert!(dir_score.is_some());
+        // Filename match should score higher because it gets the filename bonus
+        assert!(
+            filename_score.unwrap() > dir_score.unwrap(),
+            "filename match should score higher: {} vs {}",
+            filename_score.unwrap(),
+            dir_score.unwrap()
+        );
+    }
+
+    #[test]
+    fn test_fuzzy_score_start_of_filename_bonus() {
+        use commands::fuzzy_score;
+        // "cli" at start of filename should score higher than "cli" embedded elsewhere
+        let start_score = fuzzy_score("src/cli.rs", "cli");
+        let mid_score = fuzzy_score("src/public_client.rs", "cli");
+        assert!(start_score.is_some());
+        assert!(mid_score.is_some());
+        assert!(
+            start_score.unwrap() > mid_score.unwrap(),
+            "start-of-filename match should score higher: {} vs {}",
+            start_score.unwrap(),
+            mid_score.unwrap()
+        );
+    }
+
+    #[test]
+    fn test_find_files_returns_sorted() {
+        use commands::find_files;
+        // Search for a common pattern in this project
+        let matches = find_files("main");
+        assert!(!matches.is_empty(), "should find files matching 'main'");
+        // Results should be sorted by score descending
+        for window in matches.windows(2) {
+            assert!(
+                window[0].score >= window[1].score,
+                "results should be sorted by score descending: {} >= {}",
+                window[0].score,
+                window[1].score
+            );
+        }
+    }
+
+    #[test]
+    fn test_find_files_no_results() {
+        use commands::find_files;
+        let matches = find_files("xyzzy_nonexistent_pattern_12345");
+        assert!(
+            matches.is_empty(),
+            "should find no files for nonsense pattern"
+        );
+    }
+
+    #[test]
+    fn test_find_command_matching() {
+        // /find should match exact or with space separator, not /finding
+        let find_matches = |s: &str| s == "/find" || s.starts_with("/find ");
+        assert!(find_matches("/find"));
+        assert!(find_matches("/find main"));
+        assert!(find_matches("/find .toml"));
+        assert!(!find_matches("/finding"));
+        assert!(!find_matches("/findall"));
+    }
+
+    #[test]
+    fn test_highlight_match_basic() {
+        use commands::highlight_match;
+        let result = highlight_match("src/main.rs", "main");
+        // Should contain the original path text
+        assert!(result.contains("main"));
+        assert!(result.contains("src/"));
+        assert!(result.contains(".rs"));
     }
 }

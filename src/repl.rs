@@ -445,6 +445,14 @@ pub async fn run_repl(
                 commands::handle_docs(input);
                 continue;
             }
+            "/find" => {
+                commands::handle_find(input);
+                continue;
+            }
+            s if s.starts_with("/find ") => {
+                commands::handle_find(input);
+                continue;
+            }
             "/init" => {
                 commands::handle_init();
                 continue;

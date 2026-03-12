@@ -21,7 +21,7 @@ use yoagent::*;
 /// Known REPL command prefixes. Used to detect unknown slash commands
 /// and for tab-completion in the REPL.
 pub const KNOWN_COMMANDS: &[&str] = &[
-    "/help", "/quit", "/exit", "/clear", "/compact", "/commit", "/cost", "/docs", "/fix",
+    "/help", "/quit", "/exit", "/clear", "/compact", "/commit", "/cost", "/docs", "/find", "/fix",
     "/status", "/tokens", "/save", "/load", "/diff", "/undo", "/health", "/retry", "/history",
     "/search", "/model", "/think", "/config", "/context", "/init", "/version", "/run", "/tree",
     "/pr", "/git", "/test", "/lint", "/spawn",
@@ -57,6 +57,7 @@ pub fn handle_help() {
     println!("  /context           Show loaded project context files");
     println!("  /cost              Show estimated session cost");
     println!("  /docs <crate> [item] Look up docs.rs documentation for a Rust crate");
+    println!("  /find <pattern>     Fuzzy-search project files by name");
     println!("  /init              Create a starter YOYO.md project context file");
     println!("  /model <name>      Switch model (preserves conversation)");
     println!("  /think [level]     Show or change thinking level (off/low/medium/high)");
@@ -1528,4 +1529,182 @@ pub fn handle_git(input: &str) {
     let arg = input.strip_prefix("/git").unwrap_or("").trim();
     let subcmd = parse_git_args(arg);
     run_git_subcommand(&subcmd);
+}
+
+// ── /find ────────────────────────────────────────────────────────────────
+
+/// Result of a fuzzy file match: (file_path, score, match_ranges).
+/// Higher score = better match. match_ranges are byte offsets into the lowercased path.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FindMatch {
+    pub path: String,
+    pub score: i32,
+}
+
+/// Score a file path against a fuzzy pattern (case-insensitive substring match).
+/// Returns None if the pattern doesn't match.
+/// Scoring:
+///   - Base score for containing the pattern as a substring
+///   - Bonus for matching the filename (last component) vs directory
+///   - Bonus for exact filename match
+///   - Bonus for match at the start of the filename
+///   - Shorter paths score higher (less noise)
+pub fn fuzzy_score(path: &str, pattern: &str) -> Option<i32> {
+    let path_lower = path.to_lowercase();
+    let pattern_lower = pattern.to_lowercase();
+
+    if !path_lower.contains(&pattern_lower) {
+        return None;
+    }
+
+    let mut score: i32 = 100; // base score for matching
+
+    // Extract filename (last path component)
+    let filename = path.rsplit('/').next().unwrap_or(path);
+    let filename_lower = filename.to_lowercase();
+
+    // Big bonus if the pattern matches within the filename itself
+    if filename_lower.contains(&pattern_lower) {
+        score += 50;
+
+        // Bonus for matching at the start of filename
+        if filename_lower.starts_with(&pattern_lower) {
+            score += 30;
+        }
+
+        // Bonus for exact filename match (without extension)
+        let stem = filename_lower.split('.').next().unwrap_or(&filename_lower);
+        if stem == pattern_lower {
+            score += 20;
+        }
+    }
+
+    // Shorter paths are slightly preferred (less deeply nested = more relevant)
+    let depth = path.matches('/').count();
+    score -= depth as i32 * 2;
+
+    Some(score)
+}
+
+/// Find files matching a fuzzy pattern. Uses `git ls-files` if in a git repo,
+/// otherwise falls back to a recursive directory listing.
+pub fn find_files(pattern: &str) -> Vec<FindMatch> {
+    let files = list_project_files();
+    let mut matches: Vec<FindMatch> = files
+        .iter()
+        .filter_map(|path| {
+            fuzzy_score(path, pattern).map(|score| FindMatch {
+                path: path.clone(),
+                score,
+            })
+        })
+        .collect();
+
+    // Sort by score descending, then alphabetically for ties
+    matches.sort_by(|a, b| b.score.cmp(&a.score).then(a.path.cmp(&b.path)));
+    matches
+}
+
+/// List all project files. Prefers `git ls-files`, falls back to walkdir-style listing.
+fn list_project_files() -> Vec<String> {
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["ls-files"])
+        .output()
+    {
+        if output.status.success() {
+            let text = String::from_utf8_lossy(&output.stdout);
+            return text
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(|l| l.to_string())
+                .collect();
+        }
+    }
+
+    // Fallback: recursive listing of current directory (respecting common ignores)
+    walk_directory(".", 8)
+}
+
+/// Simple recursive directory walk (fallback when not in a git repo).
+fn walk_directory(dir: &str, max_depth: usize) -> Vec<String> {
+    let mut files = Vec::new();
+    walk_directory_inner(dir, max_depth, 0, &mut files);
+    files
+}
+
+fn walk_directory_inner(dir: &str, max_depth: usize, depth: usize, files: &mut Vec<String>) {
+    if depth > max_depth {
+        return;
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        // Skip hidden dirs and common ignore patterns
+        if name.starts_with('.') || name == "node_modules" || name == "target" {
+            continue;
+        }
+        let path = if dir == "." {
+            name.clone()
+        } else {
+            format!("{dir}/{name}")
+        };
+        if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+            walk_directory_inner(&path, max_depth, depth + 1, files);
+        } else {
+            files.push(path);
+        }
+    }
+}
+
+/// Highlight the matching pattern within a file path for display.
+/// Returns the path with ANSI bold/color around the matched portion.
+pub fn highlight_match(path: &str, pattern: &str) -> String {
+    let path_lower = path.to_lowercase();
+    let pattern_lower = pattern.to_lowercase();
+
+    if let Some(pos) = path_lower.rfind(&pattern_lower) {
+        // Prefer highlighting in the filename portion
+        let end = pos + pattern.len();
+        format!(
+            "{}{BOLD}{GREEN}{}{RESET}{}",
+            &path[..pos],
+            &path[pos..end],
+            &path[end..]
+        )
+    } else {
+        path.to_string()
+    }
+}
+
+pub fn handle_find(input: &str) {
+    let arg = input.strip_prefix("/find").unwrap_or("").trim();
+    if arg.is_empty() {
+        println!("{DIM}  usage: /find <pattern>");
+        println!("  Fuzzy-search project files by name.");
+        println!("  Examples: /find main, /find .toml, /find test{RESET}\n");
+        return;
+    }
+
+    let matches = find_files(arg);
+    if matches.is_empty() {
+        println!("{DIM}  No files matching '{arg}'.{RESET}\n");
+    } else {
+        let count = matches.len();
+        let shown = matches.iter().take(20);
+        println!(
+            "{DIM}  {count} file{s} matching '{arg}':",
+            s = if count == 1 { "" } else { "s" }
+        );
+        for m in shown {
+            let highlighted = highlight_match(&m.path, arg);
+            println!("    {highlighted}");
+        }
+        if count > 20 {
+            println!("    {DIM}... and {} more{RESET}", count - 20);
+        }
+        println!("{RESET}");
+    }
 }
