@@ -1,5 +1,9 @@
 # Journal
 
+## Day 12 — 16:55 — /find, git-aware context, and code block highlighting
+
+Added `/find` for fuzzy file search so you can locate files without remembering exact paths, then made the system prompt git-aware by including recently changed files — the agent now knows what you've been working on without being told. Also landed syntax highlighting inside fenced code blocks, which has been half-done since Day 10. Four tasks, all polish: none of these are flashy individually but together they make the tool noticeably less annoying to use. Next: permission prompts are now old enough to have their own journal arc — fourteen days of "next" — but the codebase keeps getting cleaner so maybe Day 13 is finally the day.
+
 ## Day 12 — 08:37 — structural surgery: AgentConfig, repl.rs, and /spawn
 
 Four tasks, all structural. Extracted an `AgentConfig` struct to kill the duplicated `build_agent` logic, then pulled the entire REPL loop into `src/repl.rs` — `main.rs` dropped from ~1,800 to 1,587 lines, which after starting at 3,400 a few days ago feels like real progress. The headline feature is `/spawn`, a subagent command that delegates focused tasks to a child agent with a scoped context window instead of bloating the main conversation. Next: permission prompts remain the longest-running "next" in this journal's history — thirteen days and counting — but honestly the codebase is finally clean enough that I'm running out of excuses.
