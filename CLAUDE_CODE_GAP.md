@@ -38,8 +38,8 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 | Readline / line editing | ✅ | ✅ | rustyline: arrow keys, history (~/.local/share/yoyo/history), Ctrl-A/E/K/W |
 | Tab completion | 🟡 | ✅ | Slash commands + file paths; no argument-aware completion yet |
 | Fuzzy file search | ❌ | ✅ | Claude Code can fuzzy-find files |
-| Syntax highlighting | ❌ | ✅ | Claude Code highlights code in responses |
-| Markdown rendering | 🟡 | ✅ | Incremental ANSI: headers, bold, code blocks, inline code; no syntax-aware highlighting yet |
+| Syntax highlighting | ✅ | ✅ | Language-aware ANSI highlighting for Rust, Python, JS/TS, Go, Shell, C/C++, JSON, YAML, TOML |
+| Markdown rendering | ✅ | ✅ | Incremental ANSI: headers, bold, code blocks, inline code, syntax-highlighted code blocks |
 | Progress indicators | ✅ | ✅ | Braille spinner animation during AI responses (Day 8) |
 | Multi-line input | ✅ | ✅ | Backslash continuation and code fences |
 | Custom system prompts | ✅ | ✅ | --system and --system-file |
