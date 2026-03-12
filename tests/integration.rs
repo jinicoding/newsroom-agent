@@ -362,9 +362,9 @@ fn help_output_lists_all_documented_repl_commands() {
     // Every documented REPL command should appear in --help output
     let expected_commands = [
         "/quit", "/exit", "/clear", "/compact", "/commit", "/config", "/context", "/cost", "/diff",
-        "/find", "/git", "/health", "/pr", "/history", "/search", "/init", "/load", "/model",
-        "/retry", "/run", "/save", "/spawn", "/status", "/test", "/think", "/tokens", "/tree",
-        "/undo", "/version",
+        "/docs", "/find", "/fix", "/git", "/health", "/pr", "/history", "/search", "/init",
+        "/lint", "/load", "/model", "/retry", "/run", "/save", "/spawn", "/status", "/test",
+        "/think", "/tokens", "/tree", "/undo", "/version",
     ];
     for cmd in &expected_commands {
         assert!(

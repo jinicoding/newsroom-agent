@@ -244,13 +244,16 @@ pub fn print_help() {
     println!("  /context          Show loaded project context files (YOYO.md)");
     println!("  /cost             Show estimated session cost");
     println!("  /diff             Show git diff summary of uncommitted changes");
+    println!("  /docs <crate>     Look up docs.rs documentation for a Rust crate");
     println!("  /find <pattern>   Fuzzy-search project files by name");
+    println!("  /fix              Auto-fix build/lint errors (runs checks, sends failures to AI)");
     println!("  /git <subcmd>     Quick git: status, log [n], add <path>, stash, stash pop");
     println!("  /health           Run project health checks (auto-detects project type)");
     println!("  /pr [number]      List open PRs, or view details of a specific PR");
     println!("  /history          Show summary of conversation messages");
     println!("  /search <query>   Search conversation history for matching messages");
     println!("  /init             Create a starter YOYO.md project context file");
+    println!("  /lint             Auto-detect and run project linter");
     println!("  /load [path]      Load session from file");
     println!("  /model <name>     Switch model mid-session");
     println!("  /retry            Re-send the last user input");

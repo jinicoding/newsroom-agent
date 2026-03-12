@@ -37,7 +37,7 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 | Git integration | ✅ | ✅ | Branch in prompt, /diff, /undo |
 | Readline / line editing | ✅ | ✅ | rustyline: arrow keys, history (~/.local/share/yoyo/history), Ctrl-A/E/K/W |
 | Tab completion | 🟡 | ✅ | Slash commands + file paths; no argument-aware completion yet |
-| Fuzzy file search | ❌ | ✅ | Claude Code can fuzzy-find files |
+| Fuzzy file search | ✅ | ✅ | `/find` with scoring, git-aware file listing, top-10 ranked results (Day 12) |
 | Syntax highlighting | ✅ | ✅ | Language-aware ANSI highlighting for Rust, Python, JS/TS, Go, Shell, C/C++, JSON, YAML, TOML |
 | Markdown rendering | ✅ | ✅ | Incremental ANSI: headers, bold, code blocks, inline code, syntax-highlighted code blocks |
 | Progress indicators | ✅ | ✅ | Braille spinner animation during AI responses (Day 8) |
@@ -71,7 +71,7 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 |---------|------|-------------|-------|
 | Project context files | ✅ | ✅ | yoyo reads YOYO.md, CLAUDE.md, and .yoyo/instructions.md |
 | Auto-detect project type | ✅ | ✅ | `detect_project_type` used by `/test`, `/lint`, `/health`, `/fix` (Rust, Node, Python, Go, Make) |
-| Git-aware file selection | ❌ | ✅ | Claude Code prioritizes recently changed files |
+| Git-aware file selection | ✅ | ✅ | `get_recently_changed_files` appended to project context (Day 12) |
 | Codebase indexing | ❌ | ✅ | Claude Code indexes for faster search |
 
 ## Developer Workflow
@@ -111,12 +111,15 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 
 Based on this analysis, the highest-impact missing features are:
 
-1. **Syntax-aware code highlighting** — Upgrade markdown rendering with language-specific highlighting in code blocks
-2. **Parallel tool execution** — Speed up multi-tool workflows
-3. **Argument-aware tab completion** — Complete --model values, file args for /load, etc.
-4. **Git-aware file selection** — Prioritize recently changed files for context
+1. **Parallel tool execution** — Speed up multi-tool workflows
+2. **Argument-aware tab completion** — Complete --model values, file args for /load, etc.
+3. **Codebase indexing** — Index project files for faster search
+4. **Directory restrictions** — Restrict file access to specific directories
 
 Recently completed:
+- ✅ Fuzzy file search (Day 12) — `/find` with scoring, git-aware file listing, ranked results
+- ✅ Git-aware context (Day 12) — `get_recently_changed_files` appended to project context
+- ✅ Syntax highlighting (Day 12) — language-aware ANSI highlighting for 8+ languages
 - ✅ REPL module extraction (Day 12) — extracted repl.rs from main.rs for cleaner separation
 - ✅ AgentConfig extraction (Day 12) — centralized config into AgentConfig struct in main.rs
 - ✅ `/spawn` subagent support (Day 12) — run tasks in separate context with `/spawn <task>`
@@ -138,13 +141,16 @@ Recently completed:
 
 ## Stats
 
-- yoyo: ~8,800 lines of Rust across 8 source files
-- 371 tests passing
-- 32 REPL commands (including /spawn for subagents)
-- 21 CLI flags (+ short aliases)
+- yoyo: ~10,000 lines of Rust across 8 source files
+- 438 tests passing (376 unit + 62 integration)
+- 33 REPL commands (including /spawn, /find, /docs, /fix, /lint)
+- 23 CLI flags (+ short aliases)
 - 10+ provider backends
 - MCP server support
 - OpenAPI tool loading
 - Config file support (.yoyo.toml)
 - Permission system (allow/deny globs)
 - Subagent spawning (/spawn)
+- Fuzzy file search (/find)
+- Git-aware project context
+- Syntax highlighting for 8+ languages
