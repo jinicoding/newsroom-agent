@@ -65,7 +65,7 @@ pub fn handle_help() {
     println!("  /tokens            Show token usage and context window");
     println!("  /save [path]       Save session to file (default: yoyo-session.json)");
     println!("  /load [path]       Load session from file");
-    println!("  /diff              Show git diff summary of uncommitted changes");
+    println!("  /diff              Show file summary, change stats, and full diff");
     println!("  /fix               Auto-fix build/lint errors (runs checks, sends failures to AI)");
     println!("  /git <subcmd>      Quick git: status, log, add, diff, branch, stash");
     println!("  /undo              Revert all uncommitted changes (git checkout)");
@@ -294,30 +294,255 @@ pub fn handle_load(agent: &mut Agent, input: &str) {
 
 // ── /diff ────────────────────────────────────────────────────────────────
 
+/// A parsed line from `git diff --stat` output.
+/// Example: " src/main.rs | 42 +++++++++-------"
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiffStatEntry {
+    pub file: String,
+    pub insertions: u32,
+    pub deletions: u32,
+}
+
+/// Summary totals from `git diff --stat` output.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiffStatSummary {
+    pub entries: Vec<DiffStatEntry>,
+    pub total_insertions: u32,
+    pub total_deletions: u32,
+}
+
+/// Parse `git diff --stat` output into structured entries.
+///
+/// Each line looks like:
+///   " src/commands.rs | 42 +++++++++-------"
+/// The last line is a summary like:
+///   " 3 files changed, 25 insertions(+), 10 deletions(-)"
+pub fn parse_diff_stat(stat_output: &str) -> DiffStatSummary {
+    let mut entries = Vec::new();
+    let mut total_insertions: u32 = 0;
+    let mut total_deletions: u32 = 0;
+
+    for line in stat_output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Try to parse summary line: "N file(s) changed, N insertion(s)(+), N deletion(s)(-)"
+        if trimmed.contains("changed")
+            && (trimmed.contains("insertion") || trimmed.contains("deletion"))
+        {
+            // Parse insertions
+            if let Some(ins_part) = trimmed.split("insertion").next() {
+                if let Some(num_str) = ins_part.split(',').next_back() {
+                    if let Ok(n) = num_str.trim().parse::<u32>() {
+                        total_insertions = n;
+                    }
+                }
+            }
+            // Parse deletions
+            if let Some(del_part) = trimmed.split("deletion").next() {
+                if let Some(num_str) = del_part.split(',').next_back() {
+                    if let Ok(n) = num_str.trim().parse::<u32>() {
+                        total_deletions = n;
+                    }
+                }
+            }
+            continue;
+        }
+
+        // Try to parse file entry: "file | N +++---" or "file | Bin 0 -> 1234 bytes"
+        if let Some(pipe_pos) = trimmed.find('|') {
+            let file = trimmed[..pipe_pos].trim().to_string();
+            let stats_part = trimmed[pipe_pos + 1..].trim();
+
+            if file.is_empty() {
+                continue;
+            }
+
+            // Count + and - characters in the visual bar
+            let insertions = stats_part.chars().filter(|&c| c == '+').count() as u32;
+            let deletions = stats_part.chars().filter(|&c| c == '-').count() as u32;
+
+            entries.push(DiffStatEntry {
+                file,
+                insertions,
+                deletions,
+            });
+        }
+    }
+
+    // If no summary line was found, compute totals from entries
+    if total_insertions == 0 && total_deletions == 0 {
+        total_insertions = entries.iter().map(|e| e.insertions).sum();
+        total_deletions = entries.iter().map(|e| e.deletions).sum();
+    }
+
+    DiffStatSummary {
+        entries,
+        total_insertions,
+        total_deletions,
+    }
+}
+
+/// Format a diff stat summary with colors for display.
+pub fn format_diff_stat(summary: &DiffStatSummary) -> String {
+    let mut output = String::new();
+
+    if summary.entries.is_empty() {
+        return output;
+    }
+
+    // Find max filename length for alignment
+    let max_name_len = summary
+        .entries
+        .iter()
+        .map(|e| e.file.len())
+        .max()
+        .unwrap_or(0);
+
+    output.push_str(&format!("{DIM}  File summary:{RESET}\n"));
+    for entry in &summary.entries {
+        let total_changes = entry.insertions + entry.deletions;
+        let ins_str = if entry.insertions > 0 {
+            format!("{GREEN}+{}{RESET}", entry.insertions)
+        } else {
+            String::new()
+        };
+        let del_str = if entry.deletions > 0 {
+            format!("{RED}-{}{RESET}", entry.deletions)
+        } else {
+            String::new()
+        };
+        let sep = if entry.insertions > 0 && entry.deletions > 0 {
+            " "
+        } else {
+            ""
+        };
+        output.push_str(&format!(
+            "    {:<width$}  {}{DIM}{:>4}{RESET} {ins_str}{sep}{del_str}\n",
+            entry.file,
+            "",
+            total_changes,
+            width = max_name_len,
+        ));
+    }
+
+    // Summary line
+    let files_count = summary.entries.len();
+    output.push_str(&format!(
+        "\n  {DIM}{files_count} file{s} changed{RESET}",
+        s = if files_count == 1 { "" } else { "s" }
+    ));
+    if summary.total_insertions > 0 {
+        output.push_str(&format!(", {GREEN}+{}{RESET}", summary.total_insertions));
+    }
+    if summary.total_deletions > 0 {
+        output.push_str(&format!(", {RED}-{}{RESET}", summary.total_deletions));
+    }
+    output.push('\n');
+
+    output
+}
+
 pub fn handle_diff() {
-    match std::process::Command::new("git")
+    // Check if we're in a git repo
+    let status_output = std::process::Command::new("git")
         .args(["status", "--short"])
-        .output()
-    {
+        .output();
+
+    match status_output {
         Ok(output) if output.status.success() => {
             let status = String::from_utf8_lossy(&output.stdout);
             if status.trim().is_empty() {
                 println!("{DIM}  (no uncommitted changes){RESET}\n");
-            } else {
-                println!("{DIM}  Changes:");
-                for line in status.lines() {
-                    println!("    {line}");
+                return;
+            }
+
+            // Get the stat summary
+            let stat_text = std::process::Command::new("git")
+                .args(["diff", "--stat"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                .unwrap_or_default();
+
+            // Also include staged changes in stat
+            let staged_stat_text = std::process::Command::new("git")
+                .args(["diff", "--cached", "--stat"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                .unwrap_or_default();
+
+            // Show file status list
+            println!("{DIM}  Changes:");
+            for line in status.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
                 }
-                println!("{RESET}");
-                if let Ok(diff) = std::process::Command::new("git")
-                    .args(["diff", "--stat"])
-                    .output()
-                {
-                    let diff_text = String::from_utf8_lossy(&diff.stdout);
-                    if !diff_text.trim().is_empty() {
-                        println!("{DIM}{diff_text}{RESET}");
+                // Color by status code
+                let (color, rest) = if trimmed.len() >= 2 {
+                    let code = &trimmed[..2];
+                    match code.chars().next().unwrap_or(' ') {
+                        'M' | 'A' | 'R' => (format!("{GREEN}"), trimmed),
+                        'D' => (format!("{RED}"), trimmed),
+                        '?' => (format!("{YELLOW}"), trimmed),
+                        _ => (format!("{DIM}"), trimmed),
+                    }
+                } else {
+                    (format!("{DIM}"), trimmed)
+                };
+                println!("    {color}{rest}{RESET}");
+            }
+            println!("{RESET}");
+
+            // Parse and display stat summary
+            let combined_stat =
+                if !staged_stat_text.trim().is_empty() && !stat_text.trim().is_empty() {
+                    format!("{}\n{}", staged_stat_text, stat_text)
+                } else if !staged_stat_text.trim().is_empty() {
+                    staged_stat_text
+                } else {
+                    stat_text
+                };
+
+            if !combined_stat.trim().is_empty() {
+                let summary = parse_diff_stat(&combined_stat);
+                let formatted = format_diff_stat(&summary);
+                if !formatted.is_empty() {
+                    print!("{formatted}");
+                }
+            }
+
+            // Show the full diff
+            let full_diff = std::process::Command::new("git")
+                .args(["diff"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                .unwrap_or_default();
+
+            if !full_diff.trim().is_empty() {
+                println!("\n{DIM}  ── Full diff ──{RESET}");
+                for line in full_diff.lines() {
+                    if line.starts_with('+') && !line.starts_with("+++") {
+                        println!("{GREEN}{line}{RESET}");
+                    } else if line.starts_with('-') && !line.starts_with("---") {
+                        println!("{RED}{line}{RESET}");
+                    } else if line.starts_with("@@") {
+                        println!("{CYAN}{line}{RESET}");
+                    } else if line.starts_with("diff ") || line.starts_with("index ") {
+                        println!("{BOLD}{line}{RESET}");
+                    } else {
+                        println!("{DIM}{line}{RESET}");
                     }
                 }
+                println!();
             }
         }
         _ => eprintln!("{RED}  error: not in a git repository{RESET}\n"),
@@ -3463,5 +3688,173 @@ mod tests {
         assert!(content.contains("Node"), "Should detect Node project type");
         assert!(content.contains("npm"), "Should include npm commands");
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // ── /diff stat parsing tests ────────────────────────────────────────
+
+    #[test]
+    fn test_parse_diff_stat_basic() {
+        let stat_output = " src/commands.rs | 42 ++++++++++++++++++++++++++++--------------
+ src/main.rs     |  8 +++++---
+ 2 files changed, 30 insertions(+), 20 deletions(-)
+";
+        let summary = parse_diff_stat(stat_output);
+        assert_eq!(summary.entries.len(), 2);
+        assert_eq!(summary.entries[0].file, "src/commands.rs");
+        assert_eq!(summary.entries[1].file, "src/main.rs");
+        assert_eq!(summary.total_insertions, 30);
+        assert_eq!(summary.total_deletions, 20);
+    }
+
+    #[test]
+    fn test_parse_diff_stat_single_file() {
+        let stat_output = " src/format.rs | 10 +++++++---
+ 1 file changed, 7 insertions(+), 3 deletions(-)
+";
+        let summary = parse_diff_stat(stat_output);
+        assert_eq!(summary.entries.len(), 1);
+        assert_eq!(summary.entries[0].file, "src/format.rs");
+        assert_eq!(summary.total_insertions, 7);
+        assert_eq!(summary.total_deletions, 3);
+    }
+
+    #[test]
+    fn test_parse_diff_stat_insertions_only() {
+        let stat_output = " new_file.rs | 25 +++++++++++++++++++++++++
+ 1 file changed, 25 insertions(+)
+";
+        let summary = parse_diff_stat(stat_output);
+        assert_eq!(summary.entries.len(), 1);
+        assert_eq!(summary.entries[0].file, "new_file.rs");
+        assert!(summary.entries[0].insertions > 0);
+        assert_eq!(summary.entries[0].deletions, 0);
+        assert_eq!(summary.total_insertions, 25);
+        assert_eq!(summary.total_deletions, 0);
+    }
+
+    #[test]
+    fn test_parse_diff_stat_deletions_only() {
+        let stat_output = " old_file.rs | 15 ---------------
+ 1 file changed, 15 deletions(-)
+";
+        let summary = parse_diff_stat(stat_output);
+        assert_eq!(summary.entries.len(), 1);
+        assert_eq!(summary.entries[0].file, "old_file.rs");
+        assert_eq!(summary.entries[0].insertions, 0);
+        assert!(summary.entries[0].deletions > 0);
+        assert_eq!(summary.total_insertions, 0);
+        assert_eq!(summary.total_deletions, 15);
+    }
+
+    #[test]
+    fn test_parse_diff_stat_empty() {
+        let summary = parse_diff_stat("");
+        assert!(summary.entries.is_empty());
+        assert_eq!(summary.total_insertions, 0);
+        assert_eq!(summary.total_deletions, 0);
+    }
+
+    #[test]
+    fn test_parse_diff_stat_no_summary_line() {
+        // Sometimes stat output has no summary — compute from entries
+        let stat_output = " src/main.rs | 5 +++--
+";
+        let summary = parse_diff_stat(stat_output);
+        assert_eq!(summary.entries.len(), 1);
+        // Totals computed from entry counts
+        assert_eq!(summary.total_insertions, summary.entries[0].insertions);
+        assert_eq!(summary.total_deletions, summary.entries[0].deletions);
+    }
+
+    #[test]
+    fn test_parse_diff_stat_multiple_files() {
+        let stat_output = " Cargo.toml       |  2 +-
+ src/cli.rs       | 15 ++++++++-------
+ src/commands.rs  | 88 +++++++++++++++++++++++++++++++++++++++++++++++++++++---
+ src/format.rs    |  3 ++-
+ 4 files changed, 78 insertions(+), 30 deletions(-)
+";
+        let summary = parse_diff_stat(stat_output);
+        assert_eq!(summary.entries.len(), 4);
+        assert_eq!(summary.entries[0].file, "Cargo.toml");
+        assert_eq!(summary.entries[2].file, "src/commands.rs");
+        assert_eq!(summary.total_insertions, 78);
+        assert_eq!(summary.total_deletions, 30);
+    }
+
+    #[test]
+    fn test_format_diff_stat_empty() {
+        let summary = DiffStatSummary {
+            entries: vec![],
+            total_insertions: 0,
+            total_deletions: 0,
+        };
+        let formatted = format_diff_stat(&summary);
+        assert!(
+            formatted.is_empty(),
+            "Empty summary should produce empty output"
+        );
+    }
+
+    #[test]
+    fn test_format_diff_stat_single_entry() {
+        let summary = DiffStatSummary {
+            entries: vec![DiffStatEntry {
+                file: "src/main.rs".to_string(),
+                insertions: 5,
+                deletions: 2,
+            }],
+            total_insertions: 5,
+            total_deletions: 2,
+        };
+        let formatted = format_diff_stat(&summary);
+        assert!(formatted.contains("src/main.rs"), "Should contain filename");
+        assert!(
+            formatted.contains("1 file changed"),
+            "Should show file count"
+        );
+        assert!(formatted.contains("+5"), "Should show insertions");
+        assert!(formatted.contains("-2"), "Should show deletions");
+    }
+
+    #[test]
+    fn test_format_diff_stat_multiple_entries() {
+        let summary = DiffStatSummary {
+            entries: vec![
+                DiffStatEntry {
+                    file: "src/a.rs".to_string(),
+                    insertions: 10,
+                    deletions: 0,
+                },
+                DiffStatEntry {
+                    file: "src/b.rs".to_string(),
+                    insertions: 0,
+                    deletions: 5,
+                },
+            ],
+            total_insertions: 10,
+            total_deletions: 5,
+        };
+        let formatted = format_diff_stat(&summary);
+        assert!(formatted.contains("src/a.rs"));
+        assert!(formatted.contains("src/b.rs"));
+        assert!(formatted.contains("2 files changed"));
+    }
+
+    #[test]
+    fn test_format_diff_stat_insertions_only_no_deletions_shown() {
+        let summary = DiffStatSummary {
+            entries: vec![DiffStatEntry {
+                file: "new.rs".to_string(),
+                insertions: 10,
+                deletions: 0,
+            }],
+            total_insertions: 10,
+            total_deletions: 0,
+        };
+        let formatted = format_diff_stat(&summary);
+        assert!(formatted.contains("+10"), "Should show insertions");
+        // "-0" should not appear
+        assert!(!formatted.contains("-0"), "Should not show zero deletions");
     }
 }
