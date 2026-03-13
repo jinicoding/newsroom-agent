@@ -136,6 +136,7 @@ The subagent has access to the same tools (bash, file operations, etc.) and uses
 | `/diff` | Show `git status --short` and `git diff --stat` of uncommitted changes |
 | `/undo` | Revert all uncommitted changes (`git checkout -- .` and `git clean -fd`) |
 | `/pr [number]` | List open PRs (`gh pr list`), or view a specific PR (`gh pr view <number>`) |
+| `/pr create [--draft]` | Create a PR with an AI-generated title and description |
 | `/pr <number> diff` | Show the diff of a PR (`gh pr diff <number>`) |
 | `/pr <number> comment <text>` | Add a comment to a PR (`gh pr comment <number>`) |
 | `/pr <number> checkout` | Checkout a PR branch locally (`gh pr checkout <number>`) |
@@ -164,6 +165,8 @@ The `/undo` command shows you what will be reverted before doing it.
 The `/pr` command is a quick wrapper around the [GitHub CLI](https://cli.github.com):
 
 - `/pr` — list the 10 most recent open pull requests
+- `/pr create` — create a PR with an AI-generated title and description from your branch's diff and commits
+- `/pr create --draft` — same, but as a draft PR
 - `/pr 42` — view details of PR #42
 - `/pr 42 diff` — show the diff for PR #42
 - `/pr 42 comment looks good!` — add a comment to PR #42

@@ -80,7 +80,7 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 |---------|------|-------------|-------|
 | Run tests | ✅ | ✅ | `/test` auto-detects project type and runs tests (Day 12) |
 | Auto-fix lint errors | ✅ | ✅ | `/lint` auto-detects and runs linter; `/fix` sends failures to AI (Day 9+12) |
-| PR description generation | ❌ | ✅ | Claude Code generates PR descriptions |
+| PR description generation | ✅ | ✅ | `/pr create [--draft]` generates AI-powered PR descriptions |
 | Commit message generation | ✅ | ✅ | `/commit` with heuristic-based message generation from staged diff (Day 8) |
 | Multi-file refactoring | 🟡 | ✅ | yoyo can via tools; Claude Code is better at coordinating |
 

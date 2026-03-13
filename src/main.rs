@@ -30,7 +30,7 @@
 //!   /tree [depth]   Show project directory tree
 //!   /test           Auto-detect and run project tests
 //!   /lint           Auto-detect and run project linter
-//!   /pr [number]    List open PRs, view/diff/comment/checkout a PR
+//!   /pr [number]    List open PRs, view/diff/comment/checkout a PR, or create one
 //!   /retry          Re-send the last user input
 
 mod cli;

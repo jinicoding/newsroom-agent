@@ -335,6 +335,137 @@ pub fn run_git_subcommand(subcmd: &GitSubcommand) {
     }
 }
 
+/// Detect the base branch for PR creation (main or master).
+/// Returns "main" if it exists, otherwise "master", falling back to "main".
+pub fn detect_base_branch() -> String {
+    // Check if "main" branch exists
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["rev-parse", "--verify", "main"])
+        .output()
+    {
+        if output.status.success() {
+            return "main".to_string();
+        }
+    }
+    // Check if "master" branch exists
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["rev-parse", "--verify", "master"])
+        .output()
+    {
+        if output.status.success() {
+            return "master".to_string();
+        }
+    }
+    // Default to "main"
+    "main".to_string()
+}
+
+/// Get the diff between the current branch and a base branch.
+/// Returns None if git fails, Some(diff) with the diff text otherwise.
+pub fn get_branch_diff(base: &str) -> Option<String> {
+    let merge_base = std::process::Command::new("git")
+        .args(["merge-base", base, "HEAD"])
+        .output()
+        .ok()?;
+    if !merge_base.status.success() {
+        return None;
+    }
+    let merge_base_sha = String::from_utf8_lossy(&merge_base.stdout)
+        .trim()
+        .to_string();
+
+    let output = std::process::Command::new("git")
+        .args(["diff", &merge_base_sha, "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Get the list of commits on the current branch since diverging from the base branch.
+/// Returns None if git fails, Some(commits) with one-line commit summaries otherwise.
+pub fn get_branch_commits(base: &str) -> Option<String> {
+    let range = format!("{base}..HEAD");
+    let output = std::process::Command::new("git")
+        .args(["log", "--oneline", &range])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Build a prompt for the AI to generate a PR title and description.
+/// The AI output should be in the format:
+/// ```
+/// TITLE: <one-line title>
+/// ---
+/// <markdown description body>
+/// ```
+pub fn build_pr_description_prompt(branch: &str, base: &str, commits: &str, diff: &str) -> String {
+    // Truncate diff if it's very large to stay within context limits
+    let max_diff_chars = 15_000;
+    let diff_preview = if diff.len() > max_diff_chars {
+        let truncated = &diff[..max_diff_chars];
+        format!(
+            "{truncated}\n\n... (diff truncated, {} more chars)",
+            diff.len() - max_diff_chars
+        )
+    } else {
+        diff.to_string()
+    };
+
+    format!(
+        r#"Generate a pull request title and description for the following changes.
+
+Branch: {branch} → {base}
+
+Commits:
+{commits}
+
+Diff:
+```
+{diff_preview}
+```
+
+Respond in EXACTLY this format (no extra text before or after):
+
+TITLE: <concise PR title using conventional commit style>
+---
+<markdown PR description body>
+
+The description should include:
+- A brief summary of what changed and why
+- Key changes as bullet points
+- Any notable implementation details
+
+Keep it concise but informative."#
+    )
+}
+
+/// Parse the AI's response into a PR title and body.
+/// Expects format: "TITLE: ...\n---\n..."
+pub fn parse_pr_description(response: &str) -> Option<(String, String)> {
+    let response = response.trim();
+
+    // Find the TITLE: line
+    let title_line = response.lines().find(|l| l.starts_with("TITLE:"))?;
+    let title = title_line.strip_prefix("TITLE:")?.trim().to_string();
+
+    if title.is_empty() {
+        return None;
+    }
+
+    // Find the --- separator and take everything after it
+    let separator_pos = response.find("\n---\n")?;
+    let body = response[separator_pos + 5..].trim().to_string();
+
+    Some((title, body))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -544,5 +675,114 @@ diff --git a/src/old.rs b/src/old.rs
                 "Branch name should not contain newlines"
             );
         }
+    }
+
+    #[test]
+    fn test_detect_base_branch_returns_valid_name() {
+        let base = detect_base_branch();
+        assert!(
+            base == "main" || base == "master",
+            "Base branch should be 'main' or 'master', got: {base}"
+        );
+    }
+
+    #[test]
+    fn test_get_branch_diff_runs() {
+        // Should not panic; may return None outside a git repo
+        let base = detect_base_branch();
+        let diff = get_branch_diff(&base);
+        if let Some(d) = diff {
+            assert!(d.len() < 50_000_000, "Diff should be reasonable size");
+        }
+    }
+
+    #[test]
+    fn test_get_branch_commits_runs() {
+        // Should not panic; may return None outside a git repo
+        let base = detect_base_branch();
+        let commits = get_branch_commits(&base);
+        if let Some(c) = commits {
+            assert!(c.len() < 10_000_000, "Commits output should be reasonable");
+        }
+    }
+
+    #[test]
+    fn test_build_pr_description_prompt_contains_info() {
+        let prompt = build_pr_description_prompt(
+            "feature/test",
+            "main",
+            "abc1234 Add feature\ndef5678 Fix bug\n",
+            "+++ b/src/main.rs\n+// new code\n",
+        );
+        assert!(
+            prompt.contains("feature/test"),
+            "Prompt should contain branch name"
+        );
+        assert!(prompt.contains("main"), "Prompt should contain base branch");
+        assert!(prompt.contains("abc1234"), "Prompt should contain commits");
+        assert!(prompt.contains("new code"), "Prompt should contain diff");
+        assert!(
+            prompt.contains("TITLE:"),
+            "Prompt should ask for TITLE format"
+        );
+    }
+
+    #[test]
+    fn test_build_pr_description_prompt_truncates_large_diff() {
+        let large_diff = "x".repeat(20_000);
+        let prompt = build_pr_description_prompt("branch", "main", "commit1", &large_diff);
+        assert!(
+            prompt.contains("diff truncated"),
+            "Large diffs should be truncated"
+        );
+        // The prompt should not be the full 20k+ length
+        assert!(
+            prompt.len() < 20_000,
+            "Prompt should be truncated, got {} chars",
+            prompt.len()
+        );
+    }
+
+    #[test]
+    fn test_parse_pr_description_valid() {
+        let response = "TITLE: feat: add PR creation command\n---\nThis PR adds the `/pr create` command.\n\n- New command\n- AI-generated descriptions";
+        let result = parse_pr_description(response);
+        assert!(result.is_some(), "Should parse valid response");
+        let (title, body) = result.unwrap();
+        assert_eq!(title, "feat: add PR creation command");
+        assert!(body.contains("This PR adds"));
+        assert!(body.contains("- New command"));
+    }
+
+    #[test]
+    fn test_parse_pr_description_with_extra_whitespace() {
+        let response =
+            "\n  TITLE: fix: resolve crash on startup\n---\n\nFixed the null pointer issue.\n  ";
+        let result = parse_pr_description(response);
+        assert!(result.is_some(), "Should parse with extra whitespace");
+        let (title, body) = result.unwrap();
+        assert_eq!(title, "fix: resolve crash on startup");
+        assert!(body.contains("Fixed the null pointer"));
+    }
+
+    #[test]
+    fn test_parse_pr_description_missing_title() {
+        let response = "Some random text without TITLE line\n---\nbody here";
+        let result = parse_pr_description(response);
+        assert!(result.is_none(), "Should fail without TITLE: line");
+    }
+
+    #[test]
+    fn test_parse_pr_description_missing_separator() {
+        let response = "TITLE: some title\nbody without separator";
+        let result = parse_pr_description(response);
+        assert!(result.is_none(), "Should fail without --- separator");
+    }
+
+    #[test]
+    fn test_parse_pr_description_empty_title() {
+        let response = "TITLE: \n---\nbody here";
+        let result = parse_pr_description(response);
+        assert!(result.is_none(), "Should fail with empty title");
     }
 }

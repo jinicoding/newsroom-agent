@@ -70,7 +70,7 @@ pub fn handle_help() {
     println!("  /git <subcmd>      Quick git: status, log, add, diff, branch, stash");
     println!("  /undo              Revert all uncommitted changes (git checkout)");
     println!("  /pr [number]       List open PRs, view, diff, comment, or checkout a PR");
-    println!("                     /pr <n> diff | /pr <n> comment <text> | /pr <n> checkout");
+    println!("                     /pr create [--draft] | /pr <n> diff | /pr <n> comment <text>");
     println!("  /health            Run project health checks (auto-detects project type)");
     println!("  /retry             Re-send the last user input");
     println!("  /run <cmd>         Run a shell command directly (no AI, no tokens)");
@@ -1300,6 +1300,7 @@ pub enum PrSubcommand {
     Diff(u32),
     Comment(u32, String),
     Checkout(u32),
+    Create { draft: bool },
     Help,
 }
 
@@ -1311,6 +1312,16 @@ pub fn parse_pr_args(arg: &str) -> PrSubcommand {
     }
 
     let parts: Vec<&str> = arg.splitn(3, char::is_whitespace).collect();
+
+    // Check for "create" subcommand first (before trying to parse as number)
+    if parts[0].eq_ignore_ascii_case("create") {
+        let draft = parts
+            .get(1)
+            .map(|s| s.trim_start_matches('-').eq_ignore_ascii_case("draft"))
+            .unwrap_or(false);
+        return PrSubcommand::Create { draft };
+    }
+
     let number = match parts[0].parse::<u32>() {
         Ok(n) => n,
         Err(_) => return PrSubcommand::Help,
@@ -1339,7 +1350,7 @@ pub fn parse_pr_args(arg: &str) -> PrSubcommand {
     }
 }
 
-pub fn handle_pr(input: &str) {
+pub async fn handle_pr(input: &str, agent: &mut Agent, session_total: &mut Usage, model: &str) {
     let arg = input.strip_prefix("/pr").unwrap_or("").trim();
     match parse_pr_args(arg) {
         PrSubcommand::List => {
@@ -1446,8 +1457,102 @@ pub fn handle_pr(input: &str) {
                 }
             }
         }
+        PrSubcommand::Create { draft } => {
+            // 1. Detect current branch
+            let branch = match git_branch() {
+                Some(b) => b,
+                None => {
+                    eprintln!("{RED}  error: not in a git repository{RESET}\n");
+                    return;
+                }
+            };
+            let base = detect_base_branch();
+
+            if branch == base {
+                eprintln!(
+                    "{RED}  error: already on {base} — switch to a feature branch first{RESET}\n"
+                );
+                return;
+            }
+
+            // 2. Get diff and commits
+            let diff = get_branch_diff(&base).unwrap_or_default();
+            let commits = get_branch_commits(&base).unwrap_or_default();
+
+            if diff.trim().is_empty() && commits.trim().is_empty() {
+                println!(
+                    "{DIM}  (no changes between {branch} and {base} — nothing to create a PR for){RESET}\n"
+                );
+                return;
+            }
+
+            // 3. Show what we found
+            let commit_count = commits.lines().filter(|l| !l.is_empty()).count();
+            println!(
+                "{DIM}  Branch: {branch} → {base} ({commit_count} commit{s}){RESET}",
+                s = if commit_count == 1 { "" } else { "s" }
+            );
+            println!("{DIM}  Generating PR description with AI...{RESET}");
+
+            // 4. Ask AI to generate title + description
+            let prompt = build_pr_description_prompt(&branch, &base, &commits, &diff);
+            let response = run_prompt(agent, &prompt, session_total, model).await;
+
+            // 5. Parse the AI's response
+            let (title, body) = match parse_pr_description(&response) {
+                Some(parsed) => parsed,
+                None => {
+                    eprintln!(
+                        "{RED}  error: could not parse AI response into PR title/description{RESET}"
+                    );
+                    eprintln!("{DIM}  (try again or create manually with `gh pr create`){RESET}\n");
+                    return;
+                }
+            };
+
+            println!("{DIM}  Title: {BOLD}{title}{RESET}");
+            println!("{DIM}  Draft: {}{RESET}", if draft { "yes" } else { "no" });
+
+            // 6. Create the PR via gh CLI
+            let mut gh_args = vec![
+                "pr".to_string(),
+                "create".to_string(),
+                "--title".to_string(),
+                title.clone(),
+                "--body".to_string(),
+                body,
+                "--base".to_string(),
+                base.clone(),
+            ];
+            if draft {
+                gh_args.push("--draft".to_string());
+            }
+
+            let gh_str_args: Vec<&str> = gh_args.iter().map(|s| s.as_str()).collect();
+            match std::process::Command::new("gh").args(&gh_str_args).output() {
+                Ok(output) if output.status.success() => {
+                    let url = String::from_utf8_lossy(&output.stdout);
+                    let url = url.trim();
+                    if url.is_empty() {
+                        println!("{GREEN}  ✓ PR created: {title}{RESET}\n");
+                    } else {
+                        println!("{GREEN}  ✓ PR created: {url}{RESET}\n");
+                    }
+                }
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    eprintln!("{RED}  error: {}{RESET}\n", stderr.trim());
+                }
+                Err(_) => {
+                    eprintln!("{RED}  error: `gh` CLI not found. Install it from https://cli.github.com{RESET}\n");
+                }
+            }
+        }
         PrSubcommand::Help => {
             println!("{DIM}  usage: /pr                         List open pull requests");
+            println!(
+                "         /pr create [--draft]        Create PR with AI-generated description"
+            );
             println!("         /pr <number>                View details of a specific PR");
             println!("         /pr <number> diff           Show the diff of a PR");
             println!("         /pr <number> comment <text> Add a comment to a PR");
@@ -2191,6 +2296,47 @@ mod tests {
         assert_eq!(
             parse_pr_args("42 Comment nice work"),
             PrSubcommand::Comment(42, "nice work".to_string())
+        );
+    }
+
+    #[test]
+    fn test_pr_subcommand_create() {
+        assert_eq!(
+            parse_pr_args("create"),
+            PrSubcommand::Create { draft: false }
+        );
+        assert_eq!(
+            parse_pr_args("CREATE"),
+            PrSubcommand::Create { draft: false }
+        );
+        assert_eq!(
+            parse_pr_args("Create"),
+            PrSubcommand::Create { draft: false }
+        );
+    }
+
+    #[test]
+    fn test_pr_subcommand_create_draft() {
+        assert_eq!(
+            parse_pr_args("create --draft"),
+            PrSubcommand::Create { draft: true }
+        );
+        assert_eq!(
+            parse_pr_args("create draft"),
+            PrSubcommand::Create { draft: true }
+        );
+        assert_eq!(
+            parse_pr_args("CREATE --DRAFT"),
+            PrSubcommand::Create { draft: true }
+        );
+    }
+
+    #[test]
+    fn test_pr_subcommand_create_no_flag() {
+        // "create somethingelse" should still create but not be draft
+        assert_eq!(
+            parse_pr_args("create --nodraft"),
+            PrSubcommand::Create { draft: false }
         );
     }
 

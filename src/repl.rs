@@ -475,7 +475,7 @@ pub async fn run_repl(
                 continue;
             }
             s if s == "/pr" || s.starts_with("/pr ") => {
-                commands::handle_pr(input);
+                commands::handle_pr(input, agent, &mut session_total, &agent_config.model).await;
                 continue;
             }
             s if s == "/git" || s.starts_with("/git ") => {
