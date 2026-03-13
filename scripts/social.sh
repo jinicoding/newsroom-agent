@@ -163,6 +163,7 @@ echo ""
 # ── Step 4: Check rate limit (did yoyo post a discussion in last 8h?) ──
 # Safe default: assume rate-limited until proven otherwise
 POSTED_RECENTLY="true"
+MY_RECENT_TITLES=""
 if command -v gh &>/dev/null && [ -n "$REPO_ID" ]; then
     echo "→ Checking rate limit..."
     RATE_STDERR=$(mktemp)
@@ -171,6 +172,7 @@ if command -v gh &>/dev/null && [ -n "$REPO_ID" ]; then
           repository(owner: $owner, name: $name) {
             discussions(first: 10, orderBy: {field: CREATED_AT, direction: DESC}) {
               nodes {
+                title
                 author { login }
                 createdAt
               }
@@ -190,13 +192,14 @@ if command -v gh &>/dev/null && [ -n "$REPO_ID" ]; then
 import json, sys, os
 from datetime import datetime, timezone, timedelta
 bot_username = os.environ.get('BOT_USERNAME', 'yoyo-evolve[bot]')
+bot_logins = {bot_username, bot_username.replace('[bot]', '')}
 try:
     data = json.load(sys.stdin)
     discs = data['data']['repository']['discussions']['nodes']
     cutoff = datetime.now(timezone.utc) - timedelta(hours=8)
     for d in discs:
         author = (d.get('author') or {}).get('login', '')
-        if author == bot_username:
+        if author in bot_logins:
             created = datetime.fromisoformat(d['createdAt'].replace('Z', '+00:00'))
             if created > cutoff:
                 print('true')
@@ -205,6 +208,23 @@ try:
 except (KeyError, TypeError, json.JSONDecodeError, ValueError):
     print('true')
 " || echo "true")
+
+    # Extract titles of yoyo's recent discussions (for topic dedup)
+    MY_RECENT_TITLES=$(echo "$RECENT_POST" | BOT_USERNAME="$BOT_USERNAME" python3 -c "
+import json, sys, os
+bot_username = os.environ.get('BOT_USERNAME', 'yoyo-evolve[bot]')
+bot_logins = {bot_username, bot_username.replace('[bot]', '')}
+try:
+    data = json.load(sys.stdin)
+    discs = data['data']['repository']['discussions']['nodes']
+    for d in discs:
+        author = (d.get('author') or {}).get('login', '')
+        if author in bot_logins:
+            title = d.get('title') or ''
+            print('- ' + title)
+except (KeyError, TypeError, json.JSONDecodeError, ValueError) as e:
+    print(f'WARNING: title extraction failed: {e}', file=sys.stderr)
+" || echo "(title extraction failed)")
 
     if [ "$POSTED_RECENTLY" = "true" ]; then
         echo "  Rate limit: yoyo posted a discussion in the last 8h (or check failed). Proactive posting disabled."
@@ -271,6 +291,9 @@ ${CATEGORY_IDS:-No categories available}
 
 Rate limit: ${POSTED_RECENTLY}
 (If "true", do NOT create new discussions. Only reply to existing ones.)
+
+Your recent discussion titles (DO NOT post about the same topic again):
+${MY_RECENT_TITLES:-None}
 
 === YOUR TASK ===
 

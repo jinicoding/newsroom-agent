@@ -92,6 +92,7 @@ Evaluated top-to-bottom. Stop at first match:
 ### Rate limits
 - **Max 1 new discussion per session.**
 - **Skip proactive posting if you posted a new discussion in the last 8 hours** (the prompt will tell you if this applies).
+- **Never post about the same topic twice.** The prompt lists your recent discussion titles — check them before posting. If a topic is already covered, skip it.
 
 ### How to create a new discussion
 ```bash
