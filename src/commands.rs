@@ -58,7 +58,7 @@ pub fn handle_help() {
     println!("  /cost              Show estimated session cost");
     println!("  /docs <crate> [item] Look up docs.rs documentation for a Rust crate");
     println!("  /find <pattern>     Fuzzy-search project files by name");
-    println!("  /init              Create a starter YOYO.md project context file");
+    println!("  /init              Scan project and generate a YOYO.md context file");
     println!("  /model <name>      Switch model (preserves conversation)");
     println!("  /think [level]     Show or change thinking level (off/low/medium/high)");
     println!("  /status            Show session info");
@@ -468,6 +468,261 @@ pub fn handle_context() {
 
 // ── /init ────────────────────────────────────────────────────────────────
 
+/// Scan the project directory and find important files (README, config, CI, etc.).
+/// Returns a list of file paths that exist.
+pub fn scan_important_files(dir: &std::path::Path) -> Vec<String> {
+    let candidates = [
+        "README.md",
+        "README",
+        "readme.md",
+        "LICENSE",
+        "LICENSE.md",
+        "CHANGELOG.md",
+        "CONTRIBUTING.md",
+        ".gitignore",
+        ".editorconfig",
+        // Rust
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        // Node
+        "package.json",
+        "package-lock.json",
+        "tsconfig.json",
+        ".eslintrc.json",
+        ".eslintrc.js",
+        ".prettierrc",
+        // Python
+        "pyproject.toml",
+        "setup.py",
+        "setup.cfg",
+        "requirements.txt",
+        "Pipfile",
+        "tox.ini",
+        // Go
+        "go.mod",
+        "go.sum",
+        // Build/CI
+        "Makefile",
+        "Dockerfile",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        ".dockerignore",
+        // CI configs
+        ".github/workflows",
+        ".gitlab-ci.yml",
+        ".circleci/config.yml",
+        ".travis.yml",
+        "Jenkinsfile",
+    ];
+    candidates
+        .iter()
+        .filter(|f| dir.join(f).exists())
+        .map(|f| f.to_string())
+        .collect()
+}
+
+/// Detect key directories in the project (src, tests, docs, etc.).
+/// Returns a list of directory names that exist.
+pub fn scan_important_dirs(dir: &std::path::Path) -> Vec<String> {
+    let candidates = [
+        "src",
+        "lib",
+        "tests",
+        "test",
+        "docs",
+        "doc",
+        "examples",
+        "benches",
+        "scripts",
+        ".github",
+        ".vscode",
+        "config",
+        "public",
+        "static",
+        "assets",
+        "migrations",
+    ];
+    candidates
+        .iter()
+        .filter(|d| dir.join(d).is_dir())
+        .map(|d| d.to_string())
+        .collect()
+}
+
+/// Get build/test/lint commands for a project type.
+pub fn build_commands_for_project(project_type: &ProjectType) -> Vec<(&'static str, &'static str)> {
+    match project_type {
+        ProjectType::Rust => vec![
+            ("Build", "cargo build"),
+            ("Test", "cargo test"),
+            ("Lint", "cargo clippy --all-targets -- -D warnings"),
+            ("Format check", "cargo fmt -- --check"),
+            ("Format", "cargo fmt"),
+        ],
+        ProjectType::Node => vec![
+            ("Install", "npm install"),
+            ("Test", "npm test"),
+            ("Lint", "npx eslint ."),
+        ],
+        ProjectType::Python => vec![
+            ("Test", "python -m pytest"),
+            ("Lint", "ruff check ."),
+            ("Type check", "python -m mypy ."),
+        ],
+        ProjectType::Go => vec![
+            ("Build", "go build ./..."),
+            ("Test", "go test ./..."),
+            ("Vet", "go vet ./..."),
+        ],
+        ProjectType::Make => vec![("Build", "make"), ("Test", "make test")],
+        ProjectType::Unknown => vec![],
+    }
+}
+
+/// Extract the project name from a README.md title line (# Title).
+/// Returns None if no README or no title found.
+fn extract_project_name_from_readme(dir: &std::path::Path) -> Option<String> {
+    let readme_names = ["README.md", "readme.md", "README"];
+    for name in &readme_names {
+        if let Ok(content) = std::fs::read_to_string(dir.join(name)) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if let Some(title) = trimmed.strip_prefix("# ") {
+                    let title = title.trim();
+                    if !title.is_empty() {
+                        return Some(title.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Extract the project name from Cargo.toml [package] name field.
+fn extract_name_from_cargo_toml(dir: &std::path::Path) -> Option<String> {
+    let content = std::fs::read_to_string(dir.join("Cargo.toml")).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("name") {
+            let rest = rest.trim();
+            if let Some(rest) = rest.strip_prefix('=') {
+                let val = rest.trim().trim_matches('"').trim_matches('\'');
+                if !val.is_empty() {
+                    return Some(val.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Extract the project name from package.json "name" field.
+fn extract_name_from_package_json(dir: &std::path::Path) -> Option<String> {
+    let content = std::fs::read_to_string(dir.join("package.json")).ok()?;
+    // Simple JSON parsing — find "name": "value"
+    for line in content.lines() {
+        let trimmed = line.trim().trim_end_matches(',');
+        if let Some(rest) = trimmed.strip_prefix("\"name\"") {
+            let rest = rest.trim();
+            if let Some(rest) = rest.strip_prefix(':') {
+                let val = rest.trim().trim_matches('"');
+                if !val.is_empty() {
+                    return Some(val.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Best-effort project name detection. Tries multiple sources.
+pub fn detect_project_name(dir: &std::path::Path) -> String {
+    // Try Cargo.toml name
+    if let Some(name) = extract_name_from_cargo_toml(dir) {
+        return name;
+    }
+    // Try package.json name
+    if let Some(name) = extract_name_from_package_json(dir) {
+        return name;
+    }
+    // Try README title
+    if let Some(name) = extract_project_name_from_readme(dir) {
+        return name;
+    }
+    // Fall back to directory name
+    dir.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "my-project".to_string())
+}
+
+/// Generate a complete YOYO.md context file by scanning the project.
+pub fn generate_init_content(dir: &std::path::Path) -> String {
+    let project_type = detect_project_type(dir);
+    let project_name = detect_project_name(dir);
+    let important_files = scan_important_files(dir);
+    let important_dirs = scan_important_dirs(dir);
+    let build_commands = build_commands_for_project(&project_type);
+
+    let mut content = String::new();
+
+    // Header
+    content.push_str("# Project Context\n\n");
+    content.push_str("<!-- YOYO.md — generated by `yoyo /init`. Edit to customize. -->\n");
+    content.push_str("<!-- Also works as CLAUDE.md for compatibility with other tools. -->\n\n");
+
+    // About section
+    content.push_str("## About This Project\n\n");
+    content.push_str(&format!("**{project_name}**"));
+    if project_type != ProjectType::Unknown {
+        content.push_str(&format!(" — {project_type} project"));
+    }
+    content.push_str("\n\n");
+    content.push_str("<!-- Add a description of what this project does. -->\n\n");
+
+    // Build & Test section
+    content.push_str("## Build & Test\n\n");
+    if build_commands.is_empty() {
+        content.push_str("<!-- Add build, test, and run commands for this project. -->\n\n");
+    } else {
+        content.push_str("```bash\n");
+        for (label, cmd) in &build_commands {
+            content.push_str(&format!("{cmd:<50} # {label}\n"));
+        }
+        content.push_str("```\n\n");
+    }
+
+    // Coding Conventions section
+    content.push_str("## Coding Conventions\n\n");
+    content.push_str(
+        "<!-- List any coding standards, naming conventions, or patterns to follow. -->\n\n",
+    );
+
+    // Important Files section
+    content.push_str("## Important Files\n\n");
+    if important_files.is_empty() && important_dirs.is_empty() {
+        content.push_str("<!-- List key files and directories the agent should know about. -->\n");
+    } else {
+        if !important_dirs.is_empty() {
+            content.push_str("Key directories:\n");
+            for d in &important_dirs {
+                content.push_str(&format!("- `{d}/`\n"));
+            }
+            content.push('\n');
+        }
+        if !important_files.is_empty() {
+            content.push_str("Key files:\n");
+            for f in &important_files {
+                content.push_str(&format!("- `{f}`\n"));
+            }
+            content.push('\n');
+        }
+    }
+
+    content
+}
+
 pub fn handle_init() {
     let path = "YOYO.md";
     if std::path::Path::new(path).exists() {
@@ -476,31 +731,17 @@ pub fn handle_init() {
         println!("{DIM}  CLAUDE.md already exists — yoyo reads it as a compatibility alias.");
         println!("  Rename it to YOYO.md when you're ready: mv CLAUDE.md YOYO.md{RESET}\n");
     } else {
-        let template = concat!(
-            "# Project Context\n",
-            "\n",
-            "<!-- YOYO.md — yoyo's primary project context file. -->\n",
-            "<!-- Also works as CLAUDE.md for compatibility with other tools. -->\n",
-            "\n",
-            "## About This Project\n",
-            "\n",
-            "<!-- Describe what this project does and its tech stack. -->\n",
-            "\n",
-            "## Coding Conventions\n",
-            "\n",
-            "<!-- List any coding standards, naming conventions, or patterns to follow. -->\n",
-            "\n",
-            "## Build & Test\n",
-            "\n",
-            "<!-- How to build, test, and run the project. -->\n",
-            "\n",
-            "## Important Files\n",
-            "\n",
-            "<!-- List key files and directories the agent should know about. -->\n",
-        );
-        match std::fs::write(path, template) {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let project_type = detect_project_type(&cwd);
+        println!("{DIM}  Scanning project...{RESET}");
+        if project_type != ProjectType::Unknown {
+            println!("{DIM}  Detected: {project_type}{RESET}");
+        }
+        let content = generate_init_content(&cwd);
+        match std::fs::write(path, &content) {
             Ok(_) => {
-                println!("{GREEN}  ✓ Created {path} — edit it to add project context.{RESET}\n")
+                let line_count = content.lines().count();
+                println!("{GREEN}  ✓ Created {path} ({line_count} lines) — edit it to add project context.{RESET}\n");
             }
             Err(e) => eprintln!("{RED}  error creating {path}: {e}{RESET}\n"),
         }
@@ -2983,5 +3224,244 @@ mod tests {
         // We can't easily capture stdout, but we can verify the command is in KNOWN_COMMANDS
         // and that the help text format is correct
         assert!(KNOWN_COMMANDS.contains(&"/review"));
+    }
+
+    // ── /init scanning tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_init_command_recognized() {
+        assert!(!is_unknown_command("/init"));
+        assert!(
+            KNOWN_COMMANDS.contains(&"/init"),
+            "/init should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn test_scan_important_files_in_current_project() {
+        let cwd = std::env::current_dir().unwrap();
+        let files = scan_important_files(&cwd);
+        // This is a Rust project, so Cargo.toml should be found
+        assert!(
+            files.contains(&"Cargo.toml".to_string()),
+            "Should find Cargo.toml: {files:?}"
+        );
+    }
+
+    #[test]
+    fn test_scan_important_files_empty_dir() {
+        let tmp = std::env::temp_dir().join("yoyo_test_init_empty");
+        let _ = std::fs::create_dir_all(&tmp);
+        let files = scan_important_files(&tmp);
+        assert!(files.is_empty(), "Empty dir should have no important files");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_scan_important_files_with_readme() {
+        let tmp = std::env::temp_dir().join("yoyo_test_init_readme");
+        let _ = std::fs::create_dir_all(&tmp);
+        std::fs::write(tmp.join("README.md"), "# Hello").unwrap();
+        std::fs::write(tmp.join("package.json"), "{}").unwrap();
+        let files = scan_important_files(&tmp);
+        assert!(
+            files.contains(&"README.md".to_string()),
+            "Should find README.md"
+        );
+        assert!(
+            files.contains(&"package.json".to_string()),
+            "Should find package.json"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_scan_important_dirs_in_current_project() {
+        let cwd = std::env::current_dir().unwrap();
+        let dirs = scan_important_dirs(&cwd);
+        // This project has src/
+        assert!(
+            dirs.contains(&"src".to_string()),
+            "Should find src/ dir: {dirs:?}"
+        );
+    }
+
+    #[test]
+    fn test_scan_important_dirs_empty_dir() {
+        let tmp = std::env::temp_dir().join("yoyo_test_init_dirs_empty");
+        let _ = std::fs::create_dir_all(&tmp);
+        let dirs = scan_important_dirs(&tmp);
+        assert!(dirs.is_empty(), "Empty dir should have no important dirs");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_scan_important_dirs_with_subdirs() {
+        let tmp = std::env::temp_dir().join("yoyo_test_init_subdirs");
+        let _ = std::fs::create_dir_all(tmp.join("src"));
+        let _ = std::fs::create_dir_all(tmp.join("tests"));
+        let _ = std::fs::create_dir_all(tmp.join("docs"));
+        let dirs = scan_important_dirs(&tmp);
+        assert!(dirs.contains(&"src".to_string()), "Should find src/");
+        assert!(dirs.contains(&"tests".to_string()), "Should find tests/");
+        assert!(dirs.contains(&"docs".to_string()), "Should find docs/");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_build_commands_for_rust() {
+        let cmds = build_commands_for_project(&ProjectType::Rust);
+        assert!(!cmds.is_empty(), "Rust should have build commands");
+        let labels: Vec<&str> = cmds.iter().map(|(l, _)| *l).collect();
+        assert!(labels.contains(&"Build"), "Should have Build command");
+        assert!(labels.contains(&"Test"), "Should have Test command");
+        assert!(labels.contains(&"Lint"), "Should have Lint command");
+    }
+
+    #[test]
+    fn test_build_commands_for_node() {
+        let cmds = build_commands_for_project(&ProjectType::Node);
+        assert!(!cmds.is_empty(), "Node should have build commands");
+        let labels: Vec<&str> = cmds.iter().map(|(l, _)| *l).collect();
+        assert!(labels.contains(&"Test"), "Should have Test command");
+    }
+
+    #[test]
+    fn test_build_commands_for_unknown() {
+        let cmds = build_commands_for_project(&ProjectType::Unknown);
+        assert!(
+            cmds.is_empty(),
+            "Unknown project should have no build commands"
+        );
+    }
+
+    #[test]
+    fn test_detect_project_name_rust() {
+        // Current project has Cargo.toml with a name field
+        let cwd = std::env::current_dir().unwrap();
+        let name = detect_project_name(&cwd);
+        assert_eq!(
+            name, "yoyo",
+            "Should detect project name 'yoyo' from Cargo.toml"
+        );
+    }
+
+    #[test]
+    fn test_detect_project_name_fallback_to_dir() {
+        let tmp = std::env::temp_dir().join("yoyo_test_name_fallback");
+        let _ = std::fs::create_dir_all(&tmp);
+        let name = detect_project_name(&tmp);
+        assert_eq!(
+            name, "yoyo_test_name_fallback",
+            "Should fall back to directory name"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_detect_project_name_from_readme() {
+        let tmp = std::env::temp_dir().join("yoyo_test_name_readme");
+        let _ = std::fs::create_dir_all(&tmp);
+        std::fs::write(tmp.join("README.md"), "# My Awesome Project\n\nSome text.").unwrap();
+        let name = detect_project_name(&tmp);
+        assert_eq!(
+            name, "My Awesome Project",
+            "Should extract name from README title"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_detect_project_name_from_package_json() {
+        let tmp = std::env::temp_dir().join("yoyo_test_name_pkg");
+        let _ = std::fs::create_dir_all(&tmp);
+        std::fs::write(
+            tmp.join("package.json"),
+            "{\n  \"name\": \"cool-app\",\n  \"version\": \"1.0.0\"\n}",
+        )
+        .unwrap();
+        let name = detect_project_name(&tmp);
+        assert_eq!(name, "cool-app", "Should extract name from package.json");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_generate_init_content_rust_project() {
+        let cwd = std::env::current_dir().unwrap();
+        let content = generate_init_content(&cwd);
+        // Should contain project name
+        assert!(
+            content.contains("yoyo"),
+            "Should contain project name: {}",
+            &content[..200.min(content.len())]
+        );
+        // Should detect Rust
+        assert!(content.contains("Rust"), "Should mention Rust project type");
+        // Should have build commands
+        assert!(
+            content.contains("cargo build"),
+            "Should include cargo build command"
+        );
+        assert!(
+            content.contains("cargo test"),
+            "Should include cargo test command"
+        );
+        // Should have sections
+        assert!(
+            content.contains("## Build & Test"),
+            "Should have Build & Test section"
+        );
+        assert!(
+            content.contains("## Important Files"),
+            "Should have Important Files section"
+        );
+        assert!(
+            content.contains("## Coding Conventions"),
+            "Should have Coding Conventions section"
+        );
+        // Should list Cargo.toml as important file
+        assert!(
+            content.contains("Cargo.toml"),
+            "Should list Cargo.toml as important"
+        );
+        // Should list src/ as important dir
+        assert!(
+            content.contains("`src/`"),
+            "Should list src/ as important dir"
+        );
+    }
+
+    #[test]
+    fn test_generate_init_content_empty_dir() {
+        let tmp = std::env::temp_dir().join("yoyo_test_init_gen_empty");
+        let _ = std::fs::create_dir_all(&tmp);
+        let content = generate_init_content(&tmp);
+        // Should still have sections even for empty/unknown project
+        assert!(content.contains("# Project Context"));
+        assert!(content.contains("## About This Project"));
+        assert!(content.contains("## Build & Test"));
+        assert!(content.contains("## Coding Conventions"));
+        assert!(content.contains("## Important Files"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_generate_init_content_node_project() {
+        let tmp = std::env::temp_dir().join("yoyo_test_init_gen_node");
+        let _ = std::fs::create_dir_all(&tmp);
+        std::fs::write(
+            tmp.join("package.json"),
+            "{\n  \"name\": \"my-app\",\n  \"version\": \"1.0.0\"\n}",
+        )
+        .unwrap();
+        let _ = std::fs::create_dir_all(tmp.join("src"));
+        let content = generate_init_content(&tmp);
+        assert!(
+            content.contains("my-app"),
+            "Should detect project name from package.json"
+        );
+        assert!(content.contains("Node"), "Should detect Node project type");
+        assert!(content.contains("npm"), "Should include npm commands");
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

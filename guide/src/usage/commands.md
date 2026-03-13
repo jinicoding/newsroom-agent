@@ -237,7 +237,7 @@ This is one of the most common workflows for developers using coding agents — 
 |---------|-------------|
 | `/context` | Show which project context files are loaded (YOYO.md is primary; CLAUDE.md supported for compatibility) |
 | `/find <pattern>` | Fuzzy-search project files by name — respects `.gitignore`, ranked by relevance |
-| `/init` | Create a starter YOYO.md project context file |
+| `/init` | Scan the project and generate a YOYO.md context file with detected build commands, key files, and project structure |
 | `/tree [depth]` | Show project directory tree (default depth: 3, respects `.gitignore`) |
 
 The `/find` command does fuzzy substring matching across all tracked files in your project (via `git ls-files`, falling back to a directory walk if not in a git repo). Results are ranked by relevance — filename matches score higher than directory matches, and matches at the start of the filename rank highest.
@@ -273,6 +273,25 @@ src/
 Cargo.toml
 README.md
 ```
+
+## Project Onboarding with `/init`
+
+The `/init` command scans your project and generates a `YOYO.md` context file automatically. It:
+
+1. **Detects the project type** — Rust, Node.js, Python, Go, or Makefile-based projects
+2. **Finds the project name** — from `Cargo.toml`, `package.json`, `README.md` title, or directory name
+3. **Lists important files** — README, config files, CI configs, lock files, etc.
+4. **Lists key directories** — `src/`, `tests/`, `docs/`, `scripts/`, etc.
+5. **Generates build commands** — `cargo build`, `npm test`, `go test ./...`, etc. based on project type
+
+```
+/init
+  Scanning project...
+  Detected: Rust
+  ✓ Created YOYO.md (32 lines) — edit it to add project context.
+```
+
+If `YOYO.md` or `CLAUDE.md` already exists, `/init` won't overwrite it. The generated file is a starting point — edit it to add your project's specific conventions and instructions.
 
 ## Unknown commands
 
