@@ -1,6 +1,6 @@
 # Gap Analysis: yoyo vs Claude Code
 
-Last updated: Day 13 (2026-03-13)
+Last updated: Day 14 (2026-03-14)
 
 This document tracks the feature gap between yoyo and Claude Code, used to inform development priorities when there are no community issues to address.
 
@@ -45,6 +45,7 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 | Custom system prompts | ✅ | ✅ | --system and --system-file |
 | Extended thinking control | ✅ | ✅ | --thinking flag |
 | Color control | ✅ | ✅ | --no-color, NO_COLOR env |
+| Conversation bookmarks | ✅ | ❌ | `/mark`, `/jump`, `/marks` — name points in conversation and jump back (Day 14) |
 
 ## Context Management
 
@@ -62,7 +63,7 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 |---------|------|-------------|-------|
 | Tool approval prompts | ✅ | ✅ | `--yes`/`-y` to auto-approve; `with_confirm` for interactive bash approval |
 | Allowlist/blocklist | ✅ | ✅ | `--allow`/`--deny` flags with glob matching; `[permissions]` config section; deny overrides allow |
-| Directory restrictions | ❌ | ✅ | Claude Code can restrict file access |
+| Directory restrictions | ✅ | ✅ | `--allow-dir`/`--deny-dir` flags + `[directories]` config; canonicalized path checks prevent traversal (Day 14) |
 | Auto-approve patterns | ✅ | ✅ | `--allow` glob patterns + config file `allow` array; "always" option during confirm |
 
 ## Project Understanding
@@ -116,9 +117,10 @@ Based on this analysis, the highest-impact missing features are:
 1. **Parallel tool execution** — Speed up multi-tool workflows
 2. **Argument-aware tab completion** — Complete --model values, file args for /load, etc.
 3. **Codebase indexing** — Index project files for faster search
-4. **Directory restrictions** — Restrict file access to specific directories
 
 Recently completed:
+- ✅ Directory restrictions (Day 14) — `--allow-dir`/`--deny-dir` flags with canonicalized path checks
+- ✅ Conversation bookmarks (Day 14) — `/mark`, `/jump`, `/marks` for navigating conversation history
 - ✅ `/init` command (Day 13) — Scans project and generates a YOYO.md context file
 - ✅ `/pr create` command (Day 13) — AI-generated PR descriptions with `--draft` support
 - ✅ `/review` command (Day 13) — AI-powered code review of staged/unstaged changes
@@ -146,16 +148,18 @@ Recently completed:
 
 ## Stats
 
-- yoyo: ~13,100 lines of Rust across 8 source files + integration tests
-- 487 tests passing (425 unit + 62 integration)
-- 34 REPL commands (including /spawn, /find, /docs, /fix, /lint, /pr, /review, /init)
-- 23 CLI flags (+ short aliases)
+- yoyo: ~12,250 lines of Rust across 8 source files + integration tests
+- 523 tests passing (456 unit + 67 integration)
+- 37 REPL commands (including /spawn, /find, /docs, /fix, /lint, /pr, /review, /init, /mark, /jump, /marks)
+- 25 CLI flags (+ short aliases)
 - 10+ provider backends
 - MCP server support
 - OpenAPI tool loading
 - Config file support (.yoyo.toml)
 - Permission system (allow/deny globs)
+- Directory restrictions (allow-dir/deny-dir)
 - Subagent spawning (/spawn)
 - Fuzzy file search (/find)
 - Git-aware project context
 - Syntax highlighting for 8+ languages
+- Conversation bookmarks (/mark, /jump, /marks)
