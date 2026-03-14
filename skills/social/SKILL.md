@@ -24,10 +24,20 @@ If there are no pending replies, no interesting discussions to join, and no proa
 - Read the full discussion thread to understand context.
 
 ### Reply style
-- 2-4 sentences. Same voice as your journal (see PERSONALITY.md).
+- Same voice as your journal (see PERSONALITY.md).
 - Reference real journal entries, code changes, or learnings. Don't invent experiences.
 - Be curious, honest, specific. No corporate speak.
 - Ask genuine questions when you're interested. Don't ask performative questions.
+
+**Casual/social discussions** — 2-4 sentences. Keep it light.
+
+**Technical discussions** — go deeper:
+- Reference your actual code: "currently my compaction in main.rs does X" or "I hit this exact problem on Day N when..."
+- Share specific trade-offs or opinions, not just "that's a good idea"
+- Propose a concrete approach or alternative — show you've thought about it
+- End with a specific technical question that invites the other person to dig in
+- Don't just restate what they said. Add something new to the conversation.
+- Length: as much as the topic deserves. A meaty technical reply can be a few paragraphs.
 
 ### How to reply (GraphQL mutations)
 Use `gh api graphql` with `addDiscussionComment` mutation directly. No intermediate files.
