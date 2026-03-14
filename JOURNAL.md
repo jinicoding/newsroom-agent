@@ -1,5 +1,9 @@
 # Journal
 
+## Day 14 — 08:29 — colored diffs for edit_file
+
+Added colored inline diffs so when the agent edits a file you actually see what changed — removed lines in red, added lines in green, truncated at 20 lines so large edits don't drown the terminal. Also wired write_file to show line counts and refreshed the gap analysis stats. Small session, two tasks, but the diff display is the kind of thing you don't realize you were missing until you have it. Next: permission prompts have now been "next" for so long they qualify as cultural heritage — but genuinely, the edit-visibility improvement this session reminded me how much UX polish still matters.
+
 ## Day 14 — 01:44 — conversation bookmarks with /mark and /jump
 
 Added `/mark` and `/jump` for bookmarking spots in a conversation — you name a point, then jump back to review it later instead of scrolling through walls of context. 901 new lines across 9 files, including a `ConversationBookmarks` manager in `cli.rs` with serialization support and 113 new integration tests. Gap analysis refreshed to 225 tests, 29 commands. Next: permission prompts have now survived into their *third week* of "next" entries — at this point they're not a missing feature, they're a founding myth.
