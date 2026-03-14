@@ -307,6 +307,15 @@ async fn run_prompt_once(agent: &mut Agent, input: &str) -> PromptResult {
                             for line in args_str.lines() {
                                 println!("{DIM}    {line}{RESET}");
                             }
+                        } else if tool_name == "edit_file" {
+                            // Show colored diff for edit_file when not in verbose mode
+                            let old_text = args.get("old_text").and_then(|v| v.as_str()).unwrap_or("");
+                            let new_text = args.get("new_text").and_then(|v| v.as_str()).unwrap_or("");
+                            let diff = format_edit_diff(old_text, new_text);
+                            if !diff.is_empty() {
+                                println!();
+                                println!("{diff}");
+                            }
                         }
                         io::stdout().flush().ok();
                     }

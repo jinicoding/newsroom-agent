@@ -827,6 +827,43 @@ pub fn truncate(s: &str, max: usize) -> &str {
     }
 }
 
+/// Maximum number of diff lines to display before truncating.
+const MAX_DIFF_LINES: usize = 20;
+
+/// Format a colored unified diff between old_text and new_text.
+/// Removed lines are shown in red with `- ` prefix, added lines in green with `+ ` prefix.
+/// If the diff exceeds `MAX_DIFF_LINES`, it is truncated with an ellipsis note.
+pub fn format_edit_diff(old_text: &str, new_text: &str) -> String {
+    let mut lines: Vec<String> = Vec::new();
+
+    // Show removed lines (old_text)
+    if !old_text.is_empty() {
+        for line in old_text.lines() {
+            lines.push(format!("{RED}  - {line}{RESET}"));
+        }
+    }
+
+    // Show added lines (new_text)
+    if !new_text.is_empty() {
+        for line in new_text.lines() {
+            lines.push(format!("{GREEN}  + {line}{RESET}"));
+        }
+    }
+
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    // Truncate if too many lines
+    if lines.len() > MAX_DIFF_LINES {
+        let remaining = lines.len() - MAX_DIFF_LINES;
+        lines.truncate(MAX_DIFF_LINES);
+        lines.push(format!("{DIM}  ... ({remaining} more lines){RESET}"));
+    }
+
+    lines.join("\n")
+}
+
 /// Format a human-readable summary for a tool execution.
 pub fn format_tool_summary(tool_name: &str, args: &serde_json::Value) -> String {
     match tool_name {
@@ -843,7 +880,15 @@ pub fn format_tool_summary(tool_name: &str, args: &serde_json::Value) -> String 
         }
         "write_file" => {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-            format!("write {}", path)
+            let line_info = args
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(|c| {
+                    let count = c.lines().count();
+                    format!(" ({count} lines)")
+                })
+                .unwrap_or_default();
+            format!("write {path}{line_info}")
         }
         "edit_file" => {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("?");
@@ -2135,5 +2180,105 @@ mod tests {
         for &frame in SPINNER_FRAMES {
             assert!(seen.insert(frame), "Duplicate spinner frame: {:?}", frame);
         }
+    }
+
+    // --- format_edit_diff tests ---
+
+    #[test]
+    fn test_format_edit_diff_single_line_change() {
+        let diff = format_edit_diff("old line", "new line");
+        assert!(diff.contains("- old line"));
+        assert!(diff.contains("+ new line"));
+        // Should have red for removed, green for added
+        assert!(diff.contains(&format!("{RED}")));
+        assert!(diff.contains(&format!("{GREEN}")));
+    }
+
+    #[test]
+    fn test_format_edit_diff_multi_line_change() {
+        let old = "line 1\nline 2\nline 3";
+        let new = "line A\nline B";
+        let diff = format_edit_diff(old, new);
+        assert!(diff.contains("- line 1"));
+        assert!(diff.contains("- line 2"));
+        assert!(diff.contains("- line 3"));
+        assert!(diff.contains("+ line A"));
+        assert!(diff.contains("+ line B"));
+    }
+
+    #[test]
+    fn test_format_edit_diff_addition_only() {
+        let diff = format_edit_diff("", "new content\nmore content");
+        // No removed lines
+        assert!(!diff.contains("- "));
+        // Added lines present
+        assert!(diff.contains("+ new content"));
+        assert!(diff.contains("+ more content"));
+    }
+
+    #[test]
+    fn test_format_edit_diff_deletion_only() {
+        let diff = format_edit_diff("old content\nmore old", "");
+        // Removed lines present
+        assert!(diff.contains("- old content"));
+        assert!(diff.contains("- more old"));
+        // No added lines
+        assert!(!diff.contains("+ "));
+    }
+
+    #[test]
+    fn test_format_edit_diff_long_diff_truncation() {
+        // Generate a diff with more than MAX_DIFF_LINES lines
+        let old_lines: Vec<&str> = (0..15).map(|_| "old").collect();
+        let new_lines: Vec<&str> = (0..15).map(|_| "new").collect();
+        let old = old_lines.join("\n");
+        let new = new_lines.join("\n");
+        let diff = format_edit_diff(&old, &new);
+        // Should be truncated — total would be 30 lines, max is 20
+        assert!(diff.contains("more lines)"));
+    }
+
+    #[test]
+    fn test_format_edit_diff_empty_both() {
+        let diff = format_edit_diff("", "");
+        assert!(diff.is_empty());
+    }
+
+    #[test]
+    fn test_format_edit_diff_empty_old_text_new_file_section() {
+        // Simulates adding new content to a file (old_text is empty)
+        let diff = format_edit_diff("", "fn new_function() {\n    println!(\"hello\");\n}");
+        assert!(!diff.contains("- "));
+        assert!(diff.contains("+ fn new_function()"));
+        assert!(diff.contains("+ }"));
+    }
+
+    #[test]
+    fn test_format_edit_diff_short_diff_not_truncated() {
+        let diff = format_edit_diff("a", "b");
+        assert!(!diff.contains("more lines"));
+    }
+
+    // --- format_tool_summary write_file with line count ---
+
+    #[test]
+    fn test_format_tool_summary_write_file_with_content() {
+        let args = serde_json::json!({"path": "out.txt", "content": "line1\nline2\nline3"});
+        let result = format_tool_summary("write_file", &args);
+        assert_eq!(result, "write out.txt (3 lines)");
+    }
+
+    #[test]
+    fn test_format_tool_summary_write_file_single_line() {
+        let args = serde_json::json!({"path": "out.txt", "content": "hello"});
+        let result = format_tool_summary("write_file", &args);
+        assert_eq!(result, "write out.txt (1 lines)");
+    }
+
+    #[test]
+    fn test_format_tool_summary_write_file_no_content() {
+        let args = serde_json::json!({"path": "out.txt"});
+        let result = format_tool_summary("write_file", &args);
+        assert_eq!(result, "write out.txt");
     }
 }
