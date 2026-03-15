@@ -35,9 +35,13 @@
 
 mod cli;
 mod commands;
+mod commands_git;
+mod commands_project;
+mod commands_session;
 mod docs;
 mod format;
 mod git;
+mod memory;
 mod prompt;
 mod repl;
 

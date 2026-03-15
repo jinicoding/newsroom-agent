@@ -486,6 +486,18 @@ pub async fn run_repl(
                 commands::handle_init();
                 continue;
             }
+            s if s == "/remember" || s.starts_with("/remember ") => {
+                commands::handle_remember(input);
+                continue;
+            }
+            "/memories" => {
+                commands::handle_memories();
+                continue;
+            }
+            s if s == "/forget" || s.starts_with("/forget ") => {
+                commands::handle_forget(input);
+                continue;
+            }
             "/index" => {
                 commands::handle_index();
                 continue;

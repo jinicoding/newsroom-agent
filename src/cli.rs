@@ -395,6 +395,7 @@ pub fn print_help() {
     println!("  /docs <crate>     Look up docs.rs documentation for a Rust crate");
     println!("  /find <pattern>   Fuzzy-search project files by name");
     println!("  /fix              Auto-fix build/lint errors (runs checks, sends failures to AI)");
+    println!("  /forget <n>       Remove a project memory by index");
     println!("  /git <subcmd>     Quick git: status, log [n], add <path>, stash, stash pop");
     println!("  /health           Run project health checks (auto-detects project type)");
     println!("  /pr [number]      List open PRs, or view details of a specific PR");
@@ -403,8 +404,10 @@ pub fn print_help() {
     println!("  /init             Create a starter YOYO.md project context file");
     println!("  /lint             Auto-detect and run project linter");
     println!("  /load [path]      Load session from file");
+    println!("  /memories         List project-specific memories");
     println!("  /model <name>     Switch model mid-session");
     println!("  /retry            Re-send the last user input");
+    println!("  /remember <note>  Save a project-specific memory (persists across sessions)");
     println!("  /review [path]    AI code review: staged changes (default) or a specific file");
     println!("  /run <cmd>        Run a shell command directly (no AI, no tokens)");
     println!("  /save [path]      Save session to file");
@@ -657,6 +660,15 @@ pub fn load_project_context() -> Option<String> {
         context.push_str(&recent_files.join("\n"));
     }
 
+    // Append project memories if available
+    let memory = crate::memory::load_memories();
+    if let Some(memories_section) = crate::memory::format_memories_for_prompt(&memory) {
+        if !context.is_empty() {
+            context.push_str("\n\n");
+        }
+        context.push_str(&memories_section);
+    }
+
     if found.is_empty() && context.is_empty() {
         None
     } else {
@@ -665,6 +677,12 @@ pub fn load_project_context() -> Option<String> {
         }
         if context.contains("## Recently Changed Files") {
             eprintln!("{DIM}  context: recently changed files{RESET}");
+        }
+        if !memory.entries.is_empty() {
+            eprintln!(
+                "{DIM}  context: {} project memories{RESET}",
+                memory.entries.len()
+            );
         }
         Some(context)
     }
