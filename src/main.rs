@@ -377,9 +377,31 @@ pub fn build_tools(
     ]
 }
 
+/// Return the User-Agent header value for yoyo.
+fn yoyo_user_agent() -> String {
+    format!("yoyo/{}", env!("CARGO_PKG_VERSION"))
+}
+
+/// Insert standard yoyo identification headers into a ModelConfig.
+/// All providers get User-Agent. OpenRouter also gets HTTP-Referer and X-Title.
+fn insert_client_headers(config: &mut ModelConfig) {
+    config
+        .headers
+        .insert("User-Agent".to_string(), yoyo_user_agent());
+    if config.provider == "openrouter" {
+        config.headers.insert(
+            "HTTP-Referer".to_string(),
+            "https://github.com/yologdev/yoyo-evolve".to_string(),
+        );
+        config
+            .headers
+            .insert("X-Title".to_string(), "yoyo".to_string());
+    }
+}
+
 /// Create a ModelConfig for non-Anthropic providers.
 pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) -> ModelConfig {
-    match provider {
+    let mut config = match provider {
         "openai" => {
             let mut config = ModelConfig::openai(model, model);
             if let Some(url) = base_url {
@@ -457,7 +479,9 @@ pub fn create_model_config(provider: &str, model: &str, base_url: Option<&str>) 
             config.provider = provider.to_string();
             config
         }
-    }
+    };
+    insert_client_headers(&mut config);
+    config
 }
 
 /// Holds all configuration needed to build an Agent.
@@ -484,7 +508,9 @@ impl AgentConfig {
     pub fn build_agent(&self) -> Agent {
         let base_url = self.base_url.as_deref();
         let mut agent = if self.provider == "anthropic" && base_url.is_none() {
-            // Default Anthropic path — unchanged
+            // Default Anthropic path — add client identification headers
+            let mut anthropic_config = ModelConfig::anthropic(&self.model, &self.model);
+            insert_client_headers(&mut anthropic_config);
             Agent::new(AnthropicProvider)
                 .with_system_prompt(&self.system_prompt)
                 .with_model(&self.model)
@@ -496,6 +522,7 @@ impl AgentConfig {
                     &self.permissions,
                     &self.dir_restrictions,
                 ))
+                .with_model_config(anthropic_config)
         } else if self.provider == "google" {
             // Google uses its own provider
             let config = create_model_config(&self.provider, &self.model, base_url);
@@ -1215,5 +1242,114 @@ mod tests {
             file_flag.load(Ordering::Relaxed),
             "File tool should see always_approved after bash 'always'"
         );
+    }
+
+    // === Client identification header tests ===
+
+    #[test]
+    fn test_yoyo_user_agent_format() {
+        let ua = yoyo_user_agent();
+        assert!(
+            ua.starts_with("yoyo/"),
+            "User-Agent should start with 'yoyo/'"
+        );
+        // Should contain a version number (e.g. "0.1.0")
+        let version_part = &ua["yoyo/".len()..];
+        assert!(
+            version_part.contains('.'),
+            "User-Agent version should contain a dot: {ua}"
+        );
+    }
+
+    #[test]
+    fn test_client_headers_anthropic() {
+        let config = create_model_config("anthropic", "claude-sonnet-4-20250514", None);
+        assert_eq!(
+            config.headers.get("User-Agent").unwrap(),
+            &yoyo_user_agent(),
+            "Anthropic config should have User-Agent header"
+        );
+        assert!(
+            !config.headers.contains_key("HTTP-Referer"),
+            "Anthropic config should NOT have HTTP-Referer"
+        );
+        assert!(
+            !config.headers.contains_key("X-Title"),
+            "Anthropic config should NOT have X-Title"
+        );
+    }
+
+    #[test]
+    fn test_client_headers_openai() {
+        let config = create_model_config("openai", "gpt-4o", None);
+        assert_eq!(
+            config.headers.get("User-Agent").unwrap(),
+            &yoyo_user_agent(),
+            "OpenAI config should have User-Agent header"
+        );
+        assert!(
+            !config.headers.contains_key("HTTP-Referer"),
+            "OpenAI config should NOT have HTTP-Referer"
+        );
+    }
+
+    #[test]
+    fn test_client_headers_openrouter() {
+        let config = create_model_config("openrouter", "anthropic/claude-sonnet-4-20250514", None);
+        assert_eq!(
+            config.headers.get("User-Agent").unwrap(),
+            &yoyo_user_agent(),
+            "OpenRouter config should have User-Agent header"
+        );
+        assert_eq!(
+            config.headers.get("HTTP-Referer").unwrap(),
+            "https://github.com/yologdev/yoyo-evolve",
+            "OpenRouter config should have HTTP-Referer header"
+        );
+        assert_eq!(
+            config.headers.get("X-Title").unwrap(),
+            "yoyo",
+            "OpenRouter config should have X-Title header"
+        );
+    }
+
+    #[test]
+    fn test_client_headers_google() {
+        let config = create_model_config("google", "gemini-2.0-flash", None);
+        assert_eq!(
+            config.headers.get("User-Agent").unwrap(),
+            &yoyo_user_agent(),
+            "Google config should have User-Agent header"
+        );
+    }
+
+    #[test]
+    fn test_client_headers_on_anthropic_build_agent() {
+        // The Anthropic path in build_agent() should also get headers
+        let agent_config = AgentConfig {
+            model: "claude-opus-4-6".to_string(),
+            api_key: "test-key".to_string(),
+            provider: "anthropic".to_string(),
+            base_url: None,
+            skills: yoagent::skills::SkillSet::empty(),
+            system_prompt: "Test.".to_string(),
+            thinking: ThinkingLevel::Off,
+            max_tokens: None,
+            temperature: None,
+            max_turns: None,
+            auto_approve: true,
+            permissions: cli::PermissionConfig::default(),
+            dir_restrictions: cli::DirectoryRestrictions::default(),
+        };
+        // Verify the anthropic ModelConfig would have headers set
+        // (We test the helper directly since Agent doesn't expose model_config)
+        let mut anthropic_config = ModelConfig::anthropic("claude-opus-4-6", "claude-opus-4-6");
+        insert_client_headers(&mut anthropic_config);
+        assert_eq!(
+            anthropic_config.headers.get("User-Agent").unwrap(),
+            &yoyo_user_agent()
+        );
+        // Also verify build_agent doesn't panic
+        let _agent = agent_config.build_agent();
     }
 }
