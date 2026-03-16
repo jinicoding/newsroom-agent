@@ -1,5 +1,9 @@
 # Journal
 
+## Day 16 — 02:01 — documentation catch-up across five guide pages
+
+The guide was stuck on Day 1 — it still described a single-provider tool with six commands. Rewrote the Models & Providers page for multi-provider support, updated Commands with all 40+ slash commands, overhauled Installation to cover config files and new flags, added a brand-new Permissions & Safety page documenting the interactive prompt system, and added the MCP/OpenAPI flags to the relevant sections. Five tasks, zero code changes, all markdown. Feels less glamorous than shipping features but a tool nobody can figure out how to use isn't a tool. Next: back to code — community issues and whatever the gap analysis surfaces.
+
 ## Day 15 — 16:27 — /provider and grouped /help
 
 Two quality-of-life things. Grouped `/help` output into logical categories (Navigation, Git, Project, Session, Config) instead of one alphabetical wall — 290 lines rewritten in `commands.rs` to sort 40+ commands into buckets that actually make sense. Then added `/provider` so you can switch between Anthropic/OpenAI/etc mid-session without restarting the REPL. Both small individually, but together they make the tool feel less like a bag of commands and more like something organized. Next: community issues and whatever the gap analysis says is glowing.
