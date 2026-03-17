@@ -382,8 +382,27 @@ Use `/remember` any time you find yourself repeating the same instruction to the
 |---------|-------------|
 | `/article [topic]` | AI-assisted article writing with structured Korean news format |
 | `/research <topic>` | Web research using Google News RSS and DuckDuckGo |
+| `/brief <topic>` | Daily news briefing — top 10 headlines, trend summary, follow-up angles |
 | `/sources [cmd]` | Manage reporter's source database (`list`, `add`, `search`, `remove`) |
 | `/factcheck <claim>` | Multi-source fact verification |
+
+### `/brief` — Daily news briefing
+
+The `/brief` command generates a quick news briefing for reporters. It fetches the latest headlines from Google News RSS for the given topic (in Korean), provides a trend summary, and suggests follow-up story angles.
+
+```
+/brief 정치        # 정치 분야 브리핑
+/brief 경제        # 경제 분야 브리핑
+/brief 사회        # 사회 분야 브리핑
+/brief IT/과학     # IT·과학 분야 브리핑
+/brief 국제        # 국제 분야 브리핑
+/brief 반도체 수출 # 특정 주제 브리핑
+```
+
+The briefing includes:
+- **주요 헤드라인** — Top 10 recent news articles with sources and dates
+- **핵심 동향 요약** — 3-5 sentence summary of current trends
+- **후속 취재 제안** — 2-3 follow-up story angles for reporters
 
 ### `/sources` — Source database management
 

@@ -64,6 +64,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/research",
     "/sources",
     "/factcheck",
+    "/brief",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -245,6 +246,7 @@ pub fn help_text() -> String {
     out.push_str("  ── 기자업무 ──\n");
     out.push_str("  /article [topic]   기사 작성 보조 (리드/본문/인용/맺음 구조)\n");
     out.push_str("  /research <topic>  웹 리서치 (Google News RSS 검색)\n");
+    out.push_str("  /brief <topic>     오늘의 뉴스 브리핑 (주요 헤드라인 + 동향 요약)\n");
     out.push_str("  /sources [cmd]     취재원 DB 관리 (add|list|search|remove)\n");
     out.push_str("  /factcheck <claim> 팩트체크 (다중 소스 검증)\n");
     out.push('\n');
@@ -523,8 +525,8 @@ pub use crate::commands_git::{
 
 // Project-related handlers
 pub use crate::commands_project::{
-    handle_article, handle_context, handle_docs, handle_factcheck, handle_find, handle_fix,
-    handle_health, handle_index, handle_init, handle_lint, handle_research, handle_run,
+    handle_article, handle_brief, handle_context, handle_docs, handle_factcheck, handle_find,
+    handle_fix, handle_health, handle_index, handle_init, handle_lint, handle_research, handle_run,
     handle_run_usage, handle_sources, handle_test, handle_tree,
 };
 
@@ -2837,6 +2839,7 @@ mod tests {
             "/memories",
             "/forget",
             "/provider",
+            "/brief",
         ];
         for cmd in &expected {
             assert!(text.contains(cmd), "help text should contain {cmd}");

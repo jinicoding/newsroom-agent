@@ -1596,6 +1596,62 @@ pub async fn handle_factcheck(
     auto_compact_if_needed(agent);
 }
 
+// ── /brief ──────────────────────────────────────────────────────────────
+
+/// Build the brief prompt for a given topic.
+///
+/// Instructs the AI to fetch Google News RSS for the Korean topic,
+/// extract top 10 headlines, summarize key trends, and suggest follow-up angles.
+pub fn build_brief_prompt(topic: &str) -> String {
+    let encoded = topic.replace(' ', "+");
+    format!(
+        "다음 주제에 대한 오늘의 뉴스 브리핑을 작성해주세요: **{topic}**\n\n\
+         다음 단계를 따라주세요:\n\n\
+         **1단계: Google News RSS에서 최신 뉴스 가져오기**\n\
+         bash 도구로 다음 명령어를 실행하세요:\n\
+         ```\n\
+         curl -s \"https://news.google.com/rss/search?q={encoded}&hl=ko&gl=KR&ceid=KR:ko\"\n\
+         ```\n\n\
+         **2단계: 헤드라인 추출**\n\
+         RSS XML에서 <item> 태그 안의 <title>, <source>, <pubDate>를 파싱하여 최신 기사 10건을 추출하세요.\n\n\
+         **3단계: 브리핑 작성**\n\
+         다음 형식으로 브리핑을 정리해주세요:\n\n\
+         ## 📰 오늘의 브리핑: {topic}\n\n\
+         ### 주요 헤드라인\n\
+         1. [기사 제목] — [언론사] (날짜)\n\
+         2. ...\n\
+         (최대 10건)\n\n\
+         ### 핵심 동향 요약\n\
+         3~5문장으로 이 주제의 현재 흐름과 주요 이슈를 요약하세요.\n\n\
+         ### 📌 후속 취재 제안\n\
+         이 주제에서 기자가 파고들 수 있는 2~3가지 후속 기사 아이디어를 제시하세요.\n\n\
+         모든 정보에 출처를 명시하고, 확인되지 않은 내용은 명확히 표시하세요."
+    )
+}
+
+/// Handle the /brief command: daily news briefing for reporters.
+pub async fn handle_brief(agent: &mut Agent, input: &str, session_total: &mut Usage, model: &str) {
+    let topic = input.strip_prefix("/brief").unwrap_or("").trim();
+
+    if topic.is_empty() {
+        println!("{DIM}  사용법: /brief <주제>{RESET}");
+        println!("{DIM}  오늘의 뉴스 브리핑을 생성합니다.{RESET}");
+        println!("{DIM}  예시:{RESET}");
+        println!("{DIM}    /brief 정치        — 정치 분야 브리핑{RESET}");
+        println!("{DIM}    /brief 경제        — 경제 분야 브리핑{RESET}");
+        println!("{DIM}    /brief 사회        — 사회 분야 브리핑{RESET}");
+        println!("{DIM}    /brief IT/과학     — IT·과학 분야 브리핑{RESET}");
+        println!("{DIM}    /brief 국제        — 국제 분야 브리핑{RESET}");
+        println!("{DIM}    /brief 반도체 수출 — 특정 주제 브리핑{RESET}\n");
+        return;
+    }
+
+    let prompt = build_brief_prompt(topic);
+
+    run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -2114,5 +2170,51 @@ mod tests {
         assert_eq!(reloaded[1]["name"].as_str().unwrap(), "이영희");
 
         cleanup(&path);
+    }
+
+    // ── /brief tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_brief_prompt_uses_google_news_rss() {
+        let prompt = super::build_brief_prompt("반도체");
+        assert!(
+            prompt.contains("news.google.com/rss/search"),
+            "should use Google News RSS"
+        );
+        assert!(
+            prompt.contains("hl=ko&gl=KR&ceid=KR:ko"),
+            "should set Korean locale"
+        );
+        assert!(
+            prompt.contains("q=반도체"),
+            "should include the topic in the query"
+        );
+    }
+
+    #[test]
+    fn test_brief_prompt_encodes_spaces() {
+        let prompt = super::build_brief_prompt("반도체 수출");
+        assert!(
+            prompt.contains("q=반도체+수출"),
+            "should encode spaces as + in query"
+        );
+    }
+
+    #[test]
+    fn test_brief_prompt_structure() {
+        let prompt = super::build_brief_prompt("경제");
+        assert!(prompt.contains("오늘의 브리핑"), "should mention briefing");
+        assert!(prompt.contains("주요 헤드라인"), "should ask for headlines");
+        assert!(prompt.contains("핵심 동향 요약"), "should ask for summary");
+        assert!(
+            prompt.contains("후속 취재 제안"),
+            "should suggest follow-up angles"
+        );
+    }
+
+    #[test]
+    fn test_brief_prompt_asks_for_10_headlines() {
+        let prompt = super::build_brief_prompt("정치");
+        assert!(prompt.contains("10"), "should ask for up to 10 headlines");
     }
 }
