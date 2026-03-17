@@ -1380,6 +1380,71 @@ pub async fn handle_article(
 
 // ── /research ───────────────────────────────────────────────────────────
 
+/// Directory for cached research results.
+const RESEARCH_DIR: &str = ".journalist/research";
+
+/// Build the research file path: `.journalist/research/YYYY-MM-DD_<slug>.md`
+pub fn research_file_path(topic: &str) -> std::path::PathBuf {
+    research_file_path_with_date(topic, &today_str())
+}
+
+/// Build the research file path with an explicit date string (for testing).
+pub fn research_file_path_with_date(topic: &str, date: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(topic, 50);
+    let filename = if slug.is_empty() {
+        format!("{date}_research.md")
+    } else {
+        format!("{date}_{slug}.md")
+    };
+    std::path::PathBuf::from(RESEARCH_DIR).join(filename)
+}
+
+/// Save research result to file. Creates the research directory if needed.
+fn save_research(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
+/// List existing research files in the research directory.
+fn research_list() {
+    let dir = std::path::Path::new(RESEARCH_DIR);
+    if !dir.exists() {
+        println!("{DIM}  저장된 리서치가 없습니다.{RESET}\n");
+        return;
+    }
+    let mut entries: Vec<_> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map_or(false, |ext| ext == "md")
+            })
+            .collect(),
+        Err(_) => {
+            println!("{DIM}  리서치 디렉토리를 읽을 수 없습니다.{RESET}\n");
+            return;
+        }
+    };
+    if entries.is_empty() {
+        println!("{DIM}  저장된 리서치가 없습니다.{RESET}\n");
+        return;
+    }
+    entries.sort_by_key(|e| e.file_name());
+    println!("{DIM}  저장된 리서치 목록:{RESET}");
+    for (i, entry) in entries.iter().enumerate() {
+        let name = entry.file_name();
+        println!(
+            "{DIM}  {idx}. {name}{RESET}",
+            idx = i + 1,
+            name = name.to_string_lossy()
+        );
+    }
+    println!();
+}
+
 /// Handle the /research command: web research on a topic using DuckDuckGo/Naver.
 pub async fn handle_research(
     agent: &mut Agent,
@@ -1394,7 +1459,13 @@ pub async fn handle_research(
 
     if topic.is_empty() {
         println!("{DIM}  사용법: /research <주제>{RESET}");
-        println!("{DIM}  예시: /research 반도체 수출 동향{RESET}\n");
+        println!("{DIM}  예시: /research 반도체 수출 동향{RESET}");
+        println!("{DIM}  /research list — 저장된 리서치 목록{RESET}\n");
+        return;
+    }
+
+    if topic == "list" {
+        research_list();
         return;
     }
 
@@ -1413,8 +1484,24 @@ pub async fn handle_research(
         topic.replace(' ', "+"),
     );
 
-    run_prompt(agent, &prompt, session_total, model).await;
+    let response = run_prompt(agent, &prompt, session_total, model).await;
     auto_compact_if_needed(agent);
+
+    // Save research result to file
+    if !response.trim().is_empty() {
+        let path = research_file_path(topic);
+        match save_research(&path, &response) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 리서치 저장: {}{RESET}\n",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  리서치 저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
 }
 
 // ── /sources ────────────────────────────────────────────────────────────
@@ -1891,5 +1978,34 @@ mod tests {
         save_article_draft(&path, "# 테스트 기사\n본문").unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert_eq!(content, "# 테스트 기사\n본문");
+    }
+
+    // --- research file path tests ---
+
+    #[test]
+    fn research_file_path_with_topic() {
+        let path = research_file_path_with_date("반도체 수출 동향", "2026-03-17");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/research/2026-03-17_반도체-수출-동향.md"
+        );
+    }
+
+    #[test]
+    fn research_file_path_empty_topic() {
+        let path = research_file_path_with_date("", "2026-03-17");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/research/2026-03-17_research.md"
+        );
+    }
+
+    #[test]
+    fn save_research_creates_dirs_and_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("research").join("test.md");
+        save_research(&path, "# 리서치 결과\n내용").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "# 리서치 결과\n내용");
     }
 }

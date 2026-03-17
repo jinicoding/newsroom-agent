@@ -41,3 +41,12 @@ SESSION_PLAN.md 작성 완료.
 - 단위 테스트 6개 추가, 전체 575+67 테스트 통과
 
   ── Task 2 / 4 ──
+완료. `/article <주제>` 실행 시 AI 응답이 `.journalist/drafts/YYYY-MM-DD_<slug>.md`에 자동 저장됩니다.
+
+추가된 내용:
+- `topic_to_slug()` — 주제를 파일명 안전한 slug로 변환 (한국어 유지, ASCII 소문자화)
+- `draft_file_path()` / `draft_file_path_with_date()` — 초안 파일 경로 생성
+- `save_article_draft()` — 디렉토리 자동 생성 후 파일 저장
+- 8개 단위 테스트 추가 (slug 변환, 경로 생성, 파일 저장)
+
+  ── Task 3 / 4 ──
