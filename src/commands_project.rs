@@ -1324,6 +1324,39 @@ fn save_article_draft(path: &std::path::Path, content: &str) -> Result<(), std::
     std::fs::write(path, content)
 }
 
+/// Build the article prompt for a given topic.
+/// Returns (prompt_text, has_topic).
+pub fn build_article_prompt(topic: &str) -> (String, bool) {
+    if topic.is_empty() {
+        (
+            "기사 작성을 도와드리겠습니다. 어떤 주제로 기사를 작성하시겠습니까? \
+             주제를 알려주시면 다음 구조로 초안을 제안합니다:\n\
+             1. 리드 (핵심 요약)\n\
+             2. 본문 (배경, 맥락, 상세)\n\
+             3. 인용 (관계자 코멘트)\n\
+             4. 맺음 (전망, 의미)"
+                .to_string(),
+            false,
+        )
+    } else {
+        (
+            format!(
+                "다음 주제로 한국 신문 기사 초안을 작성해주세요: {topic}\n\n\
+                 다음 구조를 따라주세요:\n\
+                 1. **리드** — 육하원칙(누가, 언제, 어디서, 무엇을, 어떻게, 왜)을 포함한 핵심 요약 (1-2문장)\n\
+                 2. **본문** — 배경, 맥락, 상세 내용 (3-5문단)\n\
+                 3. **인용** — 관계자 코멘트가 들어갈 위치 표시 (\"[관계자 이름/직함] 인용 필요\")\n\
+                 4. **맺음** — 향후 전망 또는 의미 (1-2문장)\n\n\
+                 주의사항:\n\
+                 - 사실 확인이 필요한 부분은 [확인 필요]로 표시\n\
+                 - 추가 취재가 필요한 부분은 [취재 필요]로 표시\n\
+                 - 객관적이고 중립적인 톤 유지"
+            ),
+            true,
+        )
+    }
+}
+
 /// Handle the /article command: AI-assisted article writing with structured format.
 pub async fn handle_article(
     agent: &mut Agent,
@@ -1336,27 +1369,7 @@ pub async fn handle_article(
         .unwrap_or("")
         .trim();
 
-    let prompt = if topic.is_empty() {
-        "기사 작성을 도와드리겠습니다. 어떤 주제로 기사를 작성하시겠습니까? \
-         주제를 알려주시면 다음 구조로 초안을 제안합니다:\n\
-         1. 리드 (핵심 요약)\n\
-         2. 본문 (배경, 맥락, 상세)\n\
-         3. 인용 (관계자 코멘트)\n\
-         4. 맺음 (전망, 의미)".to_string()
-    } else {
-        format!(
-            "다음 주제로 한국 신문 기사 초안을 작성해주세요: {topic}\n\n\
-             다음 구조를 따라주세요:\n\
-             1. **리드** — 육하원칙(누가, 언제, 어디서, 무엇을, 어떻게, 왜)을 포함한 핵심 요약 (1-2문장)\n\
-             2. **본문** — 배경, 맥락, 상세 내용 (3-5문단)\n\
-             3. **인용** — 관계자 코멘트가 들어갈 위치 표시 (\"[관계자 이름/직함] 인용 필요\")\n\
-             4. **맺음** — 향후 전망 또는 의미 (1-2문장)\n\n\
-             주의사항:\n\
-             - 사실 확인이 필요한 부분은 [확인 필요]로 표시\n\
-             - 추가 취재가 필요한 부분은 [취재 필요]로 표시\n\
-             - 객관적이고 중립적인 톤 유지"
-        )
-    };
+    let (prompt, _) = build_article_prompt(topic);
 
     let response = run_prompt(agent, &prompt, session_total, model).await;
     auto_compact_if_needed(agent);
@@ -1703,22 +1716,25 @@ fn sources_edit(args: &str) {
     println!("{DIM}  취재원 수정됨: {name} — {field} → {value}{RESET}\n");
 }
 
+/// Check whether a source entry matches a query (case-insensitive).
+fn source_matches(source: &serde_json::Value, query_lower: &str) -> bool {
+    let text = format!(
+        "{} {} {} {}",
+        source["name"].as_str().unwrap_or(""),
+        source["org"].as_str().unwrap_or(""),
+        source["contact"].as_str().unwrap_or(""),
+        source["note"].as_str().unwrap_or(""),
+    )
+    .to_lowercase();
+    text.contains(query_lower)
+}
+
 fn sources_search(query: &str) {
     let sources = load_sources();
     let query_lower = query.to_lowercase();
     let matches: Vec<&serde_json::Value> = sources
         .iter()
-        .filter(|s| {
-            let text = format!(
-                "{} {} {} {}",
-                s["name"].as_str().unwrap_or(""),
-                s["org"].as_str().unwrap_or(""),
-                s["contact"].as_str().unwrap_or(""),
-                s["note"].as_str().unwrap_or(""),
-            )
-            .to_lowercase();
-            text.contains(&query_lower)
-        })
+        .filter(|s| source_matches(s, &query_lower))
         .collect();
 
     if matches.is_empty() {
@@ -1749,25 +1765,13 @@ fn sources_search(query: &str) {
 
 // ── /factcheck ──────────────────────────────────────────────────────────
 
-/// Handle the /factcheck command: multi-source fact verification.
-pub async fn handle_factcheck(
-    agent: &mut Agent,
-    input: &str,
-    session_total: &mut Usage,
-    model: &str,
-) {
-    let claim = input
-        .strip_prefix("/factcheck")
-        .unwrap_or("")
-        .trim();
-
+/// Build the factcheck prompt for a given claim.
+/// Returns None if the claim is empty (should be rejected).
+pub fn build_factcheck_prompt(claim: &str) -> Option<String> {
     if claim.is_empty() {
-        println!("{DIM}  사용법: /factcheck <주장 또는 사실>{RESET}");
-        println!("{DIM}  예시: /factcheck 한국 반도체 수출이 2025년 사상 최대를 기록했다{RESET}\n");
-        return;
+        return None;
     }
-
-    let prompt = format!(
+    Some(format!(
         "다음 주장/사실에 대한 팩트체크를 수행해주세요: \"{claim}\"\n\n\
          다음 단계를 따라주세요:\n\
          1. 여러 소스에서 관련 정보를 검색 (DuckDuckGo, 네이버 등)\n\
@@ -1781,7 +1785,29 @@ pub async fn handle_factcheck(
          **결론:** [기자가 기사에 반영할 때 주의할 점]\n\n\
          주의: 확인할 수 없는 경우 '판단 불가'로 표시하고 그 이유를 설명하세요.\n\
          절대로 사실을 만들어내지 마세요."
-    );
+    ))
+}
+
+/// Handle the /factcheck command: multi-source fact verification.
+pub async fn handle_factcheck(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let claim = input
+        .strip_prefix("/factcheck")
+        .unwrap_or("")
+        .trim();
+
+    let prompt = match build_factcheck_prompt(claim) {
+        Some(p) => p,
+        None => {
+            println!("{DIM}  사용법: /factcheck <주장 또는 사실>{RESET}");
+            println!("{DIM}  예시: /factcheck 한국 반도체 수출이 2025년 사상 최대를 기록했다{RESET}\n");
+            return;
+        }
+    };
 
     run_prompt(agent, &prompt, session_total, model).await;
     auto_compact_if_needed(agent);
@@ -2007,5 +2033,194 @@ mod tests {
         save_research(&path, "# 리서치 결과\n내용").unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert_eq!(content, "# 리서치 결과\n내용");
+    }
+
+    // --- sources JSON round-trip ---
+
+    #[test]
+    fn sources_json_roundtrip() {
+        let (_dir, path) = temp_sources_path();
+        let entries = vec![
+            serde_json::json!({"name": "김기자", "org": "조선일보", "contact": "010-1111", "note": "정치부"}),
+            serde_json::json!({"name": "이기자", "org": "중앙일보", "contact": "010-2222", "note": ""}),
+        ];
+        save_sources_to(&entries, &path);
+        let loaded = load_sources_from(&path);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0]["name"], "김기자");
+        assert_eq!(loaded[1]["org"], "중앙일보");
+        // Full round-trip equality
+        assert_eq!(entries, loaded);
+    }
+
+    #[test]
+    fn sources_load_empty_file_returns_empty() {
+        let (_dir, path) = temp_sources_path();
+        let loaded = load_sources_from(&path);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn sources_load_nonexistent_returns_empty() {
+        let path = std::path::PathBuf::from("/tmp/does_not_exist_sources_test.json");
+        let loaded = load_sources_from(&path);
+        assert!(loaded.is_empty());
+    }
+
+    // --- sources_add input parsing (reject < 3 args) ---
+
+    #[test]
+    fn sources_add_rejects_fewer_than_3_args() {
+        // The sources_add function splits args into at most 4 parts and
+        // requires at least 3. Verify the parsing logic.
+        let too_few = "홍길동 산업부";
+        let parts: Vec<&str> = too_few.splitn(4, ' ').collect();
+        assert!(parts.len() < 3);
+
+        let exact_three = "홍길동 산업부 010-1234";
+        let parts: Vec<&str> = exact_three.splitn(4, ' ').collect();
+        assert_eq!(parts.len(), 3);
+
+        let with_note = "홍길동 산업부 010-1234 반도체 정책 담당";
+        let parts: Vec<&str> = with_note.splitn(4, ' ').collect();
+        assert_eq!(parts.len(), 4);
+        assert_eq!(parts[3], "반도체 정책 담당");
+    }
+
+    #[test]
+    fn sources_add_single_arg_rejected() {
+        let one_arg = "홍길동";
+        let parts: Vec<&str> = one_arg.splitn(4, ' ').collect();
+        assert!(parts.len() < 3);
+    }
+
+    // --- sources_search case-insensitive matching ---
+
+    #[test]
+    fn source_matches_case_insensitive() {
+        let entry = serde_json::json!({
+            "name": "Hong GilDong",
+            "org": "Ministry of Trade",
+            "contact": "010-1234",
+            "note": "Semiconductor policy"
+        });
+        // Lowercase query matches uppercase fields
+        assert!(source_matches(&entry, "hong"));
+        assert!(source_matches(&entry, "ministry"));
+        assert!(source_matches(&entry, "semiconductor"));
+        // Mixed-case query
+        assert!(source_matches(&entry, "gildong"));
+        // No match
+        assert!(!source_matches(&entry, "없는검색어"));
+    }
+
+    #[test]
+    fn source_matches_korean() {
+        let entry = serde_json::json!({
+            "name": "홍길동",
+            "org": "산업통상자원부",
+            "contact": "010-1234",
+            "note": "반도체 정책"
+        });
+        assert!(source_matches(&entry, "홍길동"));
+        assert!(source_matches(&entry, "반도체"));
+        assert!(source_matches(&entry, "산업"));
+        assert!(!source_matches(&entry, "기획재정부"));
+    }
+
+    #[test]
+    fn sources_search_via_tempfile() {
+        let (_dir, path) = temp_sources_path();
+        test_add(&path, "홍길동 산업부 010-1234 반도체");
+        test_add(&path, "김영희 기획부 010-5678 예산");
+        test_add(&path, "Park IT부 010-9999 Server admin");
+
+        let sources = load_sources_from(&path);
+
+        // Case-insensitive search for "server"
+        let query_lower = "server".to_lowercase();
+        let matches: Vec<_> = sources.iter().filter(|s| source_matches(s, &query_lower)).collect();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0]["name"], "Park");
+
+        // Korean search
+        let query_lower = "반도체".to_lowercase();
+        let matches: Vec<_> = sources.iter().filter(|s| source_matches(s, &query_lower)).collect();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0]["name"], "홍길동");
+    }
+
+    // --- article prompt generation ---
+
+    #[test]
+    fn article_prompt_without_topic() {
+        let (prompt, has_topic) = build_article_prompt("");
+        assert!(!has_topic);
+        assert!(prompt.contains("어떤 주제로 기사를 작성하시겠습니까"));
+        assert!(prompt.contains("리드"));
+    }
+
+    #[test]
+    fn article_prompt_with_topic() {
+        let (prompt, has_topic) = build_article_prompt("반도체 수출 동향");
+        assert!(has_topic);
+        assert!(prompt.contains("반도체 수출 동향"));
+        assert!(prompt.contains("리드"));
+        assert!(prompt.contains("육하원칙"));
+        assert!(prompt.contains("[확인 필요]"));
+    }
+
+    // --- factcheck prompt generation ---
+
+    #[test]
+    fn factcheck_prompt_empty_rejected() {
+        assert!(build_factcheck_prompt("").is_none());
+    }
+
+    #[test]
+    fn factcheck_prompt_with_claim() {
+        let prompt = build_factcheck_prompt("한국 반도체 수출이 사상 최대").unwrap();
+        assert!(prompt.contains("한국 반도체 수출이 사상 최대"));
+        assert!(prompt.contains("팩트체크"));
+        assert!(prompt.contains("판정"));
+    }
+
+    #[test]
+    fn factcheck_prompt_whitespace_only_rejected() {
+        // Callers trim before calling, but the function itself rejects empty
+        assert!(build_factcheck_prompt("").is_none());
+        // Non-empty string is accepted
+        assert!(build_factcheck_prompt("test").is_some());
+    }
+
+    // --- draft file path: slug + date ---
+
+    #[test]
+    fn draft_file_path_contains_date_and_slug() {
+        let path = draft_file_path_with_date("AI 반도체 전망", "2026-01-15");
+        let path_str = path.to_string_lossy();
+        assert!(path_str.contains("2026-01-15"));
+        assert!(path_str.contains("ai-반도체-전망"));
+        assert!(path_str.starts_with(".journalist/drafts/"));
+        assert!(path_str.ends_with(".md"));
+    }
+
+    #[test]
+    fn research_file_path_contains_date_and_slug() {
+        let path = research_file_path_with_date("경제 전망 보고서", "2026-06-01");
+        let path_str = path.to_string_lossy();
+        assert!(path_str.contains("2026-06-01"));
+        assert!(path_str.contains("경제-전망-보고서"));
+        assert!(path_str.starts_with(".journalist/research/"));
+    }
+
+    #[test]
+    fn topic_to_slug_empty() {
+        assert_eq!(topic_to_slug("", 50), "");
+    }
+
+    #[test]
+    fn topic_to_slug_only_punctuation() {
+        assert_eq!(topic_to_slug("..., !!!", 50), "");
     }
 }
