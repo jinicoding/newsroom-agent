@@ -1278,7 +1278,34 @@ pub async fn handle_article(
 
 // ── /research ───────────────────────────────────────────────────────────
 
-/// Handle the /research command: web research on a topic using DuckDuckGo/Naver.
+/// Build the research prompt for a given topic.
+///
+/// Uses Google News RSS as the primary search source (confirmed working for
+/// Korean news) with DuckDuckGo HTML as a fallback.
+pub fn build_research_prompt(topic: &str) -> String {
+    let encoded = topic.replace(' ', "+");
+    format!(
+        "다음 주제에 대해 웹 리서치를 수행해주세요: {topic}\n\n\
+         다음 단계를 따라주세요:\n\n\
+         **1단계: Google News RSS 검색 (주요 소스)**\n\
+         curl -s \"https://news.google.com/rss/search?q={encoded}&hl=ko&gl=KR&ceid=KR:ko\"\n\
+         - RSS XML이 반환됩니다. <item> 안의 <title>, <link>, <pubDate>, <source> 태그를 파싱하세요.\n\
+         - 각 <title>에 기사 제목과 언론사가 포함되어 있습니다.\n\
+         - 최소 10개 이상의 최신 기사를 확인하세요.\n\n\
+         **2단계: DuckDuckGo HTML 검색 (보조 소스)**\n\
+         curl -s \"https://html.duckduckgo.com/html/?q={encoded}\" | sed 's/<[^>]*>//g' | head -100\n\
+         - 봇 차단 시 결과가 없을 수 있습니다. 그 경우 1단계 결과만 사용하세요.\n\n\
+         **3단계: 결과 종합**\n\
+         검색 결과를 종합하여 다음을 정리:\n\
+         - **핵심 사실** — 확인된 주요 정보\n\
+         - **주요 출처** — 신뢰할 수 있는 출처 목록 (언론사명, 기사 제목, 날짜)\n\
+         - **쟁점** — 다른 시각이나 논란\n\
+         - **추가 취재 제안** — 더 파고들 수 있는 방향\n\n\
+         모든 정보에 출처를 명시하고, 확인되지 않은 내용은 명확히 표시하세요."
+    )
+}
+
+/// Handle the /research command: web research on a topic using Google News RSS.
 pub async fn handle_research(
     agent: &mut Agent,
     input: &str,
@@ -1293,20 +1320,7 @@ pub async fn handle_research(
         return;
     }
 
-    let prompt = format!(
-        "다음 주제에 대해 웹 리서치를 수행해주세요: {topic}\n\n\
-         다음 단계를 따라주세요:\n\
-         1. DuckDuckGo로 검색: curl -s \"https://lite.duckduckgo.com/lite?q={}\" | sed 's/<[^>]*>//g' | head -80\n\
-         2. 네이버 뉴스 검색: curl -s \"https://search.naver.com/search.naver?where=news&query={}\" | sed 's/<[^>]*>//g' | head -80\n\
-         3. 검색 결과를 종합하여 다음을 정리:\n\
-            - **핵심 사실** — 확인된 주요 정보\n\
-            - **주요 출처** — 신뢰할 수 있는 출처 목록\n\
-            - **쟁점** — 다른 시각이나 논란\n\
-            - **추가 취재 제안** — 더 파고들 수 있는 방향\n\n\
-         모든 정보에 출처를 명시하고, 확인되지 않은 내용은 명확히 표시하세요.",
-        topic.replace(' ', "+"),
-        topic.replace(' ', "+"),
-    );
+    let prompt = build_research_prompt(topic);
 
     run_prompt(agent, &prompt, session_total, model).await;
     auto_compact_if_needed(agent);
@@ -1877,5 +1891,77 @@ mod tests {
         assert_eq!(loaded[0]["note"].as_str().unwrap(), "인공지능 연구 🤖");
 
         cleanup(&path);
+    }
+
+    #[test]
+    fn test_research_prompt_uses_google_news_rss() {
+        let prompt = super::build_research_prompt("반도체 수출");
+        // Primary source must be Google News RSS
+        assert!(
+            prompt.contains("news.google.com/rss/search"),
+            "should use Google News RSS as primary search source"
+        );
+        assert!(
+            prompt.contains("hl=ko&gl=KR&ceid=KR:ko"),
+            "should set Korean locale params"
+        );
+        // Query should be URL-encoded (spaces → +)
+        assert!(
+            prompt.contains("q=반도체+수출"),
+            "should encode query with + for spaces"
+        );
+    }
+
+    #[test]
+    fn test_research_prompt_contains_xml_parsing_instructions() {
+        let prompt = super::build_research_prompt("AI 규제");
+        assert!(
+            prompt.contains("<title>"),
+            "should instruct to parse <title> tags"
+        );
+        assert!(prompt.contains("<item>"), "should mention <item> elements");
+        assert!(prompt.contains("<source>"), "should mention <source> tags");
+    }
+
+    #[test]
+    fn test_research_prompt_has_duckduckgo_fallback() {
+        let prompt = super::build_research_prompt("경제 전망");
+        assert!(
+            prompt.contains("duckduckgo.com"),
+            "should include DuckDuckGo as fallback"
+        );
+        assert!(
+            prompt.contains("보조 소스"),
+            "should label DuckDuckGo as secondary/fallback"
+        );
+    }
+
+    #[test]
+    fn test_research_prompt_no_naver() {
+        let prompt = super::build_research_prompt("부동산 시장");
+        // Naver search was removed because it returns JS-rendered pages
+        assert!(
+            !prompt.contains("search.naver.com"),
+            "should not reference Naver search (JS-rendered, unusable with curl)"
+        );
+    }
+
+    #[test]
+    fn test_research_prompt_no_duckduckgo_lite() {
+        let prompt = super::build_research_prompt("기후 변화");
+        // DuckDuckGo lite was removed because it blocks bots with CAPTCHA
+        assert!(
+            !prompt.contains("lite.duckduckgo.com"),
+            "should not reference DuckDuckGo lite (CAPTCHA blocks bots)"
+        );
+    }
+
+    #[test]
+    fn test_research_prompt_output_structure() {
+        let prompt = super::build_research_prompt("테스트");
+        assert!(prompt.contains("핵심 사실"));
+        assert!(prompt.contains("주요 출처"));
+        assert!(prompt.contains("쟁점"));
+        assert!(prompt.contains("추가 취재 제안"));
     }
 }

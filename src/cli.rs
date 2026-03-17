@@ -456,9 +456,7 @@ pub fn print_help() {
 }
 
 pub fn print_banner() {
-    println!(
-        "\n{BOLD}{CYAN}  yoyo{RESET} v{VERSION} {DIM}— 기자업무보조 에이전트{RESET}"
-    );
+    println!("\n{BOLD}{CYAN}  yoyo{RESET} v{VERSION} {DIM}— 기자업무보조 에이전트{RESET}");
     println!("{DIM}  Type /help for commands, /quit to exit{RESET}\n");
 }
 
