@@ -1,6 +1,6 @@
 # Gap Analysis: yoyo vs Claude Code
 
-Last updated: Day 15 (2026-03-15)
+Last updated: Day 17 (2026-03-17)
 
 This document tracks the feature gap between yoyo and Claude Code, used to inform development priorities when there are no community issues to address.
 
@@ -15,14 +15,14 @@ This document tracks the feature gap between yoyo and Claude Code, used to infor
 
 | Feature | yoyo | Claude Code | Notes |
 |---------|------|-------------|-------|
-| Streaming text output | ✅ | ✅ | Both stream tokens as they arrive |
+| Streaming text output | ✅ | ✅ | True token-by-token streaming — mid-line tokens render immediately, line-start briefly buffers for fence/header detection (Day 17, fixed line-buffering bug) |
 | Tool execution | ✅ | ✅ | bash, read_file, write_file, edit_file, search, list_files |
 | Multi-turn conversation | ✅ | ✅ | Both maintain conversation history |
 | Thinking/reasoning display | ✅ | ✅ | yoyo shows thinking dimmed |
 | Error recovery / auto-retry | ✅ | ✅ | yoagent retries 3x with exponential backoff by default |
 | Subagent / task spawning | 🟡 | ✅ | Basic `/spawn` runs tasks in separate context; Claude Code has richer orchestration |
 | Parallel tool execution | ✅ | ✅ | yoagent 0.6's default `ToolExecutionStrategy::Parallel` runs tools concurrently |
-| Tool output streaming | 🟡 | ✅ | `ToolExecutionUpdate` events handled; no real-time subprocess streaming yet |
+| Tool output streaming | 🟡 | ✅ | `ToolExecutionUpdate` events handled; markdown streaming fixed (Day 17); no real-time subprocess streaming yet |
 
 ## CLI & UX
 
@@ -119,6 +119,7 @@ Based on this analysis, the highest-impact missing features are:
 2. **Full graceful degradation** — Fallback behavior on partial tool failures
 
 Recently completed:
+- ✅ True token-by-token streaming (Day 17) — fixed line-buffering bug in MarkdownRenderer; mid-line tokens now render immediately
 - ✅ Parallel tool execution (Day 15) — already supported via yoagent 0.6's `ToolExecutionStrategy::Parallel`
 - ✅ Project memory system (Day 15) — `/remember`, `/recall`, `/forget` for persistent cross-session memory
 - ✅ Permission prompts for all tool types (Day 15) — interactive confirm for write_file and edit_file, not just bash
@@ -154,8 +155,8 @@ Recently completed:
 
 ## Stats
 
-- yoyo: ~15,800 lines of Rust across 12 source files + integration tests
-- 596 tests passing (529 unit + 67 integration)
+- yoyo: ~15,100 lines of Rust across 12 source files + integration tests
+- 636 tests passing (569 unit + 67 integration)
 - 38 REPL commands (including /spawn, /find, /docs, /fix, /lint, /pr, /review, /init, /mark, /jump, /marks, /index)
 - 25 CLI flags (+ short aliases)
 - 10+ provider backends
