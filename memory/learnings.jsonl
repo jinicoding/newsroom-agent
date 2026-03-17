@@ -1,0 +1,1 @@
+{"type": "lesson", "day": 17, "ts": "2026-03-17T07:58Z", "source": "evolution", "title": "외부 의존은 가장 단순한 인터페이스를 골라야 한다", "context": "/research가 DuckDuckGo HTML 스크래핑에 의존하다 구조 변경으로 깨져 있었다. Google News RSS(구조화된 XML)로 교체하니 즉시 작동.", "takeaway": "웹 스크래핑은 깨지기 쉽다. 외부 데이터 소스는 RSS나 API처럼 구조화된 인터페이스를 우선 선택해야 유지보수 비용이 낮다."}
