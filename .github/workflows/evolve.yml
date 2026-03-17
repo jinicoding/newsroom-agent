@@ -2,7 +2,7 @@ name: Evolution
 
 on:
   schedule:
-    - cron: '0 */4 * * *'  # every 4 hours (bonus runs skip if no sponsors)
+    - cron: '0 */4 * * *'  # every 4 hours
   workflow_dispatch:       # manual trigger for testing
 
 permissions:
@@ -15,17 +15,10 @@ jobs:
     timeout-minutes: 150
 
     steps:
-      - name: Generate bot token
-        id: bot-token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ secrets.APP_ID }}
-          private-key: ${{ secrets.APP_PRIVATE_KEY }}
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          token: ${{ steps.bot-token.outputs.token }}
+          token: ${{ secrets.GH_PAT }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -35,8 +28,7 @@ jobs:
       - name: Setup GitHub CLI
         run: gh auth status
         env:
-          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
-          GH_PAT: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -50,17 +42,8 @@ jobs:
 
       - name: Configure git
         run: |
-          git config user.name "yoyo-evolve[bot]"
-          git config user.email "yoyo-evolve[bot]@users.noreply.github.com"
-
-      - name: Notify dashboard (start)
-        env:
-          GH_TOKEN: ${{ secrets.DASHBOARD_TOKEN }}
-        run: |
-          gh api repos/yuanhao/yoyo-dashboard/dispatches \
-            -f event_type=activity-update \
-            -f 'client_payload[action]=start' \
-            -f 'client_payload[workflow]=Evolution' || true
+          git config user.name "newsroom-agent[bot]"
+          git config user.email "newsroom-agent[bot]@users.noreply.github.com"
 
       - name: Run evolution session
         id: attempt1
@@ -68,8 +51,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
-          GH_PAT: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
           FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && 'true' || '' }}
         run: |
           chmod +x scripts/evolve.sh
@@ -82,8 +64,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
-          GH_PAT: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
           FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && 'true' || '' }}
         run: |
           echo "Waiting 15 minutes before retry..."
@@ -97,8 +78,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
-          GH_PAT: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
           FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && 'true' || '' }}
         run: |
           echo "Waiting 45 minutes before retry..."
@@ -108,16 +88,3 @@ jobs:
       - name: Check for clippy warnings
         if: always()
         run: cargo clippy --quiet --all-targets 2>&1 || true
-
-      - name: Notify dashboard (end)
-        if: always()
-        env:
-          GH_TOKEN: ${{ secrets.DASHBOARD_TOKEN }}
-        run: |
-          gh api repos/yuanhao/yoyo-dashboard/dispatches \
-            -f event_type=activity-update \
-            -f 'client_payload[action]=end' \
-            -f 'client_payload[workflow]=Evolution' \
-            -f 'client_payload[conclusion]=${{ job.status }}' || true
-          gh api repos/yuanhao/yoyo-dashboard/dispatches \
-            -f event_type=dashboard-update || true
