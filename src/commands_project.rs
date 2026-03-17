@@ -1240,6 +1240,90 @@ pub fn handle_index() {
 
 // ── /article ────────────────────────────────────────────────────────────
 
+/// Drafts directory for saved articles.
+const DRAFTS_DIR: &str = ".journalist/drafts";
+
+/// Generate a slug from a topic string: lowercase, ASCII-safe, hyphen-separated.
+/// Non-ASCII characters (e.g. Korean) are kept as-is; only ASCII is lowercased.
+/// Whitespace and punctuation become hyphens; consecutive hyphens are collapsed.
+/// The slug is truncated to at most `max_len` characters (default 50).
+pub fn topic_to_slug(topic: &str, max_len: usize) -> String {
+    let mut slug = String::with_capacity(topic.len());
+    let mut last_was_hyphen = true; // prevent leading hyphen
+    for ch in topic.chars() {
+        if ch.is_alphanumeric() {
+            if ch.is_ascii() {
+                slug.extend(ch.to_lowercase());
+            } else {
+                slug.push(ch);
+            }
+            last_was_hyphen = false;
+        } else if !last_was_hyphen {
+            slug.push('-');
+            last_was_hyphen = true;
+        }
+    }
+    // Trim trailing hyphen
+    let slug = slug.trim_end_matches('-');
+    // Truncate to max_len *characters* (not bytes) at a safe boundary
+    if slug.chars().count() > max_len {
+        slug.chars()
+            .take(max_len)
+            .collect::<String>()
+            .trim_end_matches('-')
+            .to_string()
+    } else {
+        slug.to_string()
+    }
+}
+
+/// Get today's date as YYYY-MM-DD string.
+fn today_str() -> String {
+    let now = std::time::SystemTime::now();
+    let secs = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    // Parse UTC date from epoch seconds
+    let days = secs / 86400;
+    // Civil date from day count (algorithm from Howard Hinnant)
+    let z = days as i64 + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z.rem_euclid(146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Build the draft file path: `.journalist/drafts/YYYY-MM-DD_<slug>.md`
+pub fn draft_file_path(topic: &str) -> std::path::PathBuf {
+    draft_file_path_with_date(topic, &today_str())
+}
+
+/// Build the draft file path with an explicit date string (for testing).
+pub fn draft_file_path_with_date(topic: &str, date: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(topic, 50);
+    let filename = if slug.is_empty() {
+        format!("{date}_draft.md")
+    } else {
+        format!("{date}_{slug}.md")
+    };
+    std::path::PathBuf::from(DRAFTS_DIR).join(filename)
+}
+
+/// Save article draft to file. Creates the drafts directory if needed.
+fn save_article_draft(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
 /// Handle the /article command: AI-assisted article writing with structured format.
 pub async fn handle_article(
     agent: &mut Agent,
@@ -1274,8 +1358,24 @@ pub async fn handle_article(
         )
     };
 
-    run_prompt(agent, &prompt, session_total, model).await;
+    let response = run_prompt(agent, &prompt, session_total, model).await;
     auto_compact_if_needed(agent);
+
+    // Save draft to file if a topic was provided and we got a response
+    if !topic.is_empty() && !response.trim().is_empty() {
+        let path = draft_file_path(topic);
+        match save_article_draft(&path, &response) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 초안 저장: {}{RESET}\n",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  초안 저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
 }
 
 // ── /research ───────────────────────────────────────────────────────────
@@ -1731,5 +1831,65 @@ mod tests {
         // Verify data is unchanged
         let sources = load_sources_from(&path);
         assert_eq!(sources[0]["name"], "홍길동");
+    }
+
+    // --- article draft path tests ---
+
+    #[test]
+    fn topic_to_slug_basic() {
+        assert_eq!(topic_to_slug("반도체 수출 동향", 50), "반도체-수출-동향");
+    }
+
+    #[test]
+    fn topic_to_slug_ascii() {
+        assert_eq!(topic_to_slug("Hello World", 50), "hello-world");
+    }
+
+    #[test]
+    fn topic_to_slug_mixed() {
+        assert_eq!(
+            topic_to_slug("삼성전자 Q1 실적", 50),
+            "삼성전자-q1-실적"
+        );
+    }
+
+    #[test]
+    fn topic_to_slug_punctuation() {
+        assert_eq!(topic_to_slug("AI, 반도체... 전망!", 50), "ai-반도체-전망");
+    }
+
+    #[test]
+    fn topic_to_slug_truncation() {
+        let long = "가".repeat(60);
+        let slug = topic_to_slug(&long, 50);
+        assert!(slug.len() <= 50 * 3); // Korean chars are 3 bytes
+        assert!(slug.chars().count() <= 50);
+    }
+
+    #[test]
+    fn draft_file_path_with_topic() {
+        let path = draft_file_path_with_date("반도체 수출", "2026-03-17");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/drafts/2026-03-17_반도체-수출.md"
+        );
+    }
+
+    #[test]
+    fn draft_file_path_empty_topic() {
+        let path = draft_file_path_with_date("", "2026-03-17");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/drafts/2026-03-17_draft.md"
+        );
+    }
+
+    #[test]
+    fn save_article_draft_creates_dirs_and_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("drafts").join("test.md");
+        save_article_draft(&path, "# 테스트 기사\n본문").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "# 테스트 기사\n본문");
     }
 }

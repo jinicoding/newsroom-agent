@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-A self-evolving journalist assistant agent (기자업무보조 에이전트) CLI built on [yoagent](https://github.com/yologdev/yoagent). Helps Korean newspaper reporters with research, article writing, fact-checking, and source management. A GitHub Actions cron job (`scripts/evolve.sh`) runs the agent every 4 hours using a 3-phase pipeline (plan → implement → respond), which reads its own source, picks improvements, implements them, and commits — if tests pass.
+A self-evolving journalist assistant agent (기자업무보조 에이전트) CLI built on [yoagent](https://github.com/yologdev/yoagent). Helps Korean newspaper reporters with research, article writing, fact-checking, and source management. Evolution runs via `scripts/evolve.sh` (currently local-only; GitHub Actions schedule is disabled) using a 3-phase pipeline (plan → implement → respond), which reads its own source, picks improvements, implements them, and commits — if tests pass.
 
 ## Build & Test Commands
 
@@ -25,12 +25,18 @@ ANTHROPIC_API_KEY=sk-... cargo run
 ANTHROPIC_API_KEY=sk-... cargo run -- --model claude-opus-4-6 --skills ./skills
 ```
 
-To trigger a full evolution cycle:
+Key CLI flags: `--model`, `--provider`, `--base-url`, `--thinking`, `--max-tokens`, `--skills`, `--system`/`--system-file`, `--prompt`/`-p`, `--output`/`-o`, `--mcp`, `--openapi`, `--allow`/`--deny`, `--continue`/`-c`, `--verbose`/`-v`, `--yes`/`-y`. Config file: `.yoyo.toml` or `~/.config/yoyo/config.toml`.
+
+To trigger a full evolution cycle (local):
 ```bash
 ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 ```
 
 ## Architecture
+
+### Context file resolution
+
+The agent looks for project instructions in order: `YOYO.md` → `CLAUDE.md` → `.yoyo/instructions.md`. `YOYO.md` is the canonical name; `CLAUDE.md` is a compatibility alias.
 
 ### Source (`src/`) — 12 files
 
@@ -40,7 +46,7 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 - `cli.rs` — CLI argument parsing, config file support, multi-provider abstraction, permission patterns
 - `prompt.rs` — streaming execution with automatic retries, exponential backoff, error classification
 
-**Command dispatcher** (46+ slash commands split by domain):
+**Command dispatcher** (47 slash commands split by domain):
 - `commands.rs` — central hub: `KNOWN_COMMANDS` registry, auto-compact trigger, tab-completion routing, common handlers
 - `commands_git.rs` — `/diff`, `/commit` (AI-generated conventional commits), `/pr`, `/review`, `/undo`
 - `commands_project.rs` — `/health`, `/fix`, `/test`, `/lint`, `/init`, `/docs`, `/find`, `/tree`, `/index`, `/article`, `/research`, `/sources`, `/factcheck`
@@ -97,7 +103,7 @@ mdbook source in `docs/src/`, config in `docs/book.toml`. Output goes to `site/b
 ### CI/CD Workflows (`.github/workflows/`)
 
 - `ci.yml` — PR gate: build, test, clippy, fmt
-- `evolve.yml` — scheduled every 4 hours, 3 retries, uses GitHub App token
+- `evolve.yml` — evolution pipeline (schedule currently disabled; use `evolve.sh` or `evolve_local.sh` locally)
 - `pages.yml` — builds mdbook + journal homepage to GitHub Pages on push to main
 - `synthesize.yml` — daily cron: compresses memory archives into active context
 - `social.yml` — processes GitHub discussions for social learning

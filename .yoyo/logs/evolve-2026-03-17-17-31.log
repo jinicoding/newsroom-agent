@@ -32,3 +32,12 @@ SESSION_PLAN.md 작성 완료.
   계획된 태스크: 4개
 
   ── Task 1 / 4 ──
+완료. 변경 사항 요약:
+
+- **`/sources remove <번호>`** — 1-indexed 번호로 취재원 삭제
+- **`/sources edit <번호> <필드> <값>`** — name/org/contact/note 필드 수정, 잘못된 필드명은 거부
+- `SOURCES_SUBCOMMANDS`에 `remove`, `edit` 추가 (탭 완성 지원)
+- `load_sources_from`/`save_sources_to` 경로 파라미터 버전 추출 (병렬 테스트 안전)
+- 단위 테스트 6개 추가, 전체 575+67 테스트 통과
+
+  ── Task 2 / 4 ──
