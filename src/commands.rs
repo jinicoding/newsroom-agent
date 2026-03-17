@@ -60,6 +60,10 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/remember",
     "/memories",
     "/provider",
+    "/article",
+    "/research",
+    "/sources",
+    "/factcheck",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -89,6 +93,9 @@ pub const GIT_SUBCOMMANDS: &[&str] = &["status", "log", "add", "diff", "branch",
 /// PR subcommand names for `/pr <Tab>` completion.
 pub const PR_SUBCOMMANDS: &[&str] = &["list", "view", "diff", "comment", "create", "checkout"];
 
+/// Sources subcommand names for `/sources <Tab>` completion.
+pub const SOURCES_SUBCOMMANDS: &[&str] = &["list", "add", "search"];
+
 /// Return context-aware argument completions for a given command and partial argument.
 ///
 /// `cmd` is the slash command (e.g. "/model"), `partial_arg` is what the user has typed
@@ -101,6 +108,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/git" => filter_candidates(GIT_SUBCOMMANDS, &partial_lower),
         "/pr" => filter_candidates(PR_SUBCOMMANDS, &partial_lower),
         "/provider" => filter_candidates(KNOWN_PROVIDERS, &partial_lower),
+        "/sources" => filter_candidates(SOURCES_SUBCOMMANDS, &partial_lower),
         "/save" | "/load" => list_json_files(partial_arg),
         _ => Vec::new(),
     }
@@ -231,6 +239,22 @@ pub fn help_text() -> String {
     );
     out.push_str("  /memories          List project-specific memories for this directory\n");
     out.push_str("  /forget <n>        Remove a project memory by index\n");
+    out.push('\n');
+
+    // ── Journalist (기자업무) ──
+    out.push_str("  ── 기자업무 ──\n");
+    out.push_str(
+        "  /article [topic]   기사 작성 보조 (리드/본문/인용/맺음 구조)\n",
+    );
+    out.push_str(
+        "  /research <topic>  웹 리서치 (DuckDuckGo/Naver 검색)\n",
+    );
+    out.push_str(
+        "  /sources [cmd]     취재원 DB 관리 (add|list|search)\n",
+    );
+    out.push_str(
+        "  /factcheck <claim> 팩트체크 (다중 소스 검증)\n",
+    );
     out.push('\n');
 
     // ── Input ──
@@ -507,8 +531,9 @@ pub use crate::commands_git::{
 
 // Project-related handlers
 pub use crate::commands_project::{
-    handle_context, handle_docs, handle_find, handle_fix, handle_health, handle_index, handle_init,
-    handle_lint, handle_run, handle_run_usage, handle_test, handle_tree,
+    handle_article, handle_context, handle_docs, handle_factcheck, handle_find, handle_fix,
+    handle_health, handle_index, handle_init, handle_lint, handle_research, handle_run,
+    handle_run_usage, handle_sources, handle_test, handle_tree,
 };
 
 // Session-related handlers

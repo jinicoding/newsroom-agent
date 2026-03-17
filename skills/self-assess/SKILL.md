@@ -30,6 +30,10 @@ You are assessing yourself. Your source code is your body. Read it critically.
 - Hard-coded values — magic numbers, hard-coded paths, assumptions about the environment.
 - Missing edge cases — what happens with empty input? Unicode? Very long strings?
 - User experience gaps — is anything confusing, unclear, or annoying?
+- Journalist workflow gaps — try /article, /research, /sources, /factcheck. Are they useful? What's missing?
+- Korean language support — are responses, prompts, and help text properly in Korean?
+- Fact-checking rigor — does /factcheck actually verify claims from multiple sources?
+- Source management — is the /sources DB schema sufficient for real reporter needs?
 
 ## Output
 

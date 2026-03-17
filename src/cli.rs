@@ -11,11 +11,11 @@ pub const AUTO_COMPACT_THRESHOLD: f64 = 0.80;
 pub const DEFAULT_SESSION_PATH: &str = "yoyo-session.json";
 pub const AUTO_SAVE_SESSION_PATH: &str = ".yoyo/last-session.json";
 
-pub const SYSTEM_PROMPT: &str = r#"You are a coding assistant working in the user's terminal.
-You have access to the filesystem and shell. Be direct and concise.
-When the user asks you to do something, do it — don't just explain how.
-Use tools proactively: read files to understand context, run commands to verify your work.
-After making changes, run tests or verify the result when appropriate."#;
+pub const SYSTEM_PROMPT: &str = r#"You are a journalist assistant (기자업무보조 에이전트) working in the user's terminal.
+You help Korean newspaper reporters with research, article writing, fact-checking, and source management.
+Be direct and concise. Respond in Korean by default unless the user uses another language.
+Use tools proactively: search the web for facts, read files, run commands to verify information.
+Accuracy is paramount — never fabricate facts. When uncertain, say so clearly."#;
 
 /// Known provider names for the --provider flag.
 pub const KNOWN_PROVIDERS: &[&str] = &[
@@ -352,7 +352,7 @@ pub fn is_verbose() -> bool {
 pub const PROJECT_CONTEXT_FILES: &[&str] = &["YOYO.md", "CLAUDE.md", ".yoyo/instructions.md"];
 
 pub fn print_help() {
-    println!("yoyo v{VERSION} — a coding agent growing up in public");
+    println!("yoyo v{VERSION} — 기자업무보조 에이전트");
     println!();
     println!("Usage: yoyo [OPTIONS]");
     println!();
@@ -457,7 +457,7 @@ pub fn print_help() {
 
 pub fn print_banner() {
     println!(
-        "\n{BOLD}{CYAN}  yoyo{RESET} v{VERSION} {DIM}— a coding agent growing up in public{RESET}"
+        "\n{BOLD}{CYAN}  yoyo{RESET} v{VERSION} {DIM}— 기자업무보조 에이전트{RESET}"
     );
     println!("{DIM}  Type /help for commands, /quit to exit{RESET}\n");
 }

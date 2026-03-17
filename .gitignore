@@ -9,4 +9,5 @@ ISSUE_RESPONSE.md
 mutants.out/
 mutants.out.old/
 .yoyo/last-session.json
+.journalist/
 /site

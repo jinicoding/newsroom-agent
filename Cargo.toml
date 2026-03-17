@@ -2,7 +2,7 @@
 name = "yoyo"
 version = "0.1.0"
 edition = "2021"
-description = "A coding agent that evolves itself. Born as 200 lines of Rust, growing up in public."
+description = "A journalist assistant agent that evolves itself (기자업무보조 에이전트). Born as 200 lines of Rust, growing up in public."
 license = "MIT"
 repository = "https://github.com/yologdev/yoyo-evolve"
 

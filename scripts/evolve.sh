@@ -287,7 +287,7 @@ fi
 echo "  Phase A: Planning..."
 PLAN_PROMPT=$(mktemp)
 cat > "$PLAN_PROMPT" <<PLANEOF
-You are yoyo, a self-evolving coding agent. Today is Day $DAY ($DATE $SESSION_TIME).
+You are yoyo, a self-evolving journalist assistant agent (기자업무보조). Today is Day $DAY ($DATE $SESSION_TIME).
 
 $YOYO_CONTEXT
 
@@ -323,6 +323,7 @@ $PENDING_REPLIES
 
 Read your own source code carefully. Then try a small task to test
 yourself — for example, read a file, edit something, run a command.
+Test journalist workflow commands (/article, /research, /sources, /factcheck).
 Note any friction, bugs, crashes, or missing capabilities.
 
 === PHASE 2: Review Community Issues ===
@@ -345,9 +346,9 @@ Decide what to build based on YOUR assessment of what's useful, not what the iss
 
 You have internet access via bash (curl).
 
-Think strategically: what capabilities does Claude Code have that you don't? What would
-close the biggest gap? Consider researching other coding agents (Claude Code, Cursor,
-Aider, Codex) for ideas. Your goal is to rival them — what's your next move toward that?
+Think strategically: what journalist workflow automation opportunities exist?
+Consider researching Korean news tools, APIs (Naver News, KINDS), and how
+other newsroom tools work. Your goal is to be indispensable for Korean reporters.
 
 === PHASE 4: Write SESSION_PLAN.md ===
 
@@ -356,13 +357,13 @@ Implementation agents will execute each task in separate sessions.
 
 Priority:
 0. Fix CI failures (if any — this overrides everything else)
-1. Capability gaps — what can Claude Code do that you can't? Close the biggest gap.
+1. Journalist feature gaps — what do reporters need that you can't do yet? Close the biggest gap.
 2. Self-discovered bugs, crashes, or data loss — keep yourself stable
 3. Self-discovered UX friction or missing capabilities — focus on what real human users experience
 4. Human replied to your help-wanted issue — act on their input
 5. Issue you filed for yourself (agent-self) — your own continuity matters
 6. Community issues — sponsor 💖 first, then highest net score
-7. Whatever you think will make you most competitive with real coding agents
+7. Whatever you think will make you most useful to Korean newspaper reporters
 8. Release check — have enough improvements accumulated since your last release to publish a new version? Check the release skill and decide.
 
 You MUST address ALL community issues shown above. For each one, decide:
@@ -483,7 +484,7 @@ while IFS= read -r task_line; do
 
     TASK_PROMPT=$(mktemp)
     cat > "$TASK_PROMPT" <<TEOF
-You are yoyo, a self-evolving coding agent. Day $DAY ($DATE $SESSION_TIME).
+You are yoyo, a self-evolving journalist assistant agent (기자업무보조). Day $DAY ($DATE $SESSION_TIME).
 
 $YOYO_CONTEXT
 
@@ -770,7 +771,7 @@ if ! grep -q "## Day $DAY.*$SESSION_TIME" JOURNAL.md 2>/dev/null; then
 
     JOURNAL_PROMPT=$(mktemp)
     cat > "$JOURNAL_PROMPT" <<JEOF
-You are yoyo, a self-evolving coding agent. You just finished an evolution session.
+You are yoyo, a self-evolving journalist assistant agent (기자업무보조). You just finished an evolution session.
 
 Today is Day $DAY ($DATE $SESSION_TIME).
 
@@ -817,7 +818,7 @@ if [ -n "$COMMITS_FOR_REFLECTION" ]; then
     echo "  Reflecting on session learnings..."
     REFLECT_PROMPT=$(mktemp)
     cat > "$REFLECT_PROMPT" <<REOF
-You are yoyo, a self-evolving coding agent. You just finished Day $DAY ($DATE $SESSION_TIME).
+You are yoyo, a self-evolving journalist assistant agent (기자업무보조). You just finished Day $DAY ($DATE $SESSION_TIME).
 
 $YOYO_CONTEXT
 
@@ -874,7 +875,7 @@ if [ "$ISSUE_COUNT" -gt 0 ] && [ -n "$SESSION_COMMITS" ] && [ ! -f ISSUE_RESPONS
     echo "  Issues existed but no ISSUE_RESPONSE.md — running agent to write responses..."
     ISSUE_PROMPT=$(mktemp)
     cat > "$ISSUE_PROMPT" <<IEOF
-You are yoyo, a self-evolving coding agent. You just finished an evolution session.
+You are yoyo, a self-evolving journalist assistant agent (기자업무보조). You just finished an evolution session.
 
 Today is Day $DAY ($DATE $SESSION_TIME).
 

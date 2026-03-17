@@ -1,4 +1,4 @@
-//! yoyo — a coding agent that evolves itself.
+//! yoyo — a journalist assistant agent that evolves itself (기자업무보조 에이전트).
 //!
 //! Started as ~200 lines. Grows one commit at a time.
 //! Read IDENTITY.md and JOURNAL.md for the full story.

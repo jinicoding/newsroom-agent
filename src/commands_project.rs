@@ -1,5 +1,5 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
-//! /tree, /run, /docs, /find, /index.
+//! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -1236,4 +1236,280 @@ pub fn handle_index() {
         let formatted = format_project_index(&entries);
         println!("{DIM}{formatted}{RESET}");
     }
+}
+
+// ── /article ────────────────────────────────────────────────────────────
+
+/// Handle the /article command: AI-assisted article writing with structured format.
+pub async fn handle_article(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let topic = input
+        .strip_prefix("/article")
+        .unwrap_or("")
+        .trim();
+
+    let prompt = if topic.is_empty() {
+        "기사 작성을 도와드리겠습니다. 어떤 주제로 기사를 작성하시겠습니까? \
+         주제를 알려주시면 다음 구조로 초안을 제안합니다:\n\
+         1. 리드 (핵심 요약)\n\
+         2. 본문 (배경, 맥락, 상세)\n\
+         3. 인용 (관계자 코멘트)\n\
+         4. 맺음 (전망, 의미)".to_string()
+    } else {
+        format!(
+            "다음 주제로 한국 신문 기사 초안을 작성해주세요: {topic}\n\n\
+             다음 구조를 따라주세요:\n\
+             1. **리드** — 육하원칙(누가, 언제, 어디서, 무엇을, 어떻게, 왜)을 포함한 핵심 요약 (1-2문장)\n\
+             2. **본문** — 배경, 맥락, 상세 내용 (3-5문단)\n\
+             3. **인용** — 관계자 코멘트가 들어갈 위치 표시 (\"[관계자 이름/직함] 인용 필요\")\n\
+             4. **맺음** — 향후 전망 또는 의미 (1-2문장)\n\n\
+             주의사항:\n\
+             - 사실 확인이 필요한 부분은 [확인 필요]로 표시\n\
+             - 추가 취재가 필요한 부분은 [취재 필요]로 표시\n\
+             - 객관적이고 중립적인 톤 유지"
+        )
+    };
+
+    run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+}
+
+// ── /research ───────────────────────────────────────────────────────────
+
+/// Handle the /research command: web research on a topic using DuckDuckGo/Naver.
+pub async fn handle_research(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let topic = input
+        .strip_prefix("/research")
+        .unwrap_or("")
+        .trim();
+
+    if topic.is_empty() {
+        println!("{DIM}  사용법: /research <주제>{RESET}");
+        println!("{DIM}  예시: /research 반도체 수출 동향{RESET}\n");
+        return;
+    }
+
+    let prompt = format!(
+        "다음 주제에 대해 웹 리서치를 수행해주세요: {topic}\n\n\
+         다음 단계를 따라주세요:\n\
+         1. DuckDuckGo로 검색: curl -s \"https://lite.duckduckgo.com/lite?q={}\" | sed 's/<[^>]*>//g' | head -80\n\
+         2. 네이버 뉴스 검색: curl -s \"https://search.naver.com/search.naver?where=news&query={}\" | sed 's/<[^>]*>//g' | head -80\n\
+         3. 검색 결과를 종합하여 다음을 정리:\n\
+            - **핵심 사실** — 확인된 주요 정보\n\
+            - **주요 출처** — 신뢰할 수 있는 출처 목록\n\
+            - **쟁점** — 다른 시각이나 논란\n\
+            - **추가 취재 제안** — 더 파고들 수 있는 방향\n\n\
+         모든 정보에 출처를 명시하고, 확인되지 않은 내용은 명확히 표시하세요.",
+        topic.replace(' ', "+"),
+        topic.replace(' ', "+"),
+    );
+
+    run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+}
+
+// ── /sources ────────────────────────────────────────────────────────────
+
+/// Sources database path.
+const SOURCES_FILE: &str = ".journalist/sources.json";
+
+/// Handle the /sources command: manage reporter's source database.
+pub fn handle_sources(input: &str) {
+    let args = input
+        .strip_prefix("/sources")
+        .unwrap_or("")
+        .trim();
+
+    match args.split_whitespace().next().unwrap_or("list") {
+        "list" => sources_list(),
+        "add" => {
+            let rest = args.strip_prefix("add").unwrap_or("").trim();
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /sources add <이름> <소속> <연락처> [메모]{RESET}");
+                println!("{DIM}  예시: /sources add 홍길동 산업통상자원부 010-1234-5678 반도체 정책 담당{RESET}\n");
+            } else {
+                sources_add(rest);
+            }
+        }
+        "search" => {
+            let query = args.strip_prefix("search").unwrap_or("").trim();
+            if query.is_empty() {
+                println!("{DIM}  사용법: /sources search <검색어>{RESET}\n");
+            } else {
+                sources_search(query);
+            }
+        }
+        other => {
+            println!("{DIM}  알 수 없는 하위 명령: {other}{RESET}");
+            println!("{DIM}  사용법: /sources [list|add|search]{RESET}\n");
+        }
+    }
+}
+
+fn ensure_sources_dir() {
+    let dir = std::path::Path::new(".journalist");
+    if !dir.exists() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+}
+
+fn load_sources() -> Vec<serde_json::Value> {
+    let path = std::path::Path::new(SOURCES_FILE);
+    if !path.exists() {
+        return Vec::new();
+    }
+    match std::fs::read_to_string(path) {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn save_sources(sources: &[serde_json::Value]) {
+    ensure_sources_dir();
+    if let Ok(json) = serde_json::to_string_pretty(sources) {
+        let _ = std::fs::write(SOURCES_FILE, json);
+    }
+}
+
+fn sources_list() {
+    let sources = load_sources();
+    if sources.is_empty() {
+        println!("{DIM}  취재원 DB가 비어 있습니다.");
+        println!("  /sources add <이름> <소속> <연락처> [메모] 로 추가하세요.{RESET}\n");
+        return;
+    }
+    println!("{DIM}  ── 취재원 목록 ({} 명) ──", sources.len());
+    for (i, s) in sources.iter().enumerate() {
+        let name = s["name"].as_str().unwrap_or("?");
+        let org = s["org"].as_str().unwrap_or("");
+        let contact = s["contact"].as_str().unwrap_or("");
+        let note = s["note"].as_str().unwrap_or("");
+        println!(
+            "  {}. {} | {} | {}{}",
+            i + 1,
+            name,
+            org,
+            contact,
+            if note.is_empty() {
+                String::new()
+            } else {
+                format!(" | {note}")
+            }
+        );
+    }
+    println!("{RESET}");
+}
+
+fn sources_add(args: &str) {
+    let parts: Vec<&str> = args.splitn(4, ' ').collect();
+    if parts.len() < 3 {
+        println!("{DIM}  최소 이름, 소속, 연락처가 필요합니다.{RESET}\n");
+        return;
+    }
+    let entry = serde_json::json!({
+        "name": parts[0],
+        "org": parts[1],
+        "contact": parts[2],
+        "note": if parts.len() > 3 { parts[3] } else { "" },
+    });
+    let mut sources = load_sources();
+    sources.push(entry);
+    save_sources(&sources);
+    println!(
+        "{DIM}  취재원 추가됨: {} ({}){RESET}\n",
+        parts[0], parts[1]
+    );
+}
+
+fn sources_search(query: &str) {
+    let sources = load_sources();
+    let query_lower = query.to_lowercase();
+    let matches: Vec<&serde_json::Value> = sources
+        .iter()
+        .filter(|s| {
+            let text = format!(
+                "{} {} {} {}",
+                s["name"].as_str().unwrap_or(""),
+                s["org"].as_str().unwrap_or(""),
+                s["contact"].as_str().unwrap_or(""),
+                s["note"].as_str().unwrap_or(""),
+            )
+            .to_lowercase();
+            text.contains(&query_lower)
+        })
+        .collect();
+
+    if matches.is_empty() {
+        println!("{DIM}  '{query}'에 해당하는 취재원이 없습니다.{RESET}\n");
+        return;
+    }
+    println!("{DIM}  ── 검색 결과: {} 명 ──", matches.len());
+    for (i, s) in matches.iter().enumerate() {
+        let name = s["name"].as_str().unwrap_or("?");
+        let org = s["org"].as_str().unwrap_or("");
+        let contact = s["contact"].as_str().unwrap_or("");
+        let note = s["note"].as_str().unwrap_or("");
+        println!(
+            "  {}. {} | {} | {}{}",
+            i + 1,
+            name,
+            org,
+            contact,
+            if note.is_empty() {
+                String::new()
+            } else {
+                format!(" | {note}")
+            }
+        );
+    }
+    println!("{RESET}");
+}
+
+// ── /factcheck ──────────────────────────────────────────────────────────
+
+/// Handle the /factcheck command: multi-source fact verification.
+pub async fn handle_factcheck(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let claim = input
+        .strip_prefix("/factcheck")
+        .unwrap_or("")
+        .trim();
+
+    if claim.is_empty() {
+        println!("{DIM}  사용법: /factcheck <주장 또는 사실>{RESET}");
+        println!("{DIM}  예시: /factcheck 한국 반도체 수출이 2025년 사상 최대를 기록했다{RESET}\n");
+        return;
+    }
+
+    let prompt = format!(
+        "다음 주장/사실에 대한 팩트체크를 수행해주세요: \"{claim}\"\n\n\
+         다음 단계를 따라주세요:\n\
+         1. 여러 소스에서 관련 정보를 검색 (DuckDuckGo, 네이버 등)\n\
+         2. 다음 형식으로 결과를 정리:\n\n\
+         **주장:** {claim}\n\
+         **판정:** [사실 / 대체로 사실 / 절반의 사실 / 대체로 거짓 / 거짓 / 판단 불가]\n\
+         **근거:**\n\
+         - 출처 1: [내용]\n\
+         - 출처 2: [내용]\n\
+         **맥락:** [주장의 배경이나 누락된 맥락]\n\
+         **결론:** [기자가 기사에 반영할 때 주의할 점]\n\n\
+         주의: 확인할 수 없는 경우 '판단 불가'로 표시하고 그 이유를 설명하세요.\n\
+         절대로 사실을 만들어내지 마세요."
+    );
+
+    run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
 }
