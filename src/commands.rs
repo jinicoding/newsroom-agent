@@ -94,7 +94,7 @@ pub const GIT_SUBCOMMANDS: &[&str] = &["status", "log", "add", "diff", "branch",
 pub const PR_SUBCOMMANDS: &[&str] = &["list", "view", "diff", "comment", "create", "checkout"];
 
 /// Sources subcommand names for `/sources <Tab>` completion.
-pub const SOURCES_SUBCOMMANDS: &[&str] = &["list", "add", "search"];
+pub const SOURCES_SUBCOMMANDS: &[&str] = &["list", "add", "search", "remove", "edit"];
 
 /// Return context-aware argument completions for a given command and partial argument.
 ///
@@ -250,7 +250,7 @@ pub fn help_text() -> String {
         "  /research <topic>  웹 리서치 (DuckDuckGo/Naver 검색)\n",
     );
     out.push_str(
-        "  /sources [cmd]     취재원 DB 관리 (add|list|search)\n",
+        "  /sources [cmd]     취재원 DB 관리 (add|list|search|remove|edit)\n",
     );
     out.push_str(
         "  /factcheck <claim> 팩트체크 (다중 소스 검증)\n",
