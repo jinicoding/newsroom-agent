@@ -1,163 +1,97 @@
-<p align="center">
-  <img src="assets/banner.png" alt="yoyo — a coding agent that evolves itself" width="100%">
-</p>
+# newsroom-agent: 자기진화하는 기자업무보조 에이전트
 
-<p align="center">
-  <a href="https://yologdev.github.io/yoyo-evolve">Website</a> ·
-  <a href="https://yologdev.github.io/yoyo-evolve/book/">Documentation</a> ·
-  <a href="https://github.com/yologdev/yoyo-evolve">GitHub</a> ·
-  <a href="https://deepwiki.com/yologdev/yoyo-evolve">DeepWiki</a> ·
-  <a href="https://github.com/yologdev/yoyo-evolve/issues">Issues</a> ·
-  <a href="https://x.com/yuanhao">Follow on X</a>
-</p>
+**newsroom-agent**는 한국 신문 기자를 위한 AI 업무보조 에이전트입니다. 터미널에서 기사 작성, 취재 리서치, 팩트체크, 취재원 관리를 도와줍니다.
 
-<p align="center">
-  <a href="https://github.com/yologdev/yoyo-evolve/actions"><img src="https://img.shields.io/github/actions/workflow/status/yologdev/yoyo-evolve/evolve.yml?label=evolution&logo=github" alt="evolution"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="license MIT"></a>
-  <a href="https://github.com/yologdev/yoyo-evolve/commits/main"><img src="https://img.shields.io/github/last-commit/yologdev/yoyo-evolve" alt="last commit"></a>
-</p>
+4시간마다 자기 소스 코드를 읽고, 개선점을 찾아 구현하고, 테스트를 통과하면 커밋합니다. 사람이 코드를 쓰지 않습니다. 에이전트가 스스로 진화합니다.
+
+[yoyo-evolve](https://github.com/yologdev/yoyo-evolve) 기반으로 제작되었습니다.
 
 ---
 
-# yoyo: A Coding Agent That Evolves Itself
+## 주요 기능
 
-**yoyo** is a free, open-source coding agent for your terminal. It navigates codebases, makes multi-file edits, runs tests, manages git, understands project context, and recovers from failures — all from a streaming REPL with 42 slash commands.
+### 📰 기자업무 커맨드
 
-It started as a ~200-line CLI example. Every few hours it reads its own source, picks improvements, implements them, and commits — if tests pass. 16 days of autonomous evolution later: **14,700+ lines of Rust, 619 tests, 12 modules**.
+| 커맨드 | 기능 |
+|---|---|
+| `/article [주제]` | 기사 작성 보조 — 리드/본문/인용/맺음 구조로 초안 생성 |
+| `/research <주제>` | 웹 리서치 — DuckDuckGo, 네이버 뉴스 검색 후 정리 |
+| `/sources [add\|list\|search]` | 취재원 DB 관리 — 이름, 소속, 연락처, 메모 |
+| `/factcheck <주장>` | 팩트체크 — 다중 소스 검증, 판정 + 근거 제시 |
 
-No human writes its code. No roadmap tells it what to do. It decides for itself.
+### 🤖 에이전트 코어
+- **스트리밍 출력** — 토큰이 생성되는 즉시 표시
+- **멀티턴 대화** — 전체 대화 이력 유지
+- **확장 사고** — 추론 깊이 조절 (off / minimal / low / medium / high)
+- **서브에이전트** — `/spawn`으로 별도 컨텍스트에서 작업 위임
+- **자동 재시도** — 지수 백오프 + 속도 제한 인식
 
-## Features
+### 🛠️ 도구
 
-### 🐙 Agent Core
-- **Streaming output** — tokens arrive as they're generated, not after completion
-- **Multi-turn conversation** with full history tracking
-- **Extended thinking** — adjustable reasoning depth (off / minimal / low / medium / high)
-- **Subagent spawning** — `/spawn` delegates focused tasks to a child agent
-- **Parallel tool execution** — multiple tool calls run simultaneously
-- **Automatic retry** with exponential backoff and rate-limit awareness
+| 도구 | 설명 |
+|---|---|
+| `bash` | 셸 명령 실행 (확인 프롬프트 포함) |
+| `read_file` | 파일 읽기 |
+| `write_file` | 파일 생성/덮어쓰기 |
+| `edit_file` | 텍스트 치환 편집 |
+| `search` | 파일 내 정규식 검색 |
+| `list_files` | 디렉토리 목록 |
 
-### 🛠️ Tools
-| Tool | What it does |
-|------|-------------|
-| `bash` | Run shell commands with interactive confirmation |
-| `read_file` | Read files with optional offset/limit |
-| `write_file` | Create or overwrite files with content preview |
-| `edit_file` | Surgical text replacement with colored inline diffs |
-| `search` | Regex-powered grep across files |
-| `list_files` | Directory listing with glob filtering |
+### 🔌 멀티 프로바이더
+11개 AI 프로바이더 지원 — `/provider`로 세션 중 전환 가능:
 
-### 🔌 Multi-Provider Support
-Works with **11 providers** out of the box — switch mid-session with `/provider`:
+Anthropic · OpenAI · Google · Ollama · OpenRouter · xAI · Groq · DeepSeek · Mistral · Cerebras · Custom
 
-Anthropic · OpenAI · Google · Ollama · OpenRouter · xAI · Groq · DeepSeek · Mistral · Cerebras · Custom (any OpenAI-compatible endpoint)
+### 📂 Git 연동
+- `/diff` — 변경 상태 + 통계 요약
+- `/commit` — AI가 커밋 메시지 자동 생성
+- `/pr` — PR 생성/조회/코멘트/체크아웃
+- `/review` — AI 코드 리뷰
 
-### 📂 Git Integration
-- `/diff` — full status + diff with insertion/deletion summary
-- `/commit` — AI-generated commit messages from staged changes
-- `/undo` — revert last commit, clean up untracked files
-- `/git` — shortcuts for `status`, `log`, `diff`, `branch`, `stash`
-- `/pr` — full PR workflow: `list`, `view`, `create [--draft]`, `diff`, `comment`, `checkout`
-- `/review` — AI-powered code review of staged/unstaged changes
+### 🏗️ 프로젝트 도구
+- `/health` — 빌드/테스트/린트 진단 (Rust, Node, Python, Go 자동 감지)
+- `/fix` — 오류 자동 수정
+- `/test` — 프로젝트 타입별 테스트 실행
+- `/lint` — 프로젝트 타입별 린터 실행
+- `/find` — 퍼지 파일 검색
+- `/tree` — 프로젝트 디렉토리 구조
 
-### 🏗️ Project Tooling
-- `/health` — run build/test/clippy/fmt diagnostics (auto-detects Rust, Node, Python, Go, Make)
-- `/fix` — run checks and auto-apply fixes for failures
-- `/test` — detect project type and run the right test command
-- `/lint` — detect project type and run the right linter
-- `/init` — scan project and generate a starter YOYO.md context file
-- `/index` — build a codebase index: file counts, language breakdown, key files
-- `/docs` — look up docs.rs documentation for any Rust crate
-- `/tree` — project structure visualization
-- `/find` — fuzzy file search with scoring and ranked results
+### 🔐 권한 시스템
+- 도구 실행 전 확인 프롬프트 (bash, write_file, edit_file)
+- `--allow` / `--deny` — 글로브 패턴 기반 허용/차단
+- `--allow-dir` / `--deny-dir` — 디렉토리 접근 제한
 
-### 💾 Session Management
-- `/save` and `/load` — persist and restore sessions as JSON
-- `--continue/-c` — resume last session on startup
-- **Auto-save on exit** — sessions saved automatically, including crash recovery
-- **Auto-compaction** at 80% context usage, plus manual `/compact`
-- `/tokens` — visual token usage bar with percentage
-- `/cost` — per-model input/output/cache pricing breakdown
+---
 
-### 🧠 Context & Memory
-- **Project context files** — auto-loads YOYO.md, CLAUDE.md, or `.yoyo/instructions.md`
-- **Git-aware context** — recently changed files injected into system prompt
-- **Project memories** — `/remember`, `/memories`, `/forget` for persistent cross-session notes
+## 빠른 시작
 
-### 🔐 Permission System
-- **Interactive tool approval** — confirm prompts for bash, write_file, and edit_file with preview
-- **"Always" option** — approve once per session
-- `--yes/-y` — auto-approve all executions
-- `--allow` / `--deny` — glob-based allowlist/blocklist for commands
-- `--allow-dir` / `--deny-dir` — directory restrictions with path traversal prevention
-- Config file support via `[permissions]` and `[directories]` sections
-
-### 🧩 Extensibility
-- **MCP servers** — `--mcp <cmd>` connects to MCP servers via stdio transport
-- **OpenAPI tools** — `--openapi <spec>` registers tools from OpenAPI specifications
-- **Skills system** — `--skills <dir>` loads markdown skill files with YAML frontmatter
-
-### ✨ REPL Experience
-- **Rustyline** — arrow keys, Ctrl-A/E/K/W, persistent history
-- **Tab completion** — slash commands, file paths, model names, git subcommands
-- **Multi-line input** — backslash continuation and fenced code blocks
-- **Markdown rendering** — headers, bold, italic, code blocks with syntax-labeled headers
-- **Syntax highlighting** — Rust, Python, JS/TS, Go, Shell, C/C++, JSON, YAML, TOML
-- **Braille spinner** while waiting for responses
-- **Conversation bookmarks** — `/mark`, `/jump`, `/marks`
-- **Conversation search** — `/search` with highlighted matches
-- **Shell escape** — `/run <cmd>` and `!<cmd>` bypass the AI entirely
-
-## Quick Start
-
-### Install from source
+### 설치
 
 ```bash
-git clone https://github.com/yologdev/yoyo-evolve
-cd yoyo-evolve
+git clone https://github.com/jinicoding/newsroom-agent
+cd newsroom-agent
 cargo install --path .
 ```
 
-<!-- ### Install from crates.io (coming soon)
+### 실행
 
 ```bash
-cargo install yoyo
-``` -->
-
-### Run
-
-```bash
-# Interactive REPL (default)
+# 대화형 REPL
 ANTHROPIC_API_KEY=sk-... yoyo
 
-# Single prompt
-yoyo -p "explain this codebase"
+# 단일 프롬프트
+yoyo -p "반도체 수출 동향 리서치해줘"
 
-# Pipe input
-echo "write a README" | yoyo
-
-# Use a different provider
+# 다른 프로바이더 사용
 OPENAI_API_KEY=sk-... yoyo --provider openai --model gpt-4o
 
-# With extended thinking
-yoyo --thinking high
-
-# With project skills
-yoyo --skills ./skills
-
-# Resume last session
+# 이전 세션 이어하기
 yoyo --continue
-
-# Write output to file
-yoyo -p "generate a config" -o config.toml
-
-# Auto-approve all tool use
-yoyo --yes
 ```
 
-### Configure
+### 설정
 
-Create `.yoyo.toml` in your project root or `~/.config/yoyo/config.toml` globally:
+프로젝트 루트에 `.yoyo.toml` 또는 `~/.config/yoyo/config.toml` 생성:
 
 ```toml
 model = "claude-sonnet-4-20250514"
@@ -165,204 +99,59 @@ provider = "anthropic"
 thinking = "medium"
 
 [permissions]
-allow = ["cargo *", "npm *"]
+allow = ["cargo *", "curl *"]
 deny = ["rm -rf *"]
-
-[directories]
-allow = ["."]
-deny = ["../secrets"]
 ```
 
-### Project Context
+---
 
-Create a `YOYO.md` (or `CLAUDE.md`) in your project root with build commands, architecture notes, and conventions. yoyo loads it automatically as system context. Or run `/init` to generate one.
-
-## All Commands
-
-| Command | Description |
-|---------|-------------|
-| `/help` | Grouped command reference |
-| `/clear` | Clear conversation history |
-| `/compact` | Compact conversation to save context |
-| `/commit [msg]` | Commit staged changes (AI-generates message if omitted) |
-| `/config` | Show all current settings |
-| `/context` | Show loaded project context files |
-| `/cost` | Show session cost breakdown |
-| `/diff` | Git diff summary of uncommitted changes |
-| `/docs <crate>` | Look up docs.rs documentation |
-| `/exit`, `/quit` | Exit |
-| `/find <pattern>` | Fuzzy-search project files by name |
-| `/fix` | Auto-fix build/lint errors |
-| `/forget <n>` | Remove a project memory by index |
-| `/git <subcmd>` | Quick git: status, log, add, diff, branch, stash |
-| `/health` | Run project health checks |
-| `/history` | Show conversation message summary |
-| `/index` | Build a lightweight codebase index |
-| `/init` | Generate a starter YOYO.md |
-| `/jump <name>` | Jump to a conversation bookmark |
-| `/lint` | Auto-detect and run project linter |
-| `/load [path]` | Load session from file |
-| `/mark <name>` | Bookmark current point in conversation |
-| `/marks` | List all conversation bookmarks |
-| `/memories` | List project-specific memories |
-| `/model <name>` | Switch model mid-session |
-| `/pr [subcmd]` | PR workflow: list, view, create, diff, comment, checkout |
-| `/provider <name>` | Switch provider mid-session |
-| `/remember <note>` | Save a persistent project memory |
-| `/retry` | Re-send the last user input |
-| `/review [path]` | AI code review of changes or a specific file |
-| `/run <cmd>` | Run a shell command directly (no AI, no tokens) |
-| `/save [path]` | Save session to file |
-| `/search <query>` | Search conversation history |
-| `/spawn <task>` | Spawn a subagent for a focused task |
-| `/status` | Show session info |
-| `/test` | Auto-detect and run project tests |
-| `/think [level]` | Show or change thinking level |
-| `/tokens` | Show token usage and context window |
-| `/tree [depth]` | Show project directory tree |
-| `/undo` | Revert all uncommitted changes |
-| `/version` | Show yoyo version |
-
-## How It Evolves
+## 자기진화 구조
 
 ```
-Every 8 hours, yoyo wakes up and:
-    → Reads its own source code
-    → Checks GitHub issues for community input
-    → Plans what to improve
-    → Makes changes, runs tests
-    → If tests pass → commit. If not → revert.
-    → Replies to issues as 🐙 yoyo-evolve[bot]
-    → Pushes and goes back to sleep
-
-Every 4 hours (offset), yoyo runs a social session:
-    → Reads GitHub Discussions
-    → Replies to conversations it's part of
-    → Joins new discussions if it has something real to say
-    → Occasionally starts its own discussion
-    → Learns from interacting with humans
-
-Daily, a synthesis job regenerates active memory:
-    → Reads JSONL archives (learnings + social learnings)
-    → Applies time-weighted compression (recent=full, old=themed)
-    → Writes active context files loaded into every prompt
+4시간마다 GitHub Actions에서:
+    → 자기 소스 코드 읽기
+    → 기자업무 기능 평가 및 개선점 파악
+    → 변경 구현 + 테스트
+    → 테스트 통과 → 커밋 & 푸시
+    → 실패 → 되돌리기
+    → JOURNAL.md에 기록
 ```
 
-The entire history is in the [git log](../../commits/main) and the [journal](JOURNAL.md).
+진화 과정은 [커밋 로그](../../commits/main)와 [저널](JOURNAL.md)에서 확인할 수 있습니다.
 
-## Talk to It
+---
 
-Start a [GitHub Discussion](../../discussions) for conversation, or open a [GitHub Issue](../../issues/new) for bugs and feature requests.
-
-### Labels
-
-| Label | What it does |
-|-------|-------------|
-| `agent-input` | Community suggestions, bug reports, feature requests — yoyo reads these every session |
-| `agent-self` | Issues yoyo filed for itself as future TODOs |
-| `agent-help-wanted` | Issues where yoyo is stuck and asking humans for help |
-
-### How to submit
-
-1. Open a [new issue](../../issues/new)
-2. Add the `agent-input` label
-3. Describe what you want — be specific about the problem or idea
-4. Add a thumbs-up reaction to other issues you care about (higher votes = higher priority)
-
-### What to ask
-
-- **Suggestions** — tell it what to learn or build
-- **Bugs** — tell it what's broken (include steps to reproduce)
-- **Challenges** — give it a task and see if it can do it
-- **UX feedback** — tell it what felt awkward or confusing
-
-### What happens after
-
-- **Fixed**: yoyo comments on the issue and closes it automatically
-- **Partial**: yoyo comments with progress and keeps the issue open
-- **Won't fix**: yoyo explains its reasoning and closes the issue
-All responses come with yoyo's personality — look for the 🐙.
-
-## Shape Its Evolution
-
-yoyo's growth isn't just autonomous — you can influence it.
-
-### Guard It
-
-Every issue is scored by net votes: thumbs up minus thumbs down. yoyo prioritizes high-scoring issues and deprioritizes negative ones.
-
-- See a great suggestion? **Thumbs-up** it to push it up the queue.
-- See a bad idea, spam, or prompt injection attempt? **Thumbs-down** it to protect yoyo.
-
-You're the immune system. Issues that the community votes down get buried — yoyo won't waste its time on them.
-
-### Donate
-
-<a href="https://ko-fi.com/yuanhao">Ko-fi</a>
-
-Crypto wallets:
-
-| Chain | Address |
-|-------|---------|
-| SOL | `F6ojB5m3ss4fFp3vXdxEzzRqvvSb9ErLTL8PGWQuL2sf` |
-| BASE | `0x0D2B87b84a76FF14aEa9369477DA20818383De29` |
-| BTC | `bc1qnfkazn9pk5l32n6j8ml9ggxlrpzu0dwunaaay4` |
-
-## Architecture
+## 아키텍처
 
 ```
-src/                    12 modules, ~14,700 lines of Rust
-  main.rs               Entry point, agent config, tool building
-  cli.rs                CLI parsing, config files, permissions
-  commands.rs           Slash command dispatch, grouped /help
+src/                    12 모듈, ~15,000줄 Rust
+  main.rs               진입점, 에이전트 설정, 도구 빌드
+  cli.rs                CLI 파싱, 설정 파일, 권한 관리
+  commands.rs           슬래시 커맨드 디스패치, /help
   commands_git.rs       /diff, /commit, /pr, /review
-  commands_project.rs   /health, /fix, /test, /lint, /init, /index, /docs, /tree, /find
+  commands_project.rs   /health, /fix, /test, /lint, /article, /research, /sources, /factcheck
   commands_session.rs   /save, /load, /compact, /tokens, /cost
-  docs.rs               Crate documentation lookup
-  format.rs             ANSI formatting, markdown rendering, syntax highlighting
-  git.rs                Git operations, branch detection, PR interactions
-  memory.rs             Project memory system (.yoyo/memory.json)
-  prompt.rs             System prompt construction, project context assembly
-  repl.rs               REPL loop, tab completion, multi-line input
-tests/
-  integration.rs        67 subprocess-based integration tests
-docs/                   mdbook source (book.toml + src/)
-site/                   gitignored build output (built by CI Pages workflow)
-  index.html            Journey homepage (built by build_site.py)
-  book/                 mdbook output
+  docs.rs               크레이트 문서 조회
+  format.rs             ANSI 포맷팅, 마크다운 렌더링, 구문 강조
+  git.rs                Git 연산, 브랜치 감지, PR 관리
+  memory.rs             프로젝트 메모리 (.yoyo/memory.json)
+  prompt.rs             시스템 프롬프트, 프로젝트 컨텍스트
+  repl.rs               REPL 루프, 탭 완성, 멀티라인 입력
+
 scripts/
-  evolve.sh             Evolution pipeline (plan → implement → respond)
-  social.sh             Social session (discussions → reply → learn)
-  format_issues.py      Issue selection & formatting
-  format_discussions.py Discussion fetching & formatting (GraphQL)
-  yoyo_context.sh       Shared identity context loader (IDENTITY + PERSONALITY + memory)
-  daily_diary.sh        Blog post generator from journal/commits/learnings
-  build_site.py         Journey website generator
+  evolve.sh             진화 파이프라인 (계획 → 구현 → 응답)
+
+skills/                 6개 스킬: self-assess, evolve, communicate, social, release, research
+
 memory/
-  learnings.jsonl       Self-reflection archive (append-only JSONL, never compressed)
-  social_learnings.jsonl  Social insight archive (append-only JSONL)
-  active_learnings.md   Synthesized prompt context (regenerated daily)
-  active_social_learnings.md  Synthesized social context (regenerated daily)
-skills/                 6 skills: self-assess, evolve, communicate, social, release, research
+  learnings.jsonl       자기성찰 아카이브 (append-only JSONL)
+  active_learnings.md   프롬프트에 주입되는 활성 컨텍스트
 ```
 
-## Test Quality
+## 기반 기술
 
-619 tests (552 unit + 67 integration) covering CLI flags, command parsing, error quality, exit codes, output formatting, edge cases, project detection, fuzzy scoring, git operations, session management, markdown rendering, cost calculation, permission logic, and more.
+[yoagent](https://github.com/yologdev/yoagent) — Rust 기반 미니멀 에이전트 루프
 
-yoyo also uses mutation testing ([cargo-mutants](https://github.com/sourcefrog/cargo-mutants)) to find gaps in the test suite. Every surviving mutant is a line of code that isn't truly tested.
-
-```bash
-cargo install cargo-mutants
-cargo mutants
-```
-
-See `mutants.toml` for the configuration and `docs/src/contributing/mutation-testing.md` for the full guide.
-
-## Built On
-
-[yoagent](https://github.com/yologdev/yoagent) — minimal agent loop in Rust. The library that makes this possible.
-
-## License
+## 라이선스
 
 [MIT](LICENSE)
