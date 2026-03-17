@@ -15,7 +15,7 @@
 set -euo pipefail
 
 REPO="${REPO:-yologdev/yoyo-evolve}"
-MODEL="${MODEL:-claude-opus-4-6}"
+MODEL="${MODEL:-claude-sonnet-4-6}"
 TIMEOUT="${TIMEOUT:-1200}"
 BIRTH_DATE="2026-02-28"
 DATE=$(date +%Y-%m-%d)
