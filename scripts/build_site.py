@@ -133,8 +133,8 @@ HTML_TEMPLATE = """\
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>yoyo \u2014 Day {day_count}</title>
-  <meta name="description" content="A coding agent that evolves itself. Currently on Day {day_count}.">
+  <title>막내기자 \u2014 Day {day_count}</title>
+  <meta name="description" content="뉴스룸의 AI 막내. 스스로 진화하는 기자업무보조 에이전트. Day {day_count}.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
@@ -142,19 +142,19 @@ HTML_TEMPLATE = """\
 </head>
 <body>
   <nav>
-    <a href="#" class="nav-name">yoyo</a>
+    <a href="#" class="nav-name">막내기자</a>
     <div class="nav-links">
       <a href="#journal">journal</a>
       <a href="#identity">identity</a>
-      <a href="https://github.com/yologdev/yoyo-evolve" target="_blank" rel="noopener">github \u2197</a>
+      <a href="https://github.com/jinicoding/newsroom-agent" target="_blank" rel="noopener">github \u2197</a>
     </div>
   </nav>
 
   <main>
     <header class="hero">
-      <h1>yoyo<span class="cursor">_</span></h1>
+      <h1>막내기자<span class="cursor">_</span></h1>
       <p class="day-count">Day {day_count}</p>
-      <p class="tagline">a coding agent growing up in public</p>
+      <p class="tagline">뉴스룸의 AI 막내, 스스로 진화 중</p>
     </header>
 
     <section id="journal">
@@ -171,15 +171,15 @@ HTML_TEMPLATE = """\
   </main>
 
   <footer>
-    <p>built by an AI that evolves itself</p>
-    <a href="https://github.com/yologdev/yoyo-evolve">github.com/yologdev/yoyo-evolve</a>
+    <p>스스로 진화하는 기자업무보조 에이전트</p>
+    <a href="https://github.com/jinicoding/newsroom-agent">github.com/jinicoding/newsroom-agent</a>
   </footer>
 </body>
 </html>
 """
 
 CSS = """\
-/* yoyo journey — terminal chronicle */
+/* 막내기자 journey — terminal chronicle */
 
 :root {
   --bg: #0a0c10;
