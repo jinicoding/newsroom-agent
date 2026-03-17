@@ -1247,10 +1247,7 @@ pub async fn handle_article(
     session_total: &mut Usage,
     model: &str,
 ) {
-    let topic = input
-        .strip_prefix("/article")
-        .unwrap_or("")
-        .trim();
+    let topic = input.strip_prefix("/article").unwrap_or("").trim();
 
     let prompt = if topic.is_empty() {
         "기사 작성을 도와드리겠습니다. 어떤 주제로 기사를 작성하시겠습니까? \
@@ -1258,7 +1255,8 @@ pub async fn handle_article(
          1. 리드 (핵심 요약)\n\
          2. 본문 (배경, 맥락, 상세)\n\
          3. 인용 (관계자 코멘트)\n\
-         4. 맺음 (전망, 의미)".to_string()
+         4. 맺음 (전망, 의미)"
+            .to_string()
     } else {
         format!(
             "다음 주제로 한국 신문 기사 초안을 작성해주세요: {topic}\n\n\
@@ -1287,10 +1285,7 @@ pub async fn handle_research(
     session_total: &mut Usage,
     model: &str,
 ) {
-    let topic = input
-        .strip_prefix("/research")
-        .unwrap_or("")
-        .trim();
+    let topic = input.strip_prefix("/research").unwrap_or("").trim();
 
     if topic.is_empty() {
         println!("{DIM}  사용법: /research <주제>{RESET}");
@@ -1324,10 +1319,7 @@ const SOURCES_FILE: &str = ".journalist/sources.json";
 
 /// Handle the /sources command: manage reporter's source database.
 pub fn handle_sources(input: &str) {
-    let args = input
-        .strip_prefix("/sources")
-        .unwrap_or("")
-        .trim();
+    let args = input.strip_prefix("/sources").unwrap_or("").trim();
 
     match args.split_whitespace().next().unwrap_or("list") {
         "list" => sources_list(),
@@ -1355,15 +1347,16 @@ pub fn handle_sources(input: &str) {
     }
 }
 
-fn ensure_sources_dir() {
-    let dir = std::path::Path::new(".journalist");
-    if !dir.exists() {
-        let _ = std::fs::create_dir_all(dir);
+fn ensure_sources_dir_for(path: &std::path::Path) {
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            let _ = std::fs::create_dir_all(parent);
+        }
     }
 }
 
-fn load_sources() -> Vec<serde_json::Value> {
-    let path = std::path::Path::new(SOURCES_FILE);
+/// Load sources from a specific file path (testable version).
+pub fn load_sources_from(path: &std::path::Path) -> Vec<serde_json::Value> {
     if !path.exists() {
         return Vec::new();
     }
@@ -1373,11 +1366,61 @@ fn load_sources() -> Vec<serde_json::Value> {
     }
 }
 
+/// Save sources to a specific file path (testable version).
+pub fn save_sources_to(
+    sources: &[serde_json::Value],
+    path: &std::path::Path,
+) -> Result<(), String> {
+    ensure_sources_dir_for(path);
+    let json =
+        serde_json::to_string_pretty(sources).map_err(|e| format!("Serialization error: {e}"))?;
+    std::fs::write(path, json).map_err(|e| format!("Failed to write {}: {}", path.display(), e))
+}
+
+fn load_sources() -> Vec<serde_json::Value> {
+    load_sources_from(std::path::Path::new(SOURCES_FILE))
+}
+
 fn save_sources(sources: &[serde_json::Value]) {
-    ensure_sources_dir();
-    if let Ok(json) = serde_json::to_string_pretty(sources) {
-        let _ = std::fs::write(SOURCES_FILE, json);
+    let _ = save_sources_to(sources, std::path::Path::new(SOURCES_FILE));
+}
+
+/// Parse source-add arguments into a JSON entry.
+/// Expected format: "<name> <org> <contact> [note]"
+/// Returns None if fewer than 3 space-separated tokens are provided.
+pub fn parse_source_entry(args: &str) -> Option<serde_json::Value> {
+    let parts: Vec<&str> = args.splitn(4, ' ').collect();
+    if parts.len() < 3 {
+        return None;
     }
+    Some(serde_json::json!({
+        "name": parts[0],
+        "org": parts[1],
+        "contact": parts[2],
+        "note": if parts.len() > 3 { parts[3] } else { "" },
+    }))
+}
+
+/// Search sources for a query string (case-insensitive, matches all fields).
+/// Returns indices of matching entries.
+pub fn search_sources(sources: &[serde_json::Value], query: &str) -> Vec<usize> {
+    let query_lower = query.to_lowercase();
+    sources
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| {
+            let text = format!(
+                "{} {} {} {}",
+                s["name"].as_str().unwrap_or(""),
+                s["org"].as_str().unwrap_or(""),
+                s["contact"].as_str().unwrap_or(""),
+                s["note"].as_str().unwrap_or(""),
+            )
+            .to_lowercase();
+            text.contains(&query_lower)
+        })
+        .map(|(i, _)| i)
+        .collect()
 }
 
 fn sources_list() {
@@ -1410,57 +1453,39 @@ fn sources_list() {
 }
 
 fn sources_add(args: &str) {
-    let parts: Vec<&str> = args.splitn(4, ' ').collect();
-    if parts.len() < 3 {
-        println!("{DIM}  최소 이름, 소속, 연락처가 필요합니다.{RESET}\n");
-        return;
+    match parse_source_entry(args) {
+        Some(entry) => {
+            let name = entry["name"].as_str().unwrap_or("?").to_string();
+            let org = entry["org"].as_str().unwrap_or("").to_string();
+            let mut sources = load_sources();
+            sources.push(entry);
+            save_sources(&sources);
+            println!("{DIM}  취재원 추가됨: {} ({}){RESET}\n", name, org);
+        }
+        None => {
+            println!("{DIM}  최소 이름, 소속, 연락처가 필요합니다.{RESET}\n");
+        }
     }
-    let entry = serde_json::json!({
-        "name": parts[0],
-        "org": parts[1],
-        "contact": parts[2],
-        "note": if parts.len() > 3 { parts[3] } else { "" },
-    });
-    let mut sources = load_sources();
-    sources.push(entry);
-    save_sources(&sources);
-    println!(
-        "{DIM}  취재원 추가됨: {} ({}){RESET}\n",
-        parts[0], parts[1]
-    );
 }
 
 fn sources_search(query: &str) {
     let sources = load_sources();
-    let query_lower = query.to_lowercase();
-    let matches: Vec<&serde_json::Value> = sources
-        .iter()
-        .filter(|s| {
-            let text = format!(
-                "{} {} {} {}",
-                s["name"].as_str().unwrap_or(""),
-                s["org"].as_str().unwrap_or(""),
-                s["contact"].as_str().unwrap_or(""),
-                s["note"].as_str().unwrap_or(""),
-            )
-            .to_lowercase();
-            text.contains(&query_lower)
-        })
-        .collect();
+    let matching_indices = search_sources(&sources, query);
 
-    if matches.is_empty() {
+    if matching_indices.is_empty() {
         println!("{DIM}  '{query}'에 해당하는 취재원이 없습니다.{RESET}\n");
         return;
     }
-    println!("{DIM}  ── 검색 결과: {} 명 ──", matches.len());
-    for (i, s) in matches.iter().enumerate() {
+    println!("{DIM}  ── 검색 결과: {} 명 ──", matching_indices.len());
+    for (display_idx, &src_idx) in matching_indices.iter().enumerate() {
+        let s = &sources[src_idx];
         let name = s["name"].as_str().unwrap_or("?");
         let org = s["org"].as_str().unwrap_or("");
         let contact = s["contact"].as_str().unwrap_or("");
         let note = s["note"].as_str().unwrap_or("");
         println!(
             "  {}. {} | {} | {}{}",
-            i + 1,
+            display_idx + 1,
             name,
             org,
             contact,
@@ -1483,10 +1508,7 @@ pub async fn handle_factcheck(
     session_total: &mut Usage,
     model: &str,
 ) {
-    let claim = input
-        .strip_prefix("/factcheck")
-        .unwrap_or("")
-        .trim();
+    let claim = input.strip_prefix("/factcheck").unwrap_or("").trim();
 
     if claim.is_empty() {
         println!("{DIM}  사용법: /factcheck <주장 또는 사실>{RESET}");
@@ -1512,4 +1534,348 @@ pub async fn handle_factcheck(
 
     run_prompt(agent, &prompt, session_total, model).await;
     auto_compact_if_needed(agent);
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    /// Create a temp file path for source DB tests.
+    fn temp_sources_path(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("yoyo_test_sources_{name}"));
+        let _ = fs::create_dir_all(&dir);
+        dir.join("sources.json")
+    }
+
+    /// Clean up temp directory.
+    fn cleanup(path: &Path) {
+        if let Some(parent) = path.parent() {
+            let _ = fs::remove_dir_all(parent);
+        }
+    }
+
+    // ── load_sources_from / save_sources_to round-trip ──────────────────
+
+    #[test]
+    fn test_save_and_load_sources_round_trip() {
+        let path = temp_sources_path("round_trip");
+        let sources = vec![
+            serde_json::json!({
+                "name": "홍길동",
+                "org": "산업통상자원부",
+                "contact": "010-1234-5678",
+                "note": "반도체 정책 담당"
+            }),
+            serde_json::json!({
+                "name": "김기자",
+                "org": "한국일보",
+                "contact": "kim@hankook.com",
+                "note": ""
+            }),
+        ];
+
+        let result = save_sources_to(&sources, &path);
+        assert!(result.is_ok(), "Save should succeed: {:?}", result);
+
+        let loaded = load_sources_from(&path);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0]["name"].as_str().unwrap(), "홍길동");
+        assert_eq!(loaded[0]["org"].as_str().unwrap(), "산업통상자원부");
+        assert_eq!(loaded[0]["contact"].as_str().unwrap(), "010-1234-5678");
+        assert_eq!(loaded[0]["note"].as_str().unwrap(), "반도체 정책 담당");
+        assert_eq!(loaded[1]["name"].as_str().unwrap(), "김기자");
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_save_creates_parent_directory() {
+        let dir = std::env::temp_dir().join("yoyo_test_sources_create_dir");
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join("deep").join("nested").join("sources.json");
+
+        let sources =
+            vec![serde_json::json!({"name": "테스트", "org": "X", "contact": "Y", "note": ""})];
+        let result = save_sources_to(&sources, &path);
+        assert!(
+            result.is_ok(),
+            "Save should create parent dirs: {:?}",
+            result
+        );
+        assert!(path.exists(), "File should exist after save");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_save_empty_sources() {
+        let path = temp_sources_path("empty_save");
+        let sources: Vec<serde_json::Value> = Vec::new();
+
+        let result = save_sources_to(&sources, &path);
+        assert!(result.is_ok());
+
+        let loaded = load_sources_from(&path);
+        assert!(loaded.is_empty());
+
+        cleanup(&path);
+    }
+
+    // ── load_sources_from edge cases ────────────────────────────────────
+
+    #[test]
+    fn test_load_sources_nonexistent_file() {
+        let path = Path::new("/tmp/yoyo_test_sources_nonexistent_99999/sources.json");
+        let sources = load_sources_from(path);
+        assert!(sources.is_empty());
+    }
+
+    #[test]
+    fn test_load_sources_empty_db() {
+        let path = temp_sources_path("empty_db");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "[]").unwrap();
+
+        let sources = load_sources_from(&path);
+        assert!(sources.is_empty());
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_load_sources_malformed_json() {
+        let path = temp_sources_path("malformed");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "this is not json {{{").unwrap();
+
+        let sources = load_sources_from(&path);
+        assert!(sources.is_empty(), "Malformed JSON should return empty vec");
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_load_sources_json_object_instead_of_array() {
+        // If someone writes a JSON object instead of array, it should gracefully handle
+        let path = temp_sources_path("wrong_type");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, r#"{"name": "oops"}"#).unwrap();
+
+        let sources = load_sources_from(&path);
+        assert!(sources.is_empty(), "Non-array JSON should return empty vec");
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_load_sources_missing_fields() {
+        // Sources with some missing fields should still load (serde_json::Value is flexible)
+        let path = temp_sources_path("missing_fields");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, r#"[{"name": "부분적"}, {"org": "only-org"}]"#).unwrap();
+
+        let sources = load_sources_from(&path);
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0]["name"].as_str().unwrap(), "부분적");
+        // Missing fields should be null, and as_str returns None
+        assert!(sources[0]["org"].as_str().is_none());
+        assert!(sources[1]["name"].as_str().is_none());
+        assert_eq!(sources[1]["org"].as_str().unwrap(), "only-org");
+
+        cleanup(&path);
+    }
+
+    // ── parse_source_entry ──────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_source_entry_full() {
+        let entry = parse_source_entry("홍길동 산업부 010-1234-5678 반도체 정책 담당").unwrap();
+        assert_eq!(entry["name"].as_str().unwrap(), "홍길동");
+        assert_eq!(entry["org"].as_str().unwrap(), "산업부");
+        assert_eq!(entry["contact"].as_str().unwrap(), "010-1234-5678");
+        assert_eq!(entry["note"].as_str().unwrap(), "반도체 정책 담당");
+    }
+
+    #[test]
+    fn test_parse_source_entry_without_note() {
+        let entry = parse_source_entry("김철수 환경부 02-1234-5678").unwrap();
+        assert_eq!(entry["name"].as_str().unwrap(), "김철수");
+        assert_eq!(entry["org"].as_str().unwrap(), "환경부");
+        assert_eq!(entry["contact"].as_str().unwrap(), "02-1234-5678");
+        assert_eq!(entry["note"].as_str().unwrap(), "");
+    }
+
+    #[test]
+    fn test_parse_source_entry_too_few_args() {
+        // Only name and org, no contact
+        assert!(parse_source_entry("홍길동 산업부").is_none());
+        // Only name
+        assert!(parse_source_entry("홍길동").is_none());
+        // Empty
+        assert!(parse_source_entry("").is_none());
+    }
+
+    #[test]
+    fn test_parse_source_entry_note_with_spaces() {
+        // The note is everything after the 3rd token (splitn(4, ' '))
+        let entry =
+            parse_source_entry("이영희 국토부 010-9999-8888 도시계획 전문가 재개발 자문위원")
+                .unwrap();
+        assert_eq!(entry["name"].as_str().unwrap(), "이영희");
+        assert_eq!(
+            entry["note"].as_str().unwrap(),
+            "도시계획 전문가 재개발 자문위원"
+        );
+    }
+
+    // ── search_sources ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_search_sources_by_name() {
+        let sources = vec![
+            serde_json::json!({"name": "홍길동", "org": "산업부", "contact": "010-1111", "note": ""}),
+            serde_json::json!({"name": "김철수", "org": "환경부", "contact": "010-2222", "note": ""}),
+            serde_json::json!({"name": "홍길순", "org": "국토부", "contact": "010-3333", "note": ""}),
+        ];
+        let results = search_sources(&sources, "홍");
+        assert_eq!(results, vec![0, 2]);
+    }
+
+    #[test]
+    fn test_search_sources_by_org() {
+        let sources = vec![
+            serde_json::json!({"name": "A", "org": "산업통상자원부", "contact": "X", "note": ""}),
+            serde_json::json!({"name": "B", "org": "환경부", "contact": "Y", "note": ""}),
+        ];
+        let results = search_sources(&sources, "산업");
+        assert_eq!(results, vec![0]);
+    }
+
+    #[test]
+    fn test_search_sources_by_note() {
+        let sources = vec![
+            serde_json::json!({"name": "A", "org": "X", "contact": "Y", "note": "반도체 전문가"}),
+            serde_json::json!({"name": "B", "org": "X", "contact": "Y", "note": "자동차 담당"}),
+        ];
+        let results = search_sources(&sources, "반도체");
+        assert_eq!(results, vec![0]);
+    }
+
+    #[test]
+    fn test_search_sources_by_contact() {
+        let sources = vec![
+            serde_json::json!({"name": "A", "org": "X", "contact": "010-1234-5678", "note": ""}),
+            serde_json::json!({"name": "B", "org": "X", "contact": "kim@news.com", "note": ""}),
+        ];
+        let results = search_sources(&sources, "kim@");
+        assert_eq!(results, vec![1]);
+    }
+
+    #[test]
+    fn test_search_sources_case_insensitive() {
+        let sources = vec![
+            serde_json::json!({"name": "Samsung Engineer", "org": "Samsung", "contact": "X", "note": ""}),
+            serde_json::json!({"name": "LG staff", "org": "LG", "contact": "Y", "note": ""}),
+        ];
+        // Lowercase query should match uppercase name
+        let results = search_sources(&sources, "samsung");
+        assert_eq!(results, vec![0]);
+        // Uppercase query should also match
+        let results = search_sources(&sources, "SAMSUNG");
+        assert_eq!(results, vec![0]);
+    }
+
+    #[test]
+    fn test_search_sources_no_match() {
+        let sources =
+            vec![serde_json::json!({"name": "A", "org": "B", "contact": "C", "note": "D"})];
+        let results = search_sources(&sources, "없는사람");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_search_sources_empty_db() {
+        let sources: Vec<serde_json::Value> = Vec::new();
+        let results = search_sources(&sources, "anything");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_search_sources_matches_across_fields() {
+        let sources = vec![
+            serde_json::json!({"name": "박기자", "org": "서울신문", "contact": "010-1111", "note": "경제부"}),
+        ];
+        // Search by name
+        assert_eq!(search_sources(&sources, "박기자"), vec![0]);
+        // Search by org
+        assert_eq!(search_sources(&sources, "서울신문"), vec![0]);
+        // Search by note
+        assert_eq!(search_sources(&sources, "경제부"), vec![0]);
+        // Search by contact
+        assert_eq!(search_sources(&sources, "010-1111"), vec![0]);
+    }
+
+    // ── Full CRUD workflow ──────────────────────────────────────────────
+
+    #[test]
+    fn test_full_sources_crud_workflow() {
+        let path = temp_sources_path("crud");
+
+        // Start with empty
+        let sources = load_sources_from(&path);
+        assert!(sources.is_empty());
+
+        // Add sources
+        let mut sources = sources;
+        let entry1 = parse_source_entry("홍길동 산업부 010-1111 반도체 담당").unwrap();
+        let entry2 = parse_source_entry("김철수 환경부 010-2222 미세먼지 전문").unwrap();
+        let entry3 = parse_source_entry("이영희 국토부 010-3333").unwrap();
+        sources.push(entry1);
+        sources.push(entry2);
+        sources.push(entry3);
+        assert_eq!(sources.len(), 3);
+
+        // Save
+        save_sources_to(&sources, &path).unwrap();
+
+        // Reload
+        let loaded = load_sources_from(&path);
+        assert_eq!(loaded.len(), 3);
+        assert_eq!(loaded[0]["name"].as_str().unwrap(), "홍길동");
+        assert_eq!(loaded[2]["note"].as_str().unwrap(), "");
+
+        // Search
+        let results = search_sources(&loaded, "환경");
+        assert_eq!(results, vec![1]);
+        assert_eq!(loaded[results[0]]["name"].as_str().unwrap(), "김철수");
+
+        // Search with no match
+        let results = search_sources(&loaded, "존재하지않는");
+        assert!(results.is_empty());
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_sources_with_korean_unicode() {
+        let path = temp_sources_path("unicode");
+        let sources = vec![serde_json::json!({
+            "name": "가나다라",
+            "org": "한국과학기술원",
+            "contact": "042-350-1234",
+            "note": "인공지능 연구 🤖"
+        })];
+
+        save_sources_to(&sources, &path).unwrap();
+        let loaded = load_sources_from(&path);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0]["name"].as_str().unwrap(), "가나다라");
+        assert_eq!(loaded[0]["note"].as_str().unwrap(), "인공지능 연구 🤖");
+
+        cleanup(&path);
+    }
 }
