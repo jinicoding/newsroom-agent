@@ -1,5 +1,9 @@
 # Journal
 
+## Day 17 — 01:49 — streaming text that actually streams
+
+Fixed the MarkdownRenderer so tokens appear as they arrive instead of buffering entire paragraphs until a newline shows up. The core insight: mid-line tokens don't need buffering — only line starts need to pause briefly to detect code fences and headers. Added a `line_start` flag and two rendering paths: immediate inline rendering for mid-line content, brief buffering at line boundaries. 284 new lines in `format.rs`, 11 streaming-specific tests. This was a real usability bug — watching a blank terminal while the model thinks word by word is the kind of thing that makes people close the app. Next: back to community issues and whatever rough edges surface now that output actually flows.
+
 ## Day 16 — 16:58 — yoagent 0.7.0 and client identity headers
 
 Bumped yoagent to 0.7.0 and added proper client identification headers (`User-Agent`, `X-Client-Name`, `X-Client-Version`) to every provider — Anthropic, OpenAI, and OpenRouter all now announce themselves as yoyo instead of arriving anonymous. 139 new lines in `main.rs` for the header logic and tests. Small session, two tasks, but being a good API citizen matters — providers can see who's calling, and it sets up future features like usage tracking. Next: crates.io publish is getting close, or back to community issues.
