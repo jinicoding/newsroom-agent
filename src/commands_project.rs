@@ -1354,9 +1354,12 @@ pub fn handle_sources(input: &str) {
                 sources_search(query);
             }
         }
+        "remove" => {
+            sources_remove(args);
+        }
         other => {
             println!("{DIM}  알 수 없는 하위 명령: {other}{RESET}");
-            println!("{DIM}  사용법: /sources [list|add|search]{RESET}\n");
+            println!("{DIM}  사용법: /sources [list|add|search|remove]{RESET}\n");
         }
     }
 }
@@ -1478,6 +1481,49 @@ fn sources_add(args: &str) {
         }
         None => {
             println!("{DIM}  최소 이름, 소속, 연락처가 필요합니다.{RESET}\n");
+        }
+    }
+}
+
+/// Remove a source by 1-based index from the given list.
+/// Returns `Ok(removed_entry)` on success, or `Err(message)` on invalid index.
+pub fn remove_source_at(
+    sources: &mut Vec<serde_json::Value>,
+    one_based_index: usize,
+) -> Result<serde_json::Value, String> {
+    if one_based_index == 0 || one_based_index > sources.len() {
+        return Err(format!(
+            "유효하지 않은 번호입니다. 1~{} 사이의 번호를 입력하세요.",
+            sources.len()
+        ));
+    }
+    Ok(sources.remove(one_based_index - 1))
+}
+
+fn sources_remove(args: &str) {
+    let idx_str = args.strip_prefix("remove").unwrap_or(args).trim();
+    if idx_str.is_empty() {
+        println!("{DIM}  사용법: /sources remove <번호>{RESET}");
+        println!("{DIM}  /sources list 에서 표시되는 번호를 입력하세요.{RESET}\n");
+        return;
+    }
+    let idx: usize = match idx_str.parse() {
+        Ok(n) => n,
+        Err(_) => {
+            println!("{DIM}  번호를 입력해주세요: /sources remove <번호>{RESET}\n");
+            return;
+        }
+    };
+    let mut sources = load_sources();
+    match remove_source_at(&mut sources, idx) {
+        Ok(removed) => {
+            let name = removed["name"].as_str().unwrap_or("?");
+            let org = removed["org"].as_str().unwrap_or("");
+            save_sources(&sources);
+            println!("{DIM}  취재원 삭제됨: {} ({}){RESET}\n", name, org);
+        }
+        Err(msg) => {
+            println!("{RED}  {msg}{RESET}\n");
         }
     }
 }
@@ -1963,5 +2009,110 @@ mod tests {
         assert!(prompt.contains("주요 출처"));
         assert!(prompt.contains("쟁점"));
         assert!(prompt.contains("추가 취재 제안"));
+    }
+
+    // ── remove_source_at ────────────────────────────────────────────────
+
+    #[test]
+    fn test_remove_source_at_valid_index() {
+        let mut sources = vec![
+            serde_json::json!({"name": "홍길동", "org": "산업부", "contact": "010-1111", "note": ""}),
+            serde_json::json!({"name": "김철수", "org": "환경부", "contact": "010-2222", "note": ""}),
+            serde_json::json!({"name": "이영희", "org": "국토부", "contact": "010-3333", "note": ""}),
+        ];
+
+        // Remove the 2nd entry (1-based index)
+        let removed = super::remove_source_at(&mut sources, 2).unwrap();
+        assert_eq!(removed["name"].as_str().unwrap(), "김철수");
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0]["name"].as_str().unwrap(), "홍길동");
+        assert_eq!(sources[1]["name"].as_str().unwrap(), "이영희");
+    }
+
+    #[test]
+    fn test_remove_source_at_first_item() {
+        let mut sources = vec![
+            serde_json::json!({"name": "A", "org": "X", "contact": "Y", "note": ""}),
+            serde_json::json!({"name": "B", "org": "X", "contact": "Y", "note": ""}),
+        ];
+        let removed = super::remove_source_at(&mut sources, 1).unwrap();
+        assert_eq!(removed["name"].as_str().unwrap(), "A");
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0]["name"].as_str().unwrap(), "B");
+    }
+
+    #[test]
+    fn test_remove_source_at_last_item() {
+        let mut sources = vec![
+            serde_json::json!({"name": "A", "org": "X", "contact": "Y", "note": ""}),
+            serde_json::json!({"name": "B", "org": "X", "contact": "Y", "note": ""}),
+        ];
+        let removed = super::remove_source_at(&mut sources, 2).unwrap();
+        assert_eq!(removed["name"].as_str().unwrap(), "B");
+        assert_eq!(sources.len(), 1);
+    }
+
+    #[test]
+    fn test_remove_source_at_only_item() {
+        let mut sources =
+            vec![serde_json::json!({"name": "유일한", "org": "X", "contact": "Y", "note": ""})];
+        let removed = super::remove_source_at(&mut sources, 1).unwrap();
+        assert_eq!(removed["name"].as_str().unwrap(), "유일한");
+        assert!(sources.is_empty());
+    }
+
+    #[test]
+    fn test_remove_source_at_index_zero() {
+        let mut sources =
+            vec![serde_json::json!({"name": "A", "org": "X", "contact": "Y", "note": ""})];
+        let result = super::remove_source_at(&mut sources, 0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("유효하지 않은 번호"));
+        assert_eq!(sources.len(), 1, "sources should be unchanged");
+    }
+
+    #[test]
+    fn test_remove_source_at_index_too_large() {
+        let mut sources = vec![
+            serde_json::json!({"name": "A", "org": "X", "contact": "Y", "note": ""}),
+            serde_json::json!({"name": "B", "org": "X", "contact": "Y", "note": ""}),
+        ];
+        let result = super::remove_source_at(&mut sources, 5);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("1~2"));
+        assert_eq!(sources.len(), 2, "sources should be unchanged");
+    }
+
+    #[test]
+    fn test_remove_source_at_empty_list() {
+        let mut sources: Vec<serde_json::Value> = Vec::new();
+        let result = super::remove_source_at(&mut sources, 1);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("유효하지 않은 번호"));
+    }
+
+    #[test]
+    fn test_remove_source_persists_to_file() {
+        let path = temp_sources_path("remove_persist");
+        let sources = vec![
+            serde_json::json!({"name": "홍길동", "org": "산업부", "contact": "010-1111", "note": "반도체"}),
+            serde_json::json!({"name": "김철수", "org": "환경부", "contact": "010-2222", "note": "미세먼지"}),
+            serde_json::json!({"name": "이영희", "org": "국토부", "contact": "010-3333", "note": "도시계획"}),
+        ];
+        save_sources_to(&sources, &path).unwrap();
+
+        // Load, remove, save
+        let mut loaded = load_sources_from(&path);
+        let removed = super::remove_source_at(&mut loaded, 2).unwrap();
+        assert_eq!(removed["name"].as_str().unwrap(), "김철수");
+        save_sources_to(&loaded, &path).unwrap();
+
+        // Reload and verify
+        let reloaded = load_sources_from(&path);
+        assert_eq!(reloaded.len(), 2);
+        assert_eq!(reloaded[0]["name"].as_str().unwrap(), "홍길동");
+        assert_eq!(reloaded[1]["name"].as_str().unwrap(), "이영희");
+
+        cleanup(&path);
     }
 }

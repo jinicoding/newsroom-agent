@@ -376,6 +376,27 @@ Project memories let you teach yoyo things about your project that it should alw
 
 Use `/remember` any time you find yourself repeating the same instruction to the agent. The memory will be there next time you start a session in this project directory.
 
+## Journalist Tools
+
+| Command | Description |
+|---------|-------------|
+| `/article [topic]` | AI-assisted article writing with structured Korean news format |
+| `/research <topic>` | Web research using Google News RSS and DuckDuckGo |
+| `/sources [cmd]` | Manage reporter's source database (`list`, `add`, `search`, `remove`) |
+| `/factcheck <claim>` | Multi-source fact verification |
+
+### `/sources` — Source database management
+
+The `/sources` command manages a local contact database for reporters, stored in `.journalist/sources.json`.
+
+```
+/sources                              # list all sources (same as /sources list)
+/sources list                         # list all sources with index numbers
+/sources add 홍길동 산업부 010-1234-5678 반도체 정책 담당
+/sources search 반도체               # search by name, org, contact, or note
+/sources remove 2                     # remove source #2 (1-based index from list)
+```
+
 ## Unknown commands
 
 If you type a `/command` that yoyo doesn't recognize, it will tell you:
