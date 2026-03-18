@@ -2114,6 +2114,170 @@ pub async fn handle_briefing(
     }
 }
 
+// ── /checklist ───────────────────────────────────────────────────────────
+
+const CHECKLIST_DIR: &str = ".journalist/checklist";
+
+/// Parse `/checklist` input to extract `--file <path>` and inline text.
+/// Returns `(Option<file_path>, remaining_text)`.
+pub fn parse_checklist_args(args: &str) -> (Option<String>, String) {
+    let args = args.trim();
+    if let Some(rest) = args.strip_prefix("--file") {
+        let rest = rest.trim_start();
+        if rest.is_empty() {
+            return (None, String::new());
+        }
+        let mut path_end = rest.len();
+        for (i, ch) in rest.char_indices() {
+            if ch.is_whitespace() {
+                path_end = i;
+                break;
+            }
+        }
+        let file_path = rest[..path_end].to_string();
+        let remaining = rest[path_end..].trim().to_string();
+        (Some(file_path), remaining)
+    } else {
+        (None, args.to_string())
+    }
+}
+
+/// Build the prompt for the `/checklist` command (pre-publication article checklist).
+pub fn build_checklist_prompt(article: &str) -> Option<String> {
+    if article.trim().is_empty() {
+        return None;
+    }
+    Some(format!(
+        "아래 기사 초안에 대해 출고 전 체크리스트를 점검해주세요.\n\n\
+         다음 6개 항목을 각각 검토하고, 항목별로 ✅ (통과) 또는 ❌ (미흡) 판정을 내려주세요:\n\n\
+         ## 점검 항목\n\n\
+         ### 1. 육하원칙 (5W1H) 충족 여부\n\
+         - 누가(Who), 무엇을(What), 언제(When), 어디서(Where), 왜(Why), 어떻게(How)가 모두 포함되어 있는지 확인\n\
+         - 누락된 요소가 있으면 구체적으로 지적\n\n\
+         ### 2. 출처 명시 확인\n\
+         - 모든 주요 사실에 출처가 명시되어 있는지 확인\n\
+         - 출처 없는 주장이나 수치가 있으면 지적\n\n\
+         ### 3. 중립성/균형 보도 여부\n\
+         - 한쪽 시각에 치우치지 않았는지 확인\n\
+         - 반대 의견이나 다른 시각이 필요한 부분 지적\n\n\
+         ### 4. [확인 필요] 태그 잔존 확인\n\
+         - 기사 내 [확인 필요], [TODO], [TBD] 등 미완성 태그가 남아있는지 확인\n\
+         - 발견 시 해당 위치와 내용을 명시\n\n\
+         ### 5. 법적 리스크 (명예훼손, 초상권 등)\n\
+         - 명예훼손 소지가 있는 표현 확인\n\
+         - 초상권, 개인정보 노출 우려 확인\n\
+         - 저작권 침해 소지 확인\n\n\
+         ### 6. 숫자/날짜 일관성\n\
+         - 기사 내 숫자, 날짜, 통계가 서로 모순되지 않는지 확인\n\
+         - 단위 표기가 일관적인지 확인\n\n\
+         ## 결과 형식\n\n\
+         각 항목별로 판정(✅/❌)과 상세 설명을 제시하고,\n\
+         마지막에 **종합 판정**과 **출고 전 수정 권고사항**을 정리해주세요.\n\n\
+         ## 기사 초안\n\n\
+         {article}"
+    ))
+}
+
+/// Build the checklist file path: `.journalist/checklist/YYYY-MM-DD_<slug>.md`
+pub fn checklist_file_path(source: &str) -> std::path::PathBuf {
+    checklist_file_path_with_date(source, &today_str())
+}
+
+/// Build the checklist file path with an explicit date string (for testing).
+pub fn checklist_file_path_with_date(source: &str, date: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(source, 50);
+    let filename = if slug.is_empty() {
+        format!("{date}_checklist.md")
+    } else {
+        format!("{date}_{slug}.md")
+    };
+    std::path::PathBuf::from(CHECKLIST_DIR).join(filename)
+}
+
+/// Save checklist result to file. Creates the checklist directory if needed.
+fn save_checklist(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
+/// Handle the `/checklist` command: pre-publication article validation.
+pub async fn handle_checklist(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/checklist").unwrap_or("").trim();
+    let (file_path, inline_text) = parse_checklist_args(args);
+
+    // Read article content from file or inline
+    let article = if let Some(ref path) = file_path {
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                println!(
+                    "{DIM}  파일 읽기: {path} ({} bytes){RESET}",
+                    content.len()
+                );
+                if inline_text.is_empty() {
+                    content
+                } else {
+                    format!("{content}\n\n{inline_text}")
+                }
+            }
+            Err(e) => {
+                eprintln!("{RED}  파일 읽기 실패: {path} — {e}{RESET}\n");
+                return;
+            }
+        }
+    } else {
+        inline_text
+    };
+
+    let prompt = match build_checklist_prompt(&article) {
+        Some(p) => p,
+        None => {
+            println!("{DIM}  사용법: /checklist <기사 초안 텍스트>{RESET}");
+            println!("{DIM}  또는:   /checklist --file <경로>{RESET}");
+            println!("{DIM}  예시:   /checklist --file draft.md{RESET}");
+            println!(
+                "{DIM}  기사 초안을 출고 전 6개 항목(육하원칙, 출처, 중립성, 태그, 법적 리스크, 숫자/날짜)으로 점검합니다.{RESET}\n"
+            );
+            return;
+        }
+    };
+
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    // Save checklist result to .journalist/checklist/
+    if !response.trim().is_empty() {
+        let slug_source = if let Some(ref path) = file_path {
+            std::path::Path::new(path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "checklist".to_string())
+        } else {
+            let preview: String = article.chars().take(30).collect();
+            if preview.is_empty() {
+                "checklist".to_string()
+            } else {
+                preview
+            }
+        };
+        let path = checklist_file_path(&slug_source);
+        match save_checklist(&path, &response) {
+            Ok(_) => {
+                println!("{GREEN}  ✓ 체크리스트 저장: {}{RESET}\n", path.display());
+            }
+            Err(e) => {
+                eprintln!("{RED}  체크리스트 저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -2728,5 +2892,85 @@ mod tests {
         let prompt = build_briefing_prompt(&content);
         assert!(prompt.is_some());
         assert!(prompt.unwrap().contains("보도자료 내용입니다"));
+    }
+
+    // ── /checklist tests ────────────────────────────────────────────────
+
+    #[test]
+    fn checklist_prompt_empty_returns_none() {
+        assert!(build_checklist_prompt("").is_none());
+        assert!(build_checklist_prompt("   ").is_none());
+    }
+
+    #[test]
+    fn checklist_prompt_contains_all_categories() {
+        let prompt = build_checklist_prompt("테스트 기사 초안").unwrap();
+        assert!(prompt.contains("육하원칙"));
+        assert!(prompt.contains("출처 명시"));
+        assert!(prompt.contains("중립성"));
+        assert!(prompt.contains("[확인 필요]"));
+        assert!(prompt.contains("법적 리스크"));
+        assert!(prompt.contains("숫자/날짜"));
+        assert!(prompt.contains("테스트 기사 초안"));
+    }
+
+    #[test]
+    fn checklist_file_path_with_source() {
+        let path = checklist_file_path_with_date("반도체 수출 기사", "2026-03-18");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/checklist/2026-03-18_반도체-수출-기사.md"
+        );
+    }
+
+    #[test]
+    fn checklist_file_path_empty_slug() {
+        let path = checklist_file_path_with_date("", "2026-03-18");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/checklist/2026-03-18_checklist.md"
+        );
+    }
+
+    #[test]
+    fn save_checklist_creates_dirs_and_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("sub").join("checklist.md");
+        save_checklist(&path, "체크리스트 결과").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "체크리스트 결과");
+    }
+
+    #[test]
+    fn parse_checklist_args_inline() {
+        let (file, text) = parse_checklist_args("기사 초안 텍스트");
+        assert!(file.is_none());
+        assert_eq!(text, "기사 초안 텍스트");
+    }
+
+    #[test]
+    fn parse_checklist_args_file_flag() {
+        let (file, text) = parse_checklist_args("--file draft.md");
+        assert_eq!(file.as_deref(), Some("draft.md"));
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn parse_checklist_args_file_with_extra() {
+        let (file, text) = parse_checklist_args("--file draft.md 추가 메모");
+        assert_eq!(file.as_deref(), Some("draft.md"));
+        assert_eq!(text, "추가 메모");
+    }
+
+    #[test]
+    fn checklist_file_read_integration() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let article_file = dir.path().join("article.md");
+        std::fs::write(&article_file, "기사 초안 내용입니다").unwrap();
+        let content = std::fs::read_to_string(&article_file).unwrap();
+        assert_eq!(content, "기사 초안 내용입니다");
+        let prompt = build_checklist_prompt(&content);
+        assert!(prompt.is_some());
+        assert!(prompt.unwrap().contains("기사 초안 내용입니다"));
     }
 }

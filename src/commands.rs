@@ -65,6 +65,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/sources",
     "/factcheck",
     "/briefing",
+    "/checklist",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -269,6 +270,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /briefing [text|--file <path>]  보도자료 → 기사 초안 변환\n",
+    );
+    out.push_str(
+        "  /checklist [text|--file <path>] 출고 전 체크리스트 (육하원칙/출처/중립성/법적리스크 등)\n",
     );
     out.push('\n');
 
@@ -546,9 +550,10 @@ pub use crate::commands_git::{
 
 // Project-related handlers
 pub use crate::commands_project::{
-    handle_article, handle_briefing, handle_context, handle_docs, handle_factcheck, handle_find,
-    handle_fix, handle_health, handle_index, handle_init, handle_lint, handle_research, handle_run,
-    handle_run_usage, handle_sources, handle_test, handle_tree,
+    handle_article, handle_briefing, handle_checklist, handle_context, handle_docs,
+    handle_factcheck, handle_find, handle_fix, handle_health, handle_index, handle_init,
+    handle_lint, handle_research, handle_run, handle_run_usage, handle_sources, handle_test,
+    handle_tree,
 };
 
 // Session-related handlers
