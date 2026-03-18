@@ -639,6 +639,11 @@ pub async fn run_repl(
                     .await;
                 continue;
             }
+            s if s == "/clip" || s.starts_with("/clip ") => {
+                commands::handle_clip(agent, input, &mut session_total, &agent_config.model)
+                    .await;
+                continue;
+            }
             s if s.starts_with('/') && is_unknown_command(s) => {
                 let cmd = s.split_whitespace().next().unwrap_or(s);
                 eprintln!("{RED}  unknown command: {cmd}{RESET}");

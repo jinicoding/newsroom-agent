@@ -1,5 +1,5 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
-//! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck, /briefing.
+//! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck, /briefing, /clip.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -3418,6 +3418,185 @@ pub async fn handle_rewrite(
     }
 }
 
+// ── /clip ────────────────────────────────────────────────────────────────
+
+/// Directory where clipped articles are saved.
+const CLIPS_DIR: &str = ".journalist/clips";
+
+/// Build the file path for a clip from a URL and date.
+fn clip_file_path(url: &str, date: &str) -> std::path::PathBuf {
+    // Extract domain + path slug from URL
+    let slug = url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .replace(['/', '?', '&', '=', '#', '%', ':', '.'], "-")
+        .trim_matches('-')
+        .to_string();
+    let slug = if slug.len() > 80 {
+        slug[..80].trim_end_matches('-').to_string()
+    } else {
+        slug
+    };
+    let filename = format!("{date}_{slug}.md");
+    std::path::PathBuf::from(CLIPS_DIR).join(filename)
+}
+
+/// Save clipped article content to a file, creating directories as needed.
+fn save_clip(path: &std::path::Path, url: &str, content: &str) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let full = format!("<!-- source: {url} -->\n\n{content}");
+    std::fs::write(path, full)
+}
+
+/// List saved clips in `.journalist/clips/`.
+fn clip_list() {
+    let dir = std::path::Path::new(CLIPS_DIR);
+    if !dir.exists() {
+        println!("{DIM}  스크랩한 기사가 없습니다.{RESET}\n");
+        return;
+    }
+    let mut entries: Vec<_> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext == "md")
+                    .unwrap_or(false)
+            })
+            .collect(),
+        Err(e) => {
+            eprintln!("{RED}  클립 목록 읽기 실패: {e}{RESET}\n");
+            return;
+        }
+    };
+    if entries.is_empty() {
+        println!("{DIM}  스크랩한 기사가 없습니다.{RESET}\n");
+        return;
+    }
+    entries.sort_by_key(|e| e.file_name());
+    entries.reverse(); // newest first
+    println!("{DIM}  ── 스크랩 목록 ({} 건) ──{RESET}", entries.len());
+    for (i, entry) in entries.iter().enumerate() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        // Try to read first line for source URL
+        let path = entry.path();
+        let source = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|c| {
+                c.lines()
+                    .next()
+                    .and_then(|l| l.strip_prefix("<!-- source: "))
+                    .and_then(|l| l.strip_suffix(" -->"))
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_default();
+        if source.is_empty() {
+            println!("  {: >3}. {name}", i + 1);
+        } else {
+            println!("  {: >3}. {name}", i + 1);
+            println!("{DIM}       {source}{RESET}");
+        }
+    }
+    println!();
+}
+
+/// Handle the `/clip` command.
+pub async fn handle_clip(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/clip").unwrap_or("").trim();
+
+    if args.is_empty() || args == "help" {
+        println!("{DIM}  사용법: /clip <URL>       URL 기사 스크랩{RESET}");
+        println!("{DIM}          /clip list        스크랩 목록 보기{RESET}");
+        println!("{DIM}  예시:   /clip https://news.example.com/article/123{RESET}\n");
+        return;
+    }
+
+    if args == "list" {
+        clip_list();
+        return;
+    }
+
+    let url = args.split_whitespace().next().unwrap_or(args);
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        eprintln!("{RED}  유효한 URL이 아닙니다: {url}{RESET}");
+        println!("{DIM}  http:// 또는 https://로 시작하는 URL을 입력하세요.{RESET}\n");
+        return;
+    }
+
+    println!("{DIM}  기사 가져오는 중: {url}{RESET}");
+
+    // Fetch and strip HTML
+    let fetch_cmd = format!(
+        "curl -sL --max-time 15 '{}' | sed 's/<[^>]*>//g' | head -c 50000",
+        url.replace('\'', "'\\''")
+    );
+    let output = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&fetch_cmd)
+        .output();
+
+    let raw_text = match output {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        Ok(o) => {
+            let err = String::from_utf8_lossy(&o.stderr);
+            eprintln!("{RED}  기사 가져오기 실패: {err}{RESET}\n");
+            return;
+        }
+        Err(e) => {
+            eprintln!("{RED}  curl 실행 실패: {e}{RESET}\n");
+            return;
+        }
+    };
+
+    if raw_text.trim().is_empty() {
+        eprintln!("{RED}  빈 페이지이거나 접근할 수 없는 URL입니다.{RESET}\n");
+        return;
+    }
+
+    // Use AI to extract the article body
+    let prompt = format!(
+        "다음은 웹 페이지에서 HTML 태그를 제거한 텍스트입니다. \
+         여기서 **기사 본문만** 추출해주세요. 광고, 메뉴, 푸터, 관련기사 목록 등은 모두 제외하세요.\n\
+         제목이 있으면 맨 위에 # 제목 형식으로 포함하세요.\n\
+         날짜, 기자명이 보이면 제목 아래에 메타 정보로 포함하세요.\n\
+         본문은 원문 그대로 유지하되, 깨끗하게 정리해주세요.\n\n\
+         출처 URL: {url}\n\n\
+         ---\n\n{raw_text}"
+    );
+
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    if response.trim().is_empty() {
+        eprintln!("{RED}  기사 본문 추출 실패{RESET}\n");
+        return;
+    }
+
+    // Save to .journalist/clips/
+    let today = today_str();
+    let path = clip_file_path(url, &today);
+    match save_clip(&path, url, &response) {
+        Ok(_) => {
+            println!(
+                "{GREEN}  ✓ 스크랩 저장: {}{RESET}\n",
+                path.display()
+            );
+        }
+        Err(e) => {
+            eprintln!("{RED}  스크랩 저장 실패: {e}{RESET}\n");
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -4811,5 +4990,51 @@ mod tests {
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("재작성"));
+    }
+
+    // ── /clip tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn clip_file_path_basic() {
+        let path = clip_file_path("https://news.example.com/article/123", "2026-03-18");
+        assert_eq!(
+            path,
+            std::path::PathBuf::from(
+                ".journalist/clips/2026-03-18_news-example-com-article-123.md"
+            )
+        );
+    }
+
+    #[test]
+    fn clip_file_path_long_url_truncated() {
+        let long_url = format!("https://example.com/{}", "a".repeat(200));
+        let path = clip_file_path(&long_url, "2026-03-18");
+        let filename = path.file_name().unwrap().to_string_lossy();
+        // date prefix (11) + slug (<=80) + .md (3) = <=94
+        assert!(filename.len() <= 95, "filename too long: {filename}");
+    }
+
+    #[test]
+    fn clip_file_path_special_chars() {
+        let path =
+            clip_file_path("https://news.com/article?id=42&lang=ko#top", "2026-03-18");
+        let filename = path.file_name().unwrap().to_string_lossy();
+        // Should not contain special URL chars
+        assert!(!filename.contains('?'));
+        assert!(!filename.contains('&'));
+        assert!(!filename.contains('#'));
+    }
+
+    #[test]
+    fn save_clip_creates_dir_and_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("clips").join("test-clip.md");
+        let result = save_clip(&path, "https://example.com/test", "# 기사 제목\n\n본문 내용");
+        assert!(result.is_ok());
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("<!-- source: https://example.com/test -->"));
+        assert!(content.contains("기사 제목"));
+        assert!(content.contains("본문 내용"));
     }
 }
