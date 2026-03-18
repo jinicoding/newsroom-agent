@@ -21,3 +21,11 @@
 - **테스트 4개**: 파일 경로 생성, 전체 분야 프롬프트, 특정 분야 프롬프트, 파일 저장 — 모두 통과
 
   ── Task 3 / 4 ──
+Task 3 완료. 구현 내용 요약:
+
+1. **`find_related_research` / `find_related_research_in`** — `.journalist/research/` 디렉토리에서 주제 키워드와 파일명 slug를 매칭하여 관련 리서치 파일을 검색
+2. **`build_article_prompt`** — `research_context` 매개변수 추가, 관련 리서치가 있으면 프롬프트 하단에 "📎 관련 리서치 자료" 섹션으로 포함
+3. **`handle_article`** — 기사 작성 전 자동으로 리서치 파일 검색 후 발견 시 파일 목록 출력
+4. **테스트 8개** — 리서치 검색 로직 4개 + 프롬프트 맥락 포함 테스트 4개, 모두 통과
+
+  ── Task 4 / 4 ──

@@ -1906,9 +1906,21 @@ pub fn build_factcheck_prompt(claim: &str) -> Option<String> {
         "다음 주장/사실에 대한 팩트체크를 수행해주세요: \"{claim}\"\n\n\
          다음 단계를 따라주세요:\n\
          1. 여러 소스에서 관련 정보를 검색 (DuckDuckGo, 네이버 등)\n\
-         2. 다음 형식으로 결과를 정리:\n\n\
+         2. 교차검증 전략을 적용하세요:\n\
+         - 공공데이터포털(data.go.kr) 등 정부·공공 통계로 수치 확인\n\
+         - 관련 기관의 공식 보도자료와 대조\n\
+         - 시계열 데이터를 비교하여 추세와 맥락 파악\n\
+         3. 검증 과정을 단계별로 보여주세요 (\"Show Me the Work\" 원칙 — 기자는 근거 없는 판정을 쓸 수 없습니다):\n\
+         - 어떤 소스를 확인했는지\n\
+         - 각 소스에서 무엇을 발견했는지\n\
+         - 소스 간 일치/불일치 여부\n\
+         4. 다음 형식으로 결과를 정리:\n\n\
          **주장:** {claim}\n\
          **판정:** [사실 / 대체로 사실 / 절반의 사실 / 대체로 거짓 / 거짓 / 판단 불가]\n\
+         **검증 과정:**\n\
+         - [단계 1]: [확인한 소스와 발견 내용]\n\
+         - [단계 2]: [확인한 소스와 발견 내용]\n\
+         - [단계 3]: [소스 간 교차 대조 결과]\n\
          **근거:**\n\
          - 출처 1: [내용]\n\
          - 출처 2: [내용]\n\
@@ -2558,6 +2570,19 @@ mod tests {
         assert!(prompt.contains("한국 반도체 수출이 사상 최대"));
         assert!(prompt.contains("팩트체크"));
         assert!(prompt.contains("판정"));
+    }
+
+    #[test]
+    fn factcheck_prompt_cross_verification_strategies() {
+        let prompt = build_factcheck_prompt("테스트 주장").unwrap();
+        // 교차검증 전략 키워드 확인
+        assert!(prompt.contains("data.go.kr"), "공공데이터포털 참조 누락");
+        assert!(prompt.contains("보도자료"), "보도자료 대조 전략 누락");
+        assert!(prompt.contains("시계열"), "시계열 데이터 비교 전략 누락");
+        assert!(
+            prompt.contains("검증 과정"),
+            "단계별 검증 과정 표시 누락"
+        );
     }
 
     #[test]
