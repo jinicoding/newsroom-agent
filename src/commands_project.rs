@@ -1524,6 +1524,88 @@ fn research_list() {
     println!();
 }
 
+/// Search saved research files by keyword (case-insensitive).
+/// Checks both filename and file content. Returns (filename, first_line, preview).
+pub fn research_search_in(
+    keyword: &str,
+    research_dir: &std::path::Path,
+) -> Vec<(String, String, String)> {
+    let kw = keyword.trim().to_lowercase();
+    if kw.is_empty() {
+        return Vec::new();
+    }
+
+    let entries = match std::fs::read_dir(research_dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut results = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let filename = match path.file_name().and_then(|f| f.to_str()) {
+            Some(f) => f.to_string(),
+            None => continue,
+        };
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let filename_lower = filename.to_lowercase();
+        let content_lower = content.to_lowercase();
+        if filename_lower.contains(&kw) || content_lower.contains(&kw) {
+            let first_line = content
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("")
+                .to_string();
+            // Build a short preview: first matching line from content (up to 80 chars)
+            let preview = content
+                .lines()
+                .find(|l| l.to_lowercase().contains(&kw))
+                .map(|l| {
+                    if l.len() > 80 {
+                        format!("{}…", &l[..l.floor_char_boundary(80)])
+                    } else {
+                        l.to_string()
+                    }
+                })
+                .unwrap_or_default();
+            results.push((filename, first_line, preview));
+        }
+    }
+    results.sort_by(|a, b| a.0.cmp(&b.0));
+    results
+}
+
+/// Display research search results.
+fn research_search(keyword: &str) {
+    let dir = std::path::Path::new(RESEARCH_DIR);
+    let results = research_search_in(keyword, dir);
+    if results.is_empty() {
+        println!("{DIM}  \"{keyword}\" 검색 결과가 없습니다.{RESET}\n");
+        return;
+    }
+    println!(
+        "{DIM}  \"{keyword}\" 검색 결과 ({count}건):{RESET}",
+        count = results.len()
+    );
+    for (i, (filename, title, preview)) in results.iter().enumerate() {
+        println!("{DIM}  {idx}. {filename}{RESET}", idx = i + 1);
+        if !title.is_empty() {
+            println!("{DIM}     제목: {title}{RESET}");
+        }
+        if !preview.is_empty() && preview != title {
+            println!("{DIM}     매칭: {preview}{RESET}");
+        }
+    }
+    println!();
+}
+
 /// Handle the /research command: web research on a topic using DuckDuckGo/Naver.
 pub async fn handle_research(
     agent: &mut Agent,
@@ -1539,12 +1621,23 @@ pub async fn handle_research(
     if topic.is_empty() {
         println!("{DIM}  사용법: /research <주제>{RESET}");
         println!("{DIM}  예시: /research 반도체 수출 동향{RESET}");
-        println!("{DIM}  /research list — 저장된 리서치 목록{RESET}\n");
+        println!("{DIM}  /research list — 저장된 리서치 목록{RESET}");
+        println!("{DIM}  /research search <키워드> — 저장된 리서치 검색{RESET}\n");
         return;
     }
 
     if topic == "list" {
         research_list();
+        return;
+    }
+
+    if let Some(kw) = topic.strip_prefix("search") {
+        let kw = kw.trim();
+        if kw.is_empty() {
+            println!("{DIM}  사용법: /research search <키워드>{RESET}\n");
+        } else {
+            research_search(kw);
+        }
         return;
     }
 
@@ -3127,6 +3220,98 @@ mod tests {
         let (file, text) = parse_checklist_args("--file draft.md 추가 메모");
         assert_eq!(file.as_deref(), Some("draft.md"));
         assert_eq!(text, "추가 메모");
+    }
+
+    // --- research_search tests ---
+
+    #[test]
+    fn research_search_matches_filename() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let research_dir = dir.path().join("research");
+        std::fs::create_dir_all(&research_dir).unwrap();
+        std::fs::write(
+            research_dir.join("2026-03-17_반도체-수출-동향.md"),
+            "# 반도체 수출 동향\n내용입니다",
+        )
+        .unwrap();
+        std::fs::write(
+            research_dir.join("2026-03-17_부동산-시장.md"),
+            "# 부동산 시장\n부동산 관련",
+        )
+        .unwrap();
+
+        let results = research_search_in("반도체", &research_dir);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].0.contains("반도체"));
+        assert_eq!(results[0].1, "# 반도체 수출 동향");
+    }
+
+    #[test]
+    fn research_search_matches_content() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let research_dir = dir.path().join("research");
+        std::fs::create_dir_all(&research_dir).unwrap();
+        std::fs::write(
+            research_dir.join("2026-03-17_경제-전망.md"),
+            "# 경제 전망\n삼성전자의 반도체 매출이 증가했다.",
+        )
+        .unwrap();
+
+        let results = research_search_in("삼성전자", &research_dir);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].2.contains("삼성전자"));
+    }
+
+    #[test]
+    fn research_search_case_insensitive() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let research_dir = dir.path().join("research");
+        std::fs::create_dir_all(&research_dir).unwrap();
+        std::fs::write(
+            research_dir.join("2026-03-17_ai-trends.md"),
+            "# AI Trends\nArtificial Intelligence is growing.",
+        )
+        .unwrap();
+
+        let results = research_search_in("ai", &research_dir);
+        assert_eq!(results.len(), 1);
+
+        let results_upper = research_search_in("AI", &research_dir);
+        assert_eq!(results_upper.len(), 1);
+    }
+
+    #[test]
+    fn research_search_no_match() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let research_dir = dir.path().join("research");
+        std::fs::create_dir_all(&research_dir).unwrap();
+        std::fs::write(
+            research_dir.join("2026-03-17_부동산.md"),
+            "# 부동산 시장\n내용",
+        )
+        .unwrap();
+
+        let results = research_search_in("반도체", &research_dir);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn research_search_empty_keyword() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let research_dir = dir.path().join("research");
+        std::fs::create_dir_all(&research_dir).unwrap();
+
+        let results = research_search_in("", &research_dir);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn research_search_nonexistent_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let research_dir = dir.path().join("nonexistent");
+
+        let results = research_search_in("test", &research_dir);
+        assert!(results.is_empty());
     }
 
     #[test]

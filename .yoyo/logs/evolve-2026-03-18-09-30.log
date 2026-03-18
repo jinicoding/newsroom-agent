@@ -33,3 +33,15 @@ SESSION_PLAN.md를 작성했습니다.
 사용법: `/checklist <기사 텍스트>` 또는 `/checklist --file <경로>`
 
   ── Task 2 / 4 ──
+완료. 취재원 DB에 분야(beat) 태그 기능을 추가했습니다:
+
+- `/sources add 홍길동 산업부 010-1234 반도체 담당 --beat 경제` — beat 태그 포함 추가
+- `/sources list` — `[경제]` 형태로 분야 표시
+- `/sources search 경제` — beat 필드도 검색 대상에 포함
+- `/sources beat 경제` — 해당 분야 취재원만 필터링
+- `/sources edit 1 beat IT` — beat 필드 수정
+- 기존 beat 없는 데이터는 빈 문자열로 처리 (하위 호환성 유지)
+
+테스트 5개 선행 작성, 67개 전체 테스트 통과 확인.
+
+  ── Task 3 / 4 ──
