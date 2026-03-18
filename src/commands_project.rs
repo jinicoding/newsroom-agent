@@ -1324,9 +1324,56 @@ fn save_article_draft(path: &std::path::Path, content: &str) -> Result<(), std::
     std::fs::write(path, content)
 }
 
+/// Search for research files related to the given topic in `.journalist/research/`.
+/// Returns a list of (filename, content) pairs for matching files.
+/// A file matches if any keyword from the topic appears in the filename's slug portion.
+pub fn find_related_research(topic: &str) -> Vec<(String, String)> {
+    find_related_research_in(topic, std::path::Path::new(RESEARCH_DIR))
+}
+
+/// Search for related research files in a specific directory (for testing).
+pub fn find_related_research_in(
+    topic: &str,
+    research_dir: &std::path::Path,
+) -> Vec<(String, String)> {
+    let keywords: Vec<&str> = topic.split_whitespace().filter(|k| !k.is_empty()).collect();
+    if keywords.is_empty() {
+        return Vec::new();
+    }
+
+    let entries = match std::fs::read_dir(research_dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut results = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let filename = match path.file_name().and_then(|f| f.to_str()) {
+            Some(f) => f.to_string(),
+            None => continue,
+        };
+        let filename_lower = filename.to_lowercase();
+        let matches = keywords
+            .iter()
+            .any(|kw| filename_lower.contains(&kw.to_lowercase()));
+        if matches {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                results.push((filename, content));
+            }
+        }
+    }
+    results.sort_by(|a, b| a.0.cmp(&b.0));
+    results
+}
+
 /// Build the article prompt for a given topic.
 /// Returns (prompt_text, has_topic).
-pub fn build_article_prompt(topic: &str) -> (String, bool) {
+/// `research_context` contains (filename, content) pairs of related research files.
+pub fn build_article_prompt(topic: &str, research_context: &[(String, String)]) -> (String, bool) {
     if topic.is_empty() {
         (
             "기사 작성을 도와드리겠습니다. 어떤 주제로 기사를 작성하시겠습니까? \
@@ -1339,21 +1386,27 @@ pub fn build_article_prompt(topic: &str) -> (String, bool) {
             false,
         )
     } else {
-        (
-            format!(
-                "다음 주제로 한국 신문 기사 초안을 작성해주세요: {topic}\n\n\
-                 다음 구조를 따라주세요:\n\
-                 1. **리드** — 육하원칙(누가, 언제, 어디서, 무엇을, 어떻게, 왜)을 포함한 핵심 요약 (1-2문장)\n\
-                 2. **본문** — 배경, 맥락, 상세 내용 (3-5문단)\n\
-                 3. **인용** — 관계자 코멘트가 들어갈 위치 표시 (\"[관계자 이름/직함] 인용 필요\")\n\
-                 4. **맺음** — 향후 전망 또는 의미 (1-2문장)\n\n\
-                 주의사항:\n\
-                 - 사실 확인이 필요한 부분은 [확인 필요]로 표시\n\
-                 - 추가 취재가 필요한 부분은 [취재 필요]로 표시\n\
-                 - 객관적이고 중립적인 톤 유지"
-            ),
-            true,
-        )
+        let mut prompt = format!(
+            "다음 주제로 한국 신문 기사 초안을 작성해주세요: {topic}\n\n\
+             다음 구조를 따라주세요:\n\
+             1. **리드** — 육하원칙(누가, 언제, 어디서, 무엇을, 어떻게, 왜)을 포함한 핵심 요약 (1-2문장)\n\
+             2. **본문** — 배경, 맥락, 상세 내용 (3-5문단)\n\
+             3. **인용** — 관계자 코멘트가 들어갈 위치 표시 (\"[관계자 이름/직함] 인용 필요\")\n\
+             4. **맺음** — 향후 전망 또는 의미 (1-2문장)\n\n\
+             주의사항:\n\
+             - 사실 확인이 필요한 부분은 [확인 필요]로 표시\n\
+             - 추가 취재가 필요한 부분은 [취재 필요]로 표시\n\
+             - 객관적이고 중립적인 톤 유지"
+        );
+
+        if !research_context.is_empty() {
+            prompt.push_str("\n\n---\n\n📎 **관련 리서치 자료** (기사 작성 시 참고하세요):\n");
+            for (filename, content) in research_context {
+                prompt.push_str(&format!("\n### 📄 {filename}\n{content}\n"));
+            }
+        }
+
+        (prompt, true)
     }
 }
 
@@ -1369,7 +1422,20 @@ pub async fn handle_article(
         .unwrap_or("")
         .trim();
 
-    let (prompt, _) = build_article_prompt(topic);
+    // Search for related research files
+    let research = find_related_research(topic);
+    if !research.is_empty() {
+        println!(
+            "{GREEN}  📎 관련 리서치 {}건 발견{RESET}",
+            research.len()
+        );
+        for (filename, _) in &research {
+            println!("     - {filename}");
+        }
+        println!();
+    }
+
+    let (prompt, _) = build_article_prompt(topic, &research);
 
     let response = run_prompt(agent, &prompt, session_total, model).await;
     auto_compact_if_needed(agent);
@@ -1902,89 +1968,135 @@ pub async fn handle_factcheck(
 
 // ── /briefing ────────────────────────────────────────────────────────────
 
-const BRIEFING_DIR: &str = ".journalist/briefing";
-
-/// Known briefing categories for tab-completion.
-pub const BRIEFING_CATEGORIES: &[&str] = &[
-    "정치", "경제", "사회", "IT", "국제", "문화", "스포츠",
-];
-
-/// Build the briefing file path: `.journalist/briefing/YYYY-MM-DD.md`
-pub fn briefing_file_path() -> std::path::PathBuf {
-    briefing_file_path_with_date(&today_str())
-}
-
-/// Build the briefing file path with an explicit date string (for testing).
-pub fn briefing_file_path_with_date(date: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(BRIEFING_DIR).join(format!("{date}.md"))
-}
-
-/// Build the prompt for the `/briefing` command.
-pub fn build_briefing_prompt(category: &str) -> String {
-    let category_instruction = if category.is_empty() {
-        "전 분야(정치, 경제, 사회, IT, 국제, 문화, 스포츠)".to_string()
+/// Parse `/briefing` input to extract `--file <path>` and inline text.
+/// Returns `(Option<file_path>, remaining_text)`.
+pub fn parse_briefing_args(args: &str) -> (Option<String>, String) {
+    let args = args.trim();
+    if let Some(rest) = args.strip_prefix("--file") {
+        let rest = rest.trim_start();
+        if rest.is_empty() {
+            return (None, String::new());
+        }
+        let mut path_end = rest.len();
+        for (i, ch) in rest.char_indices() {
+            if ch.is_whitespace() {
+                path_end = i;
+                break;
+            }
+        }
+        let file_path = rest[..path_end].to_string();
+        let remaining = rest[path_end..].trim().to_string();
+        (Some(file_path), remaining)
     } else {
-        format!("'{category}' 분야")
-    };
-
-    format!(
-        "오늘의 주요 한국 뉴스를 브리핑해주세요.\n\n\
-         대상 분야: {category_instruction}\n\n\
-         다음 단계를 따라주세요:\n\
-         1. DuckDuckGo와 네이버 뉴스에서 오늘의 주요 뉴스를 검색하세요\n\
-         2. 다음 형식으로 브리핑을 작성하세요:\n\n\
-         # 📰 뉴스 브리핑 — {{날짜}}\n\n\
-         ## 주요 뉴스 요약\n\
-         각 뉴스 항목마다:\n\
-         - **헤드라인**: [제목]\n\
-         - **핵심**: 2-3문장 요약\n\
-         - **기자 참고**: 후속 취재 포인트나 관련 맥락\n\n\
-         ## 오늘의 키워드\n\
-         - 주요 인물, 기관, 이슈 키워드 나열\n\n\
-         ## 주목할 일정\n\
-         - 오늘/내일 예정된 주요 일정 (국회, 법원, 기업 등)\n\n\
-         주의: 확인할 수 없는 뉴스는 포함하지 마세요. \
-         각 뉴스의 출처를 명시하세요."
-    )
-}
-
-/// Save briefing result to file. Creates the briefing directory if needed.
-fn save_briefing(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        (None, args.to_string())
     }
-    std::fs::write(path, content)
 }
 
-/// Handle the `/briefing` command: morning news briefing.
+/// Build the prompt for the `/briefing` command (press release to article draft).
+pub fn build_briefing_prompt(press_release: &str) -> Option<String> {
+    if press_release.trim().is_empty() {
+        return None;
+    }
+    Some(format!(
+        "아래 보도자료를 기사 초안으로 변환해주세요.\n\n\
+         다음 단계를 따라주세요:\n\
+         1. 보도자료에서 핵심 사실(누가, 무엇을, 언제, 어디서, 왜, 어떻게)을 추출하세요\n\
+         2. 역피라미드 구조로 기사 초안을 작성하세요:\n\
+         - **리드**: 가장 중요한 사실을 첫 문단에\n\
+         - **본문**: 세부 사항을 중요도 순으로\n\
+         - **배경**: 맥락과 부가 정보\n\
+         3. 보도자료에서 직접 확인할 수 없는 사실에는 [확인 필요]를 표시하세요\n\
+         4. 보도자료 원문의 홍보성 표현은 중립적으로 바꾸세요\n\n\
+         ## 보도자료 원문\n\n\
+         {press_release}"
+    ))
+}
+
+/// Build the draft file path for briefing output.
+pub fn briefing_draft_path(slug_source: &str) -> std::path::PathBuf {
+    briefing_draft_path_with_date(slug_source, &today_str())
+}
+
+/// Build the draft file path with an explicit date string (for testing).
+pub fn briefing_draft_path_with_date(slug_source: &str, date: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(slug_source, 50);
+    let filename = if slug.is_empty() {
+        format!("{date}_briefing.md")
+    } else {
+        format!("{date}_{slug}.md")
+    };
+    std::path::PathBuf::from(DRAFTS_DIR).join(filename)
+}
+
+/// Handle the `/briefing` command: convert press release to article draft.
 pub async fn handle_briefing(
     agent: &mut Agent,
     input: &str,
     session_total: &mut Usage,
     model: &str,
 ) {
-    let category = input
-        .strip_prefix("/briefing")
-        .unwrap_or("")
-        .trim();
+    let args = input.strip_prefix("/briefing").unwrap_or("").trim();
+    let (file_path, inline_text) = parse_briefing_args(args);
 
-    let prompt = build_briefing_prompt(category);
+    // Read press release content from file or inline
+    let press_release = if let Some(ref path) = file_path {
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                println!(
+                    "{DIM}  파일 읽기: {path} ({} bytes){RESET}",
+                    content.len()
+                );
+                if inline_text.is_empty() {
+                    content
+                } else {
+                    format!("{content}\n\n{inline_text}")
+                }
+            }
+            Err(e) => {
+                eprintln!("{RED}  파일 읽기 실패: {path} — {e}{RESET}\n");
+                return;
+            }
+        }
+    } else {
+        inline_text
+    };
+
+    let prompt = match build_briefing_prompt(&press_release) {
+        Some(p) => p,
+        None => {
+            println!("{DIM}  사용법: /briefing <보도자료 텍스트>{RESET}");
+            println!("{DIM}  또는:   /briefing --file <경로>{RESET}");
+            println!("{DIM}  예시:   /briefing --file press_release.txt{RESET}");
+            println!("{DIM}  보도자료를 역피라미드 구조 기사 초안으로 변환합니다.{RESET}\n");
+            return;
+        }
+    };
 
     let response = run_prompt(agent, &prompt, session_total, model).await;
     auto_compact_if_needed(agent);
 
-    // Save briefing result to file
+    // Save draft to .journalist/drafts/
     if !response.trim().is_empty() {
-        let path = briefing_file_path();
-        match save_briefing(&path, &response) {
+        let slug_source = if let Some(ref path) = file_path {
+            std::path::Path::new(path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "briefing".to_string())
+        } else {
+            let preview: String = press_release.chars().take(30).collect();
+            if preview.is_empty() {
+                "briefing".to_string()
+            } else {
+                preview
+            }
+        };
+        let path = briefing_draft_path(&slug_source);
+        match save_article_draft(&path, &response) {
             Ok(_) => {
-                println!(
-                    "{GREEN}  ✓ 브리핑 저장: {}{RESET}\n",
-                    path.display()
-                );
+                println!("{GREEN}  ✓ 초안 저장: {}{RESET}\n", path.display());
             }
             Err(e) => {
-                eprintln!("{RED}  브리핑 저장 실패: {e}{RESET}\n");
+                eprintln!("{RED}  초안 저장 실패: {e}{RESET}\n");
             }
         }
     }
@@ -2331,7 +2443,7 @@ mod tests {
 
     #[test]
     fn article_prompt_without_topic() {
-        let (prompt, has_topic) = build_article_prompt("");
+        let (prompt, has_topic) = build_article_prompt("", &[]);
         assert!(!has_topic);
         assert!(prompt.contains("어떤 주제로 기사를 작성하시겠습니까"));
         assert!(prompt.contains("리드"));
@@ -2339,12 +2451,98 @@ mod tests {
 
     #[test]
     fn article_prompt_with_topic() {
-        let (prompt, has_topic) = build_article_prompt("반도체 수출 동향");
+        let (prompt, has_topic) = build_article_prompt("반도체 수출 동향", &[]);
         assert!(has_topic);
         assert!(prompt.contains("반도체 수출 동향"));
         assert!(prompt.contains("리드"));
         assert!(prompt.contains("육하원칙"));
         assert!(prompt.contains("[확인 필요]"));
+    }
+
+
+    #[test]
+    fn article_prompt_includes_research_context() {
+        let research = vec![
+            ("반도체-수출-동향.md".to_string(), "# 반도체 수출 리서치\n수출액 증가 추세".to_string()),
+        ];
+        let (prompt, has_topic) = build_article_prompt("반도체 수출 동향", &research);
+        assert!(has_topic);
+        assert!(prompt.contains("관련 리서치 자료"));
+        assert!(prompt.contains("반도체-수출-동향.md"));
+        assert!(prompt.contains("수출액 증가 추세"));
+    }
+
+    #[test]
+    fn article_prompt_no_research_section_when_empty() {
+        let (prompt, _) = build_article_prompt("반도체 수출 동향", &[]);
+        assert!(!prompt.contains("관련 리서치 자료"));
+    }
+
+    // --- find_related_research tests ---
+
+    #[test]
+    fn find_related_research_matches_keyword_in_filename() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let research_dir = dir.path().join("research");
+        std::fs::create_dir_all(&research_dir).unwrap();
+        std::fs::write(
+            research_dir.join("2026-03-17_반도체-수출-동향.md"),
+            "# 반도체 리서치\n내용",
+        )
+        .unwrap();
+        std::fs::write(
+            research_dir.join("2026-03-17_부동산-시장.md"),
+            "# 부동산 리서치\n내용",
+        )
+        .unwrap();
+
+        let results = find_related_research_in("반도체 수출", &research_dir);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].0.contains("반도체"));
+        assert!(results[0].1.contains("반도체 리서치"));
+    }
+
+    #[test]
+    fn find_related_research_no_match() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let research_dir = dir.path().join("research");
+        std::fs::create_dir_all(&research_dir).unwrap();
+        std::fs::write(
+            research_dir.join("2026-03-17_부동산-시장.md"),
+            "# 부동산\n내용",
+        )
+        .unwrap();
+
+        let results = find_related_research_in("반도체 수출", &research_dir);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn find_related_research_empty_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let research_dir = dir.path().join("research");
+        let results = find_related_research_in("반도체", &research_dir);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn find_related_research_multiple_matches() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let research_dir = dir.path().join("research");
+        std::fs::create_dir_all(&research_dir).unwrap();
+        std::fs::write(
+            research_dir.join("2026-03-16_반도체-수출.md"),
+            "수출 자료",
+        )
+        .unwrap();
+        std::fs::write(
+            research_dir.join("2026-03-17_반도체-시장-전망.md"),
+            "시장 전망",
+        )
+        .unwrap();
+
+        let results = find_related_research_in("반도체", &research_dir);
+        assert_eq!(results.len(), 2);
     }
 
     // --- factcheck prompt generation ---
@@ -2434,36 +2632,76 @@ mod tests {
     // --- briefing tests ---
 
     #[test]
-    fn briefing_file_path_uses_date() {
-        let path = briefing_file_path_with_date("2026-03-18");
+    fn briefing_prompt_with_text() {
+        let prompt = build_briefing_prompt("삼성전자가 새로운 반도체를 발표했다");
+        assert!(prompt.is_some());
+        let prompt = prompt.unwrap();
+        assert!(prompt.contains("역피라미드"));
+        assert!(prompt.contains("[확인 필요]"));
+        assert!(prompt.contains("삼성전자가 새로운 반도체를 발표했다"));
+    }
+
+    #[test]
+    fn briefing_prompt_empty_returns_none() {
+        assert!(build_briefing_prompt("").is_none());
+        assert!(build_briefing_prompt("   ").is_none());
+    }
+
+    #[test]
+    fn briefing_parse_args_inline() {
+        let (file, text) = parse_briefing_args("삼성전자 보도자료 내용");
+        assert!(file.is_none());
+        assert_eq!(text, "삼성전자 보도자료 내용");
+    }
+
+    #[test]
+    fn briefing_parse_args_file() {
+        let (file, text) = parse_briefing_args("--file press.txt");
+        assert_eq!(file.as_deref(), Some("press.txt"));
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn briefing_parse_args_file_with_extra() {
+        let (file, text) = parse_briefing_args("--file press.txt 추가 지시사항");
+        assert_eq!(file.as_deref(), Some("press.txt"));
+        assert_eq!(text, "추가 지시사항");
+    }
+
+    #[test]
+    fn briefing_parse_args_file_empty() {
+        let (file, text) = parse_briefing_args("--file");
+        assert!(file.is_none());
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn briefing_draft_path_with_slug() {
+        let path = briefing_draft_path_with_date("보도자료", "2026-03-18");
         assert_eq!(
             path.to_string_lossy(),
-            ".journalist/briefing/2026-03-18.md"
+            ".journalist/drafts/2026-03-18_보도자료.md"
         );
     }
 
     #[test]
-    fn briefing_prompt_all_categories() {
-        let prompt = build_briefing_prompt("");
-        assert!(prompt.contains("전 분야"));
-        assert!(prompt.contains("DuckDuckGo"));
-        assert!(prompt.contains("네이버"));
-        assert!(prompt.contains("브리핑"));
+    fn briefing_draft_path_empty_slug() {
+        let path = briefing_draft_path_with_date("", "2026-03-18");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/drafts/2026-03-18_briefing.md"
+        );
     }
 
     #[test]
-    fn briefing_prompt_specific_category() {
-        let prompt = build_briefing_prompt("경제");
-        assert!(prompt.contains("'경제' 분야"));
-        assert!(!prompt.contains("전 분야"));
-    }
-
-    #[test]
-    fn save_briefing_creates_dirs_and_file() {
+    fn briefing_file_read_integration() {
         let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join("briefing").join("2026-03-18.md");
-        save_briefing(&path, "# 브리핑\n내용").unwrap();
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(content, "# 브리핑\n내용");
+        let press_file = dir.path().join("press.txt");
+        std::fs::write(&press_file, "보도자료 내용입니다").unwrap();
+        let content = std::fs::read_to_string(&press_file).unwrap();
+        assert_eq!(content, "보도자료 내용입니다");
+        let prompt = build_briefing_prompt(&content);
+        assert!(prompt.is_some());
+        assert!(prompt.unwrap().contains("보도자료 내용입니다"));
     }
 }

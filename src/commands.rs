@@ -110,10 +110,17 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/pr" => filter_candidates(PR_SUBCOMMANDS, &partial_lower),
         "/provider" => filter_candidates(KNOWN_PROVIDERS, &partial_lower),
         "/sources" => filter_candidates(SOURCES_SUBCOMMANDS, &partial_lower),
-        "/briefing" => filter_candidates(
-            crate::commands_project::BRIEFING_CATEGORIES,
-            &partial_lower,
-        ),
+        "/briefing" => {
+            if partial_arg.starts_with("--file ") {
+                let file_part = &partial_arg[7..];
+                return crate::repl::complete_file_path(file_part);
+            }
+            if "--file".starts_with(partial_arg) {
+                vec!["--file".to_string()]
+            } else {
+                Vec::new()
+            }
+        }
         "/save" | "/load" => list_json_files(partial_arg),
         _ => Vec::new(),
     }
@@ -261,7 +268,7 @@ pub fn help_text() -> String {
         "  /factcheck <claim> 팩트체크 (다중 소스 검증)\n",
     );
     out.push_str(
-        "  /briefing [분야]   아침 뉴스 브리핑 (정치/경제/사회/IT 등)\n",
+        "  /briefing [text|--file <path>]  보도자료 → 기사 초안 변환\n",
     );
     out.push('\n');
 
