@@ -1370,10 +1370,41 @@ pub fn find_related_research_in(
     results
 }
 
+/// Parse `/article` arguments, extracting `--type <type>` if present.
+/// Returns (article_type, remaining_topic).
+pub fn parse_article_args(args: &str) -> (Option<String>, String) {
+    let args = args.trim();
+    let mut article_type: Option<String> = None;
+    let mut remaining_parts: Vec<String> = Vec::new();
+
+    let tokens: Vec<&str> = args.split_whitespace().collect();
+    let mut i = 0;
+    while i < tokens.len() {
+        if tokens[i] == "--type" {
+            if i + 1 < tokens.len() {
+                article_type = Some(tokens[i + 1].to_string());
+                i += 2;
+            } else {
+                i += 1;
+            }
+        } else {
+            remaining_parts.push(tokens[i].to_string());
+            i += 1;
+        }
+    }
+
+    (article_type, remaining_parts.join(" "))
+}
+
 /// Build the article prompt for a given topic.
 /// Returns (prompt_text, has_topic).
 /// `research_context` contains (filename, content) pairs of related research files.
-pub fn build_article_prompt(topic: &str, research_context: &[(String, String)]) -> (String, bool) {
+/// `article_type` selects the template: "straight" (default), "feature", "analysis", "planning".
+pub fn build_article_prompt(
+    topic: &str,
+    research_context: &[(String, String)],
+    article_type: Option<&str>,
+) -> (String, bool) {
     if topic.is_empty() {
         (
             "기사 작성을 도와드리겠습니다. 어떤 주제로 기사를 작성하시겠습니까? \
@@ -1381,18 +1412,60 @@ pub fn build_article_prompt(topic: &str, research_context: &[(String, String)]) 
              1. 리드 (핵심 요약)\n\
              2. 본문 (배경, 맥락, 상세)\n\
              3. 인용 (관계자 코멘트)\n\
-             4. 맺음 (전망, 의미)"
+             4. 맺음 (전망, 의미)\n\n\
+             💡 `--type` 옵션으로 기사 유형을 지정할 수 있습니다:\n\
+             - `straight` — 스트레이트 (역피라미드, 기본값)\n\
+             - `feature` — 피처 (도입부+에피소드+본문+맺음)\n\
+             - `analysis` — 해설 (배경+분석+전망)\n\
+             - `planning` — 기획 (문제제기+현황+원인+대안)"
                 .to_string(),
             false,
         )
     } else {
+        let structure = match article_type.unwrap_or("straight") {
+            "feature" | "피처" => {
+                "1. **도입부** — 독자의 관심을 끄는 장면 묘사 또는 일화 (1-2문단)\n\
+                 2. **에피소드** — 핵심 인물/사건의 구체적 이야기 (2-3문단)\n\
+                 3. **본문** — 배경 설명, 맥락, 의미 부여 (3-5문단)\n\
+                 4. **인용** — 관계자·전문가 코멘트 위치 표시 (\"[이름/직함] 인용 필요\")\n\
+                 5. **맺음** — 여운을 남기는 마무리, 도입부와 호응 (1-2문단)"
+            }
+            "analysis" | "해설" => {
+                "1. **핵심 요약** — 무엇이 왜 중요한지 한 문단 정리\n\
+                 2. **배경** — 이 이슈가 나온 경위, 역사적 맥락 (2-3문단)\n\
+                 3. **분석** — 원인, 이해관계, 쟁점별 심층 분석 (3-5문단)\n\
+                 4. **전망** — 향후 시나리오와 예상 영향 (1-2문단)\n\
+                 5. **인용** — 전문가·관계자 코멘트 위치 표시 (\"[이름/직함] 인용 필요\")"
+            }
+            "planning" | "기획" => {
+                "1. **문제제기** — 왜 이 주제를 다루는지, 독자가 관심 가질 이유 (1-2문단)\n\
+                 2. **현황** — 현재 상황, 관련 데이터와 사례 (2-3문단)\n\
+                 3. **원인** — 문제의 구조적 원인 분석 (2-3문단)\n\
+                 4. **대안** — 해결 방안, 해외 사례, 전문가 제안 (2-3문단)\n\
+                 5. **인용** — 관계자·전문가 코멘트 위치 표시 (\"[이름/직함] 인용 필요\")\n\
+                 6. **맺음** — 정리 및 향후 과제 (1문단)"
+            }
+            // "straight" and anything else → default inverted pyramid
+            _ => {
+                "1. **리드** — 역피라미드 구조: 육하원칙(누가, 언제, 어디서, 무엇을, 어떻게, 왜)을 포함한 핵심 요약 (1-2문장)\n\
+                 2. **본문** — 배경, 맥락, 상세 내용 (3-5문단)\n\
+                 3. **인용** — 관계자 코멘트가 들어갈 위치 표시 (\"[관계자 이름/직함] 인용 필요\")\n\
+                 4. **맺음** — 향후 전망 또는 의미 (1-2문장)"
+            }
+        };
+
+        let type_label = match article_type.unwrap_or("straight") {
+            "feature" | "피처" => "피처",
+            "analysis" | "해설" => "해설",
+            "planning" | "기획" => "기획",
+            _ => "스트레이트",
+        };
+
         let mut prompt = format!(
             "다음 주제로 한국 신문 기사 초안을 작성해주세요: {topic}\n\n\
+             📰 기사 유형: **{type_label}**\n\n\
              다음 구조를 따라주세요:\n\
-             1. **리드** — 육하원칙(누가, 언제, 어디서, 무엇을, 어떻게, 왜)을 포함한 핵심 요약 (1-2문장)\n\
-             2. **본문** — 배경, 맥락, 상세 내용 (3-5문단)\n\
-             3. **인용** — 관계자 코멘트가 들어갈 위치 표시 (\"[관계자 이름/직함] 인용 필요\")\n\
-             4. **맺음** — 향후 전망 또는 의미 (1-2문장)\n\n\
+             {structure}\n\n\
              주의사항:\n\
              - 사실 확인이 필요한 부분은 [확인 필요]로 표시\n\
              - 추가 취재가 필요한 부분은 [취재 필요]로 표시\n\
@@ -1417,10 +1490,13 @@ pub async fn handle_article(
     session_total: &mut Usage,
     model: &str,
 ) {
-    let topic = input
+    let raw_args = input
         .strip_prefix("/article")
         .unwrap_or("")
         .trim();
+
+    let (article_type, topic) = parse_article_args(raw_args);
+    let topic = topic.as_str();
 
     // Search for related research files
     let research = find_related_research(topic);
@@ -1435,7 +1511,7 @@ pub async fn handle_article(
         println!();
     }
 
-    let (prompt, _) = build_article_prompt(topic, &research);
+    let (prompt, _) = build_article_prompt(topic, &research, article_type.as_deref());
 
     let response = run_prompt(agent, &prompt, session_total, model).await;
     auto_compact_if_needed(agent);
@@ -4023,7 +4099,7 @@ mod tests {
 
     #[test]
     fn article_prompt_without_topic() {
-        let (prompt, has_topic) = build_article_prompt("", &[]);
+        let (prompt, has_topic) = build_article_prompt("", &[], None);
         assert!(!has_topic);
         assert!(prompt.contains("어떤 주제로 기사를 작성하시겠습니까"));
         assert!(prompt.contains("리드"));
@@ -4031,7 +4107,7 @@ mod tests {
 
     #[test]
     fn article_prompt_with_topic() {
-        let (prompt, has_topic) = build_article_prompt("반도체 수출 동향", &[]);
+        let (prompt, has_topic) = build_article_prompt("반도체 수출 동향", &[], None);
         assert!(has_topic);
         assert!(prompt.contains("반도체 수출 동향"));
         assert!(prompt.contains("리드"));
@@ -4045,7 +4121,7 @@ mod tests {
         let research = vec![
             ("반도체-수출-동향.md".to_string(), "# 반도체 수출 리서치\n수출액 증가 추세".to_string()),
         ];
-        let (prompt, has_topic) = build_article_prompt("반도체 수출 동향", &research);
+        let (prompt, has_topic) = build_article_prompt("반도체 수출 동향", &research, None);
         assert!(has_topic);
         assert!(prompt.contains("관련 리서치 자료"));
         assert!(prompt.contains("반도체-수출-동향.md"));
@@ -4054,8 +4130,89 @@ mod tests {
 
     #[test]
     fn article_prompt_no_research_section_when_empty() {
-        let (prompt, _) = build_article_prompt("반도체 수출 동향", &[]);
+        let (prompt, _) = build_article_prompt("반도체 수출 동향", &[], None);
         assert!(!prompt.contains("관련 리서치 자료"));
+    }
+
+    // --- parse_article_args tests ---
+
+    #[test]
+    fn parse_article_args_no_type() {
+        let (article_type, topic) = parse_article_args("반도체 수출 동향");
+        assert!(article_type.is_none());
+        assert_eq!(topic, "반도체 수출 동향");
+    }
+
+    #[test]
+    fn parse_article_args_with_type() {
+        let (article_type, topic) = parse_article_args("--type feature 반도체 수출 동향");
+        assert_eq!(article_type.as_deref(), Some("feature"));
+        assert_eq!(topic, "반도체 수출 동향");
+    }
+
+    #[test]
+    fn parse_article_args_type_only() {
+        let (article_type, topic) = parse_article_args("--type analysis");
+        assert_eq!(article_type.as_deref(), Some("analysis"));
+        assert!(topic.is_empty());
+    }
+
+    #[test]
+    fn parse_article_args_empty() {
+        let (article_type, topic) = parse_article_args("");
+        assert!(article_type.is_none());
+        assert!(topic.is_empty());
+    }
+
+    // --- article type template tests ---
+
+    #[test]
+    fn article_prompt_straight_type() {
+        let (prompt, has_topic) =
+            build_article_prompt("반도체 수출", &[], Some("straight"));
+        assert!(has_topic);
+        assert!(prompt.contains("역피라미드"));
+        assert!(prompt.contains("리드"));
+    }
+
+    #[test]
+    fn article_prompt_feature_type() {
+        let (prompt, has_topic) =
+            build_article_prompt("반도체 수출", &[], Some("feature"));
+        assert!(has_topic);
+        assert!(prompt.contains("도입부"));
+        assert!(prompt.contains("에피소드"));
+    }
+
+    #[test]
+    fn article_prompt_analysis_type() {
+        let (prompt, has_topic) =
+            build_article_prompt("반도체 수출", &[], Some("analysis"));
+        assert!(has_topic);
+        assert!(prompt.contains("배경"));
+        assert!(prompt.contains("분석"));
+        assert!(prompt.contains("전망"));
+    }
+
+    #[test]
+    fn article_prompt_planning_type() {
+        let (prompt, has_topic) =
+            build_article_prompt("반도체 수출", &[], Some("planning"));
+        assert!(has_topic);
+        assert!(prompt.contains("문제제기"));
+        assert!(prompt.contains("현황"));
+        assert!(prompt.contains("대안"));
+    }
+
+    #[test]
+    fn article_prompt_default_type_is_straight() {
+        let (prompt_default, _) = build_article_prompt("반도체 수출", &[], None);
+        let (prompt_straight, _) =
+            build_article_prompt("반도체 수출", &[], Some("straight"));
+        // Both should contain the same structure keywords
+        assert!(prompt_default.contains("리드"));
+        assert!(prompt_straight.contains("리드"));
+        assert!(prompt_default.contains("역피라미드") || prompt_default.contains("육하원칙"));
     }
 
     // --- find_related_research tests ---
