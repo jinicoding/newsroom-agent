@@ -1765,6 +1765,71 @@ fn sources_search(query: &str) {
 
 // ── /factcheck ──────────────────────────────────────────────────────────
 
+/// Directory for cached factcheck results.
+const FACTCHECK_DIR: &str = ".journalist/factcheck";
+
+/// Build the factcheck file path: `.journalist/factcheck/YYYY-MM-DD_<slug>.md`
+pub fn factcheck_file_path(claim: &str) -> std::path::PathBuf {
+    factcheck_file_path_with_date(claim, &today_str())
+}
+
+/// Build the factcheck file path with an explicit date string (for testing).
+pub fn factcheck_file_path_with_date(claim: &str, date: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(claim, 50);
+    let filename = if slug.is_empty() {
+        format!("{date}_factcheck.md")
+    } else {
+        format!("{date}_{slug}.md")
+    };
+    std::path::PathBuf::from(FACTCHECK_DIR).join(filename)
+}
+
+/// Save factcheck result to file. Creates the factcheck directory if needed.
+fn save_factcheck(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
+/// List existing factcheck files in the factcheck directory.
+fn factcheck_list() {
+    let dir = std::path::Path::new(FACTCHECK_DIR);
+    if !dir.exists() {
+        println!("{DIM}  저장된 팩트체크가 없습니다.{RESET}\n");
+        return;
+    }
+    let mut entries: Vec<_> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map_or(false, |ext| ext == "md")
+            })
+            .collect(),
+        Err(_) => {
+            println!("{DIM}  팩트체크 디렉토리를 읽을 수 없습니다.{RESET}\n");
+            return;
+        }
+    };
+    if entries.is_empty() {
+        println!("{DIM}  저장된 팩트체크가 없습니다.{RESET}\n");
+        return;
+    }
+    entries.sort_by_key(|e| e.file_name());
+    println!("{DIM}  저장된 팩트체크 목록:{RESET}");
+    for (i, entry) in entries.iter().enumerate() {
+        let name = entry.file_name();
+        println!(
+            "{DIM}  {idx}. {name}{RESET}",
+            idx = i + 1,
+            name = name.to_string_lossy()
+        );
+    }
+    println!();
+}
+
 /// Build the factcheck prompt for a given claim.
 /// Returns None if the claim is empty (should be rejected).
 pub fn build_factcheck_prompt(claim: &str) -> Option<String> {
@@ -1800,17 +1865,39 @@ pub async fn handle_factcheck(
         .unwrap_or("")
         .trim();
 
+    if claim == "list" {
+        factcheck_list();
+        return;
+    }
+
     let prompt = match build_factcheck_prompt(claim) {
         Some(p) => p,
         None => {
             println!("{DIM}  사용법: /factcheck <주장 또는 사실>{RESET}");
-            println!("{DIM}  예시: /factcheck 한국 반도체 수출이 2025년 사상 최대를 기록했다{RESET}\n");
+            println!("{DIM}  예시: /factcheck 한국 반도체 수출이 2025년 사상 최대를 기록했다{RESET}");
+            println!("{DIM}  /factcheck list — 저장된 팩트체크 목록{RESET}\n");
             return;
         }
     };
 
-    run_prompt(agent, &prompt, session_total, model).await;
+    let response = run_prompt(agent, &prompt, session_total, model).await;
     auto_compact_if_needed(agent);
+
+    // Save factcheck result to file
+    if !response.trim().is_empty() {
+        let path = factcheck_file_path(claim);
+        match save_factcheck(&path, &response) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 팩트체크 저장: {}{RESET}\n",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  팩트체크 저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────
@@ -2222,5 +2309,35 @@ mod tests {
     #[test]
     fn topic_to_slug_only_punctuation() {
         assert_eq!(topic_to_slug("..., !!!", 50), "");
+    }
+
+    // --- factcheck file path tests ---
+
+    #[test]
+    fn factcheck_file_path_with_claim() {
+        let path = factcheck_file_path_with_date("한국 반도체 수출이 사상 최대", "2026-03-18");
+        let path_str = path.to_string_lossy();
+        assert!(path_str.starts_with(".journalist/factcheck/"));
+        assert!(path_str.contains("2026-03-18"));
+        assert!(path_str.contains("한국-반도체-수출이-사상-최대"));
+        assert!(path_str.ends_with(".md"));
+    }
+
+    #[test]
+    fn factcheck_file_path_empty_claim() {
+        let path = factcheck_file_path_with_date("", "2026-03-18");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/factcheck/2026-03-18_factcheck.md"
+        );
+    }
+
+    #[test]
+    fn save_factcheck_creates_dirs_and_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("factcheck").join("test.md");
+        save_factcheck(&path, "# 팩트체크 결과\n내용").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "# 팩트체크 결과\n내용");
     }
 }
