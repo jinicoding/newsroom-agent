@@ -1,41 +1,45 @@
-## Session Plan
+## Session Plan — Day 1 (2026-03-18)
 
-Day 0 자기진단: 빌드/테스트 깨끗(67 pass). 기자 4대 커맨드(/article, /research, /sources, /factcheck)가 씨앗 수준으로 존재.
-커뮤니티 이슈 없음.
+### 자기 평가 요약
 
-### Task 1: /sources 강화 — remove, edit 하위 명령 추가
-Files: src/commands_project.rs
-Description: 현재 /sources는 list, add, search만 지원. 기자가 취재원을 관리하려면 삭제(remove)와 수정(edit)이 필수.
-- `/sources remove <번호>` — 인덱스로 취재원 삭제
-- `/sources edit <번호> <필드> <값>` — 특정 필드(name/org/contact/note) 수정
-- 탭 완성에 하위 명령 추가
-테스트: sources_add, sources_remove, sources_edit 단위 테스트 추가
+- **빌드/테스트:** 성공 (67 tests, 0 failed)
+- **커뮤니티 이슈:** 없음
+- **현재 상태:** Day 0에서 /article 저장, /research 캐싱, /sources CRUD, 테스트 보강 완료
+
+**발견한 문제점:**
+1. `/factcheck` 결과가 파일로 저장되지 않음 — /article, /research와의 일관성 부재
+2. `/research` curl+sed HTML 파싱이 네이버 검색 결과를 제대로 가져오지 못함
+3. 보도자료 → 기사 변환 워크플로우 없음 (한국 기자 가장 빈번한 작업)
+4. /article에서 기존 /research 결과를 참조하지 못함 (리서치→기사 흐름 단절)
+
+**리서치 (한국 뉴스룸 자동화):**
+- 네이버 뉴스 검색 API 무료 사용 가능 (developer.naver.com 등록)
+- BIGKinds(빅카인즈) API — 104개 매체 아카이브, NLP 기능 내장
+- 보도자료→기사 변환이 조선일보 등 핵심 AI 도입 사례
+- 팩트체크 도구는 "근거 보이기"가 필수 — 기자가 불투명한 결과는 안 씀
+
+---
+
+### Task 1: /factcheck 결과 저장 + list 하위 명령
+Files: `src/commands_project.rs`
+Description: /factcheck 결과를 `.journalist/factcheck/YYYY-MM-DD_<slug>.md`에 저장. `/factcheck list`로 저장된 팩트체크 목록 조회. 기존 research 저장 패턴(save 함수 + 디렉토리 생성 + 성공 메시지)을 그대로 따름.
+테스트: factcheck 파일 경로 생성, 저장 함수 단위 테스트
 Issue: none
 
-### Task 2: /article 결과를 파일로 저장하는 --save 옵션
-Files: src/commands_project.rs
-Description: /article 결과가 화면에만 출력되고 사라짐. 기자에게 초안 파일 저장은 필수 기능.
-- `/article <주제>` 실행 후 AI 응답을 `.journalist/drafts/YYYY-MM-DD_<slug>.md`에 자동 저장
-- `.journalist/drafts/` 디렉토리 자동 생성
-- 저장 경로를 사용자에게 알림
-테스트: 파일 저장 경로 생성 함수 단위 테스트
+### Task 2: /briefing 커맨드 — 보도자료 요약 변환
+Files: `src/commands_project.rs`, `src/commands.rs`, `src/repl.rs`
+Description: 보도자료(텍스트 또는 파일)를 기사 초안으로 변환하는 `/briefing` 커맨드. 한국 기자의 가장 빈번한 일상 업무. `--file <경로>`로 파일에서 읽거나 인라인 입력. 프롬프트: 보도자료 핵심 사실 추출 → 역피라미드 구조 기사 초안 → [확인 필요] 마킹. 결과를 `.journalist/drafts/`에 저장. KNOWN_COMMANDS와 REPL에 등록.
+테스트: briefing 프롬프트 생성, 파일 읽기 로직, KNOWN_COMMANDS 등록 확인
 Issue: none
 
-### Task 3: /research 결과 캐싱 — .journalist/research/ 에 저장
-Files: src/commands_project.rs
-Description: 리서치 결과가 대화에만 남고 파일로 남지 않음. 기자가 나중에 참고하려면 저장이 필요.
-- 리서치 결과를 `.journalist/research/YYYY-MM-DD_<topic>.md`에 자동 저장
-- `/research list` 하위 명령으로 기존 리서치 조회
-테스트: 리서치 저장 경로 생성 함수 단위 테스트
+### Task 3: /article에서 기존 리서치 자동 참조
+Files: `src/commands_project.rs`
+Description: /article 실행 시 `.journalist/research/`에서 주제와 관련된 리서치 파일을 검색하여 프롬프트 맥락에 포함. 리서치→기사 워크플로우의 자연스러운 연결. 파일명의 slug와 주제 키워드를 매칭하여 관련 파일 탐색.
+테스트: 리서치 파일 검색 로직, 프롬프트에 맥락 포함 여부 테스트
 Issue: none
 
-### Task 4: /sources 및 /article 테스트 보강
-Files: src/commands_project.rs
-Description: 기자 워크플로우 커맨드에 대한 단위 테스트가 전무. 최소한 다음을 커버:
-- sources JSON 파싱/직렬화 round-trip
-- sources_add 입력 파싱 (인자 3개 미만 거부)
-- sources_search 대소문자 무시 매칭
-- article 프롬프트 생성 로직 (주제 있을 때/없을 때)
-- factcheck 프롬프트 생성 로직 (빈 입력 거부)
-- draft 파일 경로 생성 (슬러그화, 날짜 포함)
+### Task 4: /factcheck 교차검증 프롬프트 강화
+Files: `src/commands_project.rs`
+Description: 현재 프롬프트에 구체적 교차검증 전략 추가: (1) 공공데이터포털(data.go.kr) 통계 확인, (2) 공식 보도자료 대조, (3) 시계열 데이터 비교, (4) 검증 과정을 단계별로 보여주기(기자가 근거 없는 판정은 안 씀). 리서치에서 발견한 "Show Me the Work" 원칙 반영.
+테스트: 강화된 프롬프트에 새 키워드(data.go.kr, 보도자료 대조 등) 포함 확인
 Issue: none

@@ -1,5 +1,5 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
-//! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck.
+//! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck, /briefing.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -1900,6 +1900,96 @@ pub async fn handle_factcheck(
     }
 }
 
+// ── /briefing ────────────────────────────────────────────────────────────
+
+const BRIEFING_DIR: &str = ".journalist/briefing";
+
+/// Known briefing categories for tab-completion.
+pub const BRIEFING_CATEGORIES: &[&str] = &[
+    "정치", "경제", "사회", "IT", "국제", "문화", "스포츠",
+];
+
+/// Build the briefing file path: `.journalist/briefing/YYYY-MM-DD.md`
+pub fn briefing_file_path() -> std::path::PathBuf {
+    briefing_file_path_with_date(&today_str())
+}
+
+/// Build the briefing file path with an explicit date string (for testing).
+pub fn briefing_file_path_with_date(date: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(BRIEFING_DIR).join(format!("{date}.md"))
+}
+
+/// Build the prompt for the `/briefing` command.
+pub fn build_briefing_prompt(category: &str) -> String {
+    let category_instruction = if category.is_empty() {
+        "전 분야(정치, 경제, 사회, IT, 국제, 문화, 스포츠)".to_string()
+    } else {
+        format!("'{category}' 분야")
+    };
+
+    format!(
+        "오늘의 주요 한국 뉴스를 브리핑해주세요.\n\n\
+         대상 분야: {category_instruction}\n\n\
+         다음 단계를 따라주세요:\n\
+         1. DuckDuckGo와 네이버 뉴스에서 오늘의 주요 뉴스를 검색하세요\n\
+         2. 다음 형식으로 브리핑을 작성하세요:\n\n\
+         # 📰 뉴스 브리핑 — {{날짜}}\n\n\
+         ## 주요 뉴스 요약\n\
+         각 뉴스 항목마다:\n\
+         - **헤드라인**: [제목]\n\
+         - **핵심**: 2-3문장 요약\n\
+         - **기자 참고**: 후속 취재 포인트나 관련 맥락\n\n\
+         ## 오늘의 키워드\n\
+         - 주요 인물, 기관, 이슈 키워드 나열\n\n\
+         ## 주목할 일정\n\
+         - 오늘/내일 예정된 주요 일정 (국회, 법원, 기업 등)\n\n\
+         주의: 확인할 수 없는 뉴스는 포함하지 마세요. \
+         각 뉴스의 출처를 명시하세요."
+    )
+}
+
+/// Save briefing result to file. Creates the briefing directory if needed.
+fn save_briefing(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
+/// Handle the `/briefing` command: morning news briefing.
+pub async fn handle_briefing(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let category = input
+        .strip_prefix("/briefing")
+        .unwrap_or("")
+        .trim();
+
+    let prompt = build_briefing_prompt(category);
+
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    // Save briefing result to file
+    if !response.trim().is_empty() {
+        let path = briefing_file_path();
+        match save_briefing(&path, &response) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 브리핑 저장: {}{RESET}\n",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  브리핑 저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -2339,5 +2429,41 @@ mod tests {
         save_factcheck(&path, "# 팩트체크 결과\n내용").unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert_eq!(content, "# 팩트체크 결과\n내용");
+    }
+
+    // --- briefing tests ---
+
+    #[test]
+    fn briefing_file_path_uses_date() {
+        let path = briefing_file_path_with_date("2026-03-18");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/briefing/2026-03-18.md"
+        );
+    }
+
+    #[test]
+    fn briefing_prompt_all_categories() {
+        let prompt = build_briefing_prompt("");
+        assert!(prompt.contains("전 분야"));
+        assert!(prompt.contains("DuckDuckGo"));
+        assert!(prompt.contains("네이버"));
+        assert!(prompt.contains("브리핑"));
+    }
+
+    #[test]
+    fn briefing_prompt_specific_category() {
+        let prompt = build_briefing_prompt("경제");
+        assert!(prompt.contains("'경제' 분야"));
+        assert!(!prompt.contains("전 분야"));
+    }
+
+    #[test]
+    fn save_briefing_creates_dirs_and_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("briefing").join("2026-03-18.md");
+        save_briefing(&path, "# 브리핑\n내용").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "# 브리핑\n내용");
     }
 }

@@ -1,0 +1,15 @@
+
+→ Phase B: 구현...
+  계획된 태스크: 4개
+
+  ── Task 1 / 4 ──
+완료. 변경 내용 요약:
+
+- **`FACTCHECK_DIR`** 상수 추가 (`.journalist/factcheck`)
+- **`factcheck_file_path`** / **`factcheck_file_path_with_date`** — research와 동일한 패턴으로 `YYYY-MM-DD_<slug>.md` 경로 생성
+- **`save_factcheck`** — 디렉토리 자동 생성 + 파일 저장
+- **`factcheck_list`** — 저장된 팩트체크 `.md` 파일 목록 출력
+- **`handle_factcheck`** 수정 — `list` 하위 명령 지원, 결과 자동 저장, 사용법에 `list` 안내 추가
+- **테스트 3개** — 경로 생성(claim 있음/없음), 파일 저장 단위 테스트
+
+  ── Task 2 / 4 ──

@@ -64,6 +64,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/research",
     "/sources",
     "/factcheck",
+    "/briefing",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -109,6 +110,10 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/pr" => filter_candidates(PR_SUBCOMMANDS, &partial_lower),
         "/provider" => filter_candidates(KNOWN_PROVIDERS, &partial_lower),
         "/sources" => filter_candidates(SOURCES_SUBCOMMANDS, &partial_lower),
+        "/briefing" => filter_candidates(
+            crate::commands_project::BRIEFING_CATEGORIES,
+            &partial_lower,
+        ),
         "/save" | "/load" => list_json_files(partial_arg),
         _ => Vec::new(),
     }
@@ -254,6 +259,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /factcheck <claim> 팩트체크 (다중 소스 검증)\n",
+    );
+    out.push_str(
+        "  /briefing [분야]   아침 뉴스 브리핑 (정치/경제/사회/IT 등)\n",
     );
     out.push('\n');
 
@@ -531,8 +539,8 @@ pub use crate::commands_git::{
 
 // Project-related handlers
 pub use crate::commands_project::{
-    handle_article, handle_context, handle_docs, handle_factcheck, handle_find, handle_fix,
-    handle_health, handle_index, handle_init, handle_lint, handle_research, handle_run,
+    handle_article, handle_briefing, handle_context, handle_docs, handle_factcheck, handle_find,
+    handle_fix, handle_health, handle_index, handle_init, handle_lint, handle_research, handle_run,
     handle_run_usage, handle_sources, handle_test, handle_tree,
 };
 
