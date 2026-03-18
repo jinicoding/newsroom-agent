@@ -2453,6 +2453,200 @@ pub async fn handle_checklist(
     }
 }
 
+// ── /interview ──────────────────────────────────────────────────────────
+
+/// Directory for saved interview prep files.
+const INTERVIEW_DIR: &str = ".journalist/interview";
+
+/// Build the interview file path: `.journalist/interview/YYYY-MM-DD_<slug>.md`
+pub fn interview_file_path(topic: &str) -> std::path::PathBuf {
+    interview_file_path_with_date(topic, &today_str())
+}
+
+/// Build the interview file path with an explicit date string (for testing).
+pub fn interview_file_path_with_date(topic: &str, date: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(topic, 50);
+    let filename = if slug.is_empty() {
+        format!("{date}_interview.md")
+    } else {
+        format!("{date}_{slug}.md")
+    };
+    std::path::PathBuf::from(INTERVIEW_DIR).join(filename)
+}
+
+/// Save interview prep to file. Creates the interview directory if needed.
+fn save_interview(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
+/// Parse `/interview` arguments: extract topic and optional `--source` name.
+pub fn parse_interview_args(args: &str) -> (String, Option<String>) {
+    let args = args.trim();
+    if args.is_empty() {
+        return (String::new(), None);
+    }
+
+    if let Some(idx) = args.find("--source") {
+        let topic = args[..idx].trim().to_string();
+        let source_name = args[idx + 8..].trim().to_string();
+        let source_name = if source_name.is_empty() {
+            None
+        } else {
+            Some(source_name)
+        };
+        (topic, source_name)
+    } else {
+        (args.to_string(), None)
+    }
+}
+
+/// Look up a source by name from sources.json. Returns matching entry if found.
+fn find_source_by_name(name: &str) -> Option<serde_json::Value> {
+    find_source_by_name_in(name, std::path::Path::new(SOURCES_FILE))
+}
+
+/// Look up a source by name from a specific sources file (for testing).
+pub fn find_source_by_name_in(name: &str, path: &std::path::Path) -> Option<serde_json::Value> {
+    let sources = load_sources_from(path);
+    let name_lower = name.to_lowercase();
+    sources.into_iter().find(|s| {
+        s["name"]
+            .as_str()
+            .map_or(false, |n| n.to_lowercase().contains(&name_lower))
+    })
+}
+
+/// Build the interview prompt for the AI agent.
+pub fn build_interview_prompt(
+    topic: &str,
+    source_info: Option<&serde_json::Value>,
+    research_context: &[(String, String)],
+) -> Option<String> {
+    if topic.is_empty() {
+        return None;
+    }
+
+    let mut prompt = format!(
+        "당신은 숙련된 기자의 인터뷰 준비를 돕는 전문 어시스턴트입니다.\n\n\
+         **주제**: {topic}\n\n"
+    );
+
+    if let Some(source) = source_info {
+        let name = source["name"].as_str().unwrap_or("(이름 없음)");
+        let org = source["org"].as_str().unwrap_or("");
+        let beat = source["beat"].as_str().unwrap_or("");
+        let note = source["note"].as_str().unwrap_or("");
+        prompt.push_str(&format!("**취재원 정보**:\n"));
+        prompt.push_str(&format!("- 이름: {name}\n"));
+        if !org.is_empty() {
+            prompt.push_str(&format!("- 소속: {org}\n"));
+        }
+        if !beat.is_empty() {
+            prompt.push_str(&format!("- 분야: {beat}\n"));
+        }
+        if !note.is_empty() {
+            prompt.push_str(&format!("- 메모: {note}\n"));
+        }
+        prompt.push('\n');
+    }
+
+    if !research_context.is_empty() {
+        prompt.push_str("**관련 리서치 자료**:\n");
+        for (filename, content) in research_context {
+            let preview: String = content.chars().take(500).collect();
+            prompt.push_str(&format!("--- {filename} ---\n{preview}\n\n"));
+        }
+    }
+
+    prompt.push_str(
+        "다음 구조로 인터뷰 질문지를 작성해 주세요:\n\n\
+         1. **도입 질문** (2-3개): 인터뷰 분위기를 만들고 취재원의 전문성/입장을 파악하는 질문\n\
+         2. **핵심 질문** (5-7개): 주제의 본질을 파고드는 구체적이고 날카로운 질문\n\
+         3. **팔로업 질문** (3-4개): 예상 답변에 따른 후속 질문\n\
+         4. **마무리 질문** (1-2개): 핵심 메시지 확인, 추가 취재 단서 확보\n\n\
+         각 질문에 대해:\n\
+         - 질문의 의도/목적을 괄호 안에 간략히 표기\n\
+         - 예상되는 회피성 답변에 대한 재질문도 준비\n\
+         - 숫자, 날짜 등 구체적 사실을 확인하는 질문 포함\n"
+    );
+
+    Some(prompt)
+}
+
+/// Handle the `/interview` command.
+pub async fn handle_interview(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/interview").unwrap_or("").trim();
+    let (topic, source_name) = parse_interview_args(args);
+
+    if topic.is_empty() {
+        println!("{DIM}  사용법: /interview <주제> [--source 취재원]{RESET}");
+        println!("{DIM}  예시:   /interview 반도체 수출 규제 --source 김철수{RESET}");
+        println!("{DIM}  인터뷰 주제에 맞는 구조화된 질문지를 생성합니다.{RESET}\n");
+        return;
+    }
+
+    // Look up source if specified
+    let source_info = if let Some(ref name) = source_name {
+        let found = find_source_by_name(name);
+        if let Some(ref info) = found {
+            let display_name = info["name"].as_str().unwrap_or(name);
+            println!("{GREEN}  📋 취재원 정보 로드: {display_name}{RESET}");
+        } else {
+            println!(
+                "{YELLOW}  ⚠ 취재원 '{name}'을(를) sources.json에서 찾을 수 없습니다.{RESET}"
+            );
+        }
+        found
+    } else {
+        None
+    };
+
+    // Search for related research files
+    let research = find_related_research(&topic);
+    if !research.is_empty() {
+        println!(
+            "{GREEN}  📎 관련 리서치 {}건 발견{RESET}",
+            research.len()
+        );
+        for (filename, _) in &research {
+            println!("     - {filename}");
+        }
+    }
+    println!();
+
+    let prompt = match build_interview_prompt(&topic, source_info.as_ref(), &research) {
+        Some(p) => p,
+        None => return,
+    };
+
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    // Save interview prep to .journalist/interview/
+    if !response.trim().is_empty() {
+        let path = interview_file_path(&topic);
+        match save_interview(&path, &response) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 인터뷰 질문지 저장: {}{RESET}\n",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  인터뷰 질문지 저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -3324,5 +3518,150 @@ mod tests {
         let prompt = build_checklist_prompt(&content);
         assert!(prompt.is_some());
         assert!(prompt.unwrap().contains("기사 초안 내용입니다"));
+    }
+
+    // ── /interview tests ────────────────────────────────────────────────
+
+    #[test]
+    fn interview_file_path_with_topic() {
+        let path = interview_file_path_with_date("반도체 수출 규제", "2026-03-18");
+        assert_eq!(
+            path,
+            std::path::PathBuf::from(".journalist/interview/2026-03-18_반도체-수출-규제.md")
+        );
+    }
+
+    #[test]
+    fn interview_file_path_empty_topic() {
+        let path = interview_file_path_with_date("", "2026-03-18");
+        assert_eq!(
+            path,
+            std::path::PathBuf::from(".journalist/interview/2026-03-18_interview.md")
+        );
+    }
+
+    #[test]
+    fn parse_interview_args_topic_only() {
+        let (topic, source) = parse_interview_args("반도체 수출 규제");
+        assert_eq!(topic, "반도체 수출 규제");
+        assert!(source.is_none());
+    }
+
+    #[test]
+    fn parse_interview_args_with_source() {
+        let (topic, source) = parse_interview_args("반도체 수출 규제 --source 김철수");
+        assert_eq!(topic, "반도체 수출 규제");
+        assert_eq!(source, Some("김철수".to_string()));
+    }
+
+    #[test]
+    fn parse_interview_args_empty() {
+        let (topic, source) = parse_interview_args("");
+        assert!(topic.is_empty());
+        assert!(source.is_none());
+    }
+
+    #[test]
+    fn parse_interview_args_source_only() {
+        let (topic, source) = parse_interview_args("--source 김철수");
+        assert!(topic.is_empty());
+        assert_eq!(source, Some("김철수".to_string()));
+    }
+
+    #[test]
+    fn build_interview_prompt_with_topic() {
+        let prompt = build_interview_prompt("AI 규제", None, &[]);
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert!(p.contains("AI 규제"));
+        assert!(p.contains("도입 질문"));
+        assert!(p.contains("핵심 질문"));
+        assert!(p.contains("팔로업 질문"));
+        assert!(p.contains("마무리 질문"));
+    }
+
+    #[test]
+    fn build_interview_prompt_empty_topic() {
+        let prompt = build_interview_prompt("", None, &[]);
+        assert!(prompt.is_none());
+    }
+
+    #[test]
+    fn build_interview_prompt_with_source() {
+        let source = serde_json::json!({
+            "name": "김철수",
+            "org": "산업통상자원부",
+            "beat": "통상",
+            "note": "반도체 정책 담당"
+        });
+        let prompt = build_interview_prompt("반도체 수출", Some(&source), &[]);
+        let p = prompt.unwrap();
+        assert!(p.contains("김철수"));
+        assert!(p.contains("산업통상자원부"));
+        assert!(p.contains("통상"));
+        assert!(p.contains("반도체 정책 담당"));
+    }
+
+    #[test]
+    fn build_interview_prompt_with_research() {
+        let research = vec![
+            ("2026-03-17_반도체.md".to_string(), "반도체 시장 동향 내용".to_string()),
+        ];
+        let prompt = build_interview_prompt("반도체", None, &research);
+        let p = prompt.unwrap();
+        assert!(p.contains("관련 리서치 자료"));
+        assert!(p.contains("반도체 시장 동향 내용"));
+    }
+
+    #[test]
+    fn find_source_by_name_in_found() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sources_path = dir.path().join("sources.json");
+        let sources = serde_json::json!([
+            {"name": "김철수", "org": "산업부", "contact": "010-1234", "note": ""},
+            {"name": "이영희", "org": "기재부", "contact": "010-5678", "note": ""}
+        ]);
+        std::fs::write(&sources_path, serde_json::to_string(&sources).unwrap()).unwrap();
+
+        let found = find_source_by_name_in("김철수", &sources_path);
+        assert!(found.is_some());
+        assert_eq!(found.unwrap()["name"].as_str().unwrap(), "김철수");
+    }
+
+    #[test]
+    fn find_source_by_name_in_not_found() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sources_path = dir.path().join("sources.json");
+        let sources = serde_json::json!([
+            {"name": "김철수", "org": "산업부", "contact": "010-1234", "note": ""}
+        ]);
+        std::fs::write(&sources_path, serde_json::to_string(&sources).unwrap()).unwrap();
+
+        let found = find_source_by_name_in("박지성", &sources_path);
+        assert!(found.is_none());
+    }
+
+    #[test]
+    fn find_source_by_name_partial_match() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let sources_path = dir.path().join("sources.json");
+        let sources = serde_json::json!([
+            {"name": "김철수 과장", "org": "산업부", "contact": "010-1234", "note": ""}
+        ]);
+        std::fs::write(&sources_path, serde_json::to_string(&sources).unwrap()).unwrap();
+
+        let found = find_source_by_name_in("김철수", &sources_path);
+        assert!(found.is_some());
+    }
+
+    #[test]
+    fn save_interview_creates_dir_and_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("interview").join("test.md");
+        let result = save_interview(&path, "# 인터뷰 질문지\n\n1. 질문");
+        assert!(result.is_ok());
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("인터뷰 질문지"));
     }
 }
