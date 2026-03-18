@@ -3027,6 +3027,170 @@ pub async fn handle_translate(
     }
 }
 
+// ── /headline ────────────────────────────────────────────────────────────
+
+const HEADLINE_DIR: &str = ".journalist/headline";
+
+/// Parse `/headline` arguments: supports `--file <path>` and inline text.
+/// Returns (Option<file_path>, inline_text).
+pub fn parse_headline_args(args: &str) -> (Option<String>, String) {
+    let args = args.trim();
+    if let Some(rest) = args.strip_prefix("--file") {
+        let rest = rest.trim_start();
+        if rest.is_empty() {
+            return (None, String::new());
+        }
+        let mut path_end = rest.len();
+        for (i, ch) in rest.char_indices() {
+            if ch.is_whitespace() {
+                path_end = i;
+                break;
+            }
+        }
+        let file_path = rest[..path_end].to_string();
+        let remaining = rest[path_end..].trim().to_string();
+        (Some(file_path), remaining)
+    } else {
+        (None, args.to_string())
+    }
+}
+
+/// Build the prompt for `/headline`: generate 5–7 headline candidates in various styles.
+pub fn build_headline_prompt(article: &str) -> Option<String> {
+    if article.trim().is_empty() {
+        return None;
+    }
+    Some(format!(
+        "아래 기사 초안(또는 주제)을 읽고, **한국 신문 스타일의 헤드라인 후보 5~7개**를 생성해주세요.\n\n\
+         ## 헤드라인 스타일 (각 스타일별 최소 1개)\n\n\
+         1. **스트레이트**: 핵심 사실을 간결하게 전달. 주어+동사 구조.\n\
+         2. **분석**: 맥락·의미를 담은 헤드라인. '~의 의미', '~이 뜻하는 것' 등.\n\
+         3. **피처**: 독자의 호기심을 자극하는 내러티브형. 인물·장면 중심.\n\
+         4. **클릭유도**: 숫자·질문·강한 표현으로 클릭을 유도. 단, 낚시성 지양.\n\n\
+         ## 한국 신문 헤드라인 관습\n\n\
+         - **간결함**: 15~25자 내외 (공백 포함)\n\
+         - **핵심 동사**: 능동형 동사로 끝맺음 ('~했다', '~한다', '~나서' 등)\n\
+         - **숫자 활용**: 구체적 수치가 있으면 적극 활용\n\
+         - **따옴표**: 인용이나 강조 시 홑따옴표('') 사용\n\
+         - **말줄임표**: 긴장감이나 반전에 '…' 활용 가능\n\
+         - **주어 생략**: 문맥상 명확하면 주어 생략 가능\n\n\
+         ## 출력 형식\n\n\
+         각 헤드라인에 스타일 태그를 붙여주세요:\n\
+         ```\n\
+         [스트레이트] 헤드라인 텍스트\n\
+         [분석] 헤드라인 텍스트\n\
+         [피처] 헤드라인 텍스트\n\
+         [클릭유도] 헤드라인 텍스트\n\
+         ```\n\n\
+         각 헤드라인 아래에 한 줄로 **선택 이유**를 간단히 설명해주세요.\n\n\
+         ---\n\n\
+         기사 초안/주제:\n\n{article}"
+    ))
+}
+
+/// Build headline file path with today's date.
+pub fn headline_file_path(slug_source: &str) -> std::path::PathBuf {
+    headline_file_path_with_date(slug_source, &today_str())
+}
+
+/// Build headline file path with an explicit date string (for testing).
+pub fn headline_file_path_with_date(slug_source: &str, date: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(slug_source, 50);
+    let filename = if slug.is_empty() {
+        format!("{date}_headline.md")
+    } else {
+        format!("{date}_{slug}.md")
+    };
+    std::path::PathBuf::from(HEADLINE_DIR).join(filename)
+}
+
+/// Save headline result to file. Creates the headline directory if needed.
+fn save_headline(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
+/// Handle the `/headline` command: generate headline candidates for an article draft or topic.
+pub async fn handle_headline(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/headline").unwrap_or("").trim();
+    let (file_path, inline_text) = parse_headline_args(args);
+
+    // Read article from file or inline
+    let article = if let Some(ref path) = file_path {
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                println!(
+                    "{DIM}  파일 읽기: {path} ({} bytes){RESET}",
+                    content.len()
+                );
+                if inline_text.is_empty() {
+                    content
+                } else {
+                    format!("{content}\n\n{inline_text}")
+                }
+            }
+            Err(e) => {
+                eprintln!("{RED}  파일 읽기 실패: {path} — {e}{RESET}\n");
+                return;
+            }
+        }
+    } else {
+        inline_text
+    };
+
+    let prompt = match build_headline_prompt(&article) {
+        Some(p) => p,
+        None => {
+            println!("{DIM}  사용법: /headline <기사 초안 또는 주제>{RESET}");
+            println!("{DIM}  또는:   /headline --file <경로>{RESET}");
+            println!("{DIM}  예시:   /headline 삼성전자 1분기 영업이익 전년 대비 30% 증가{RESET}");
+            println!(
+                "{DIM}  기사 초안이나 주제에 맞는 헤드라인 후보 5~7개를 생성합니다.{RESET}\n"
+            );
+            return;
+        }
+    };
+
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    // Save headline to .journalist/headline/
+    if !response.trim().is_empty() {
+        let slug_source = if let Some(ref path) = file_path {
+            std::path::Path::new(path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "headline".to_string())
+        } else {
+            let preview: String = article.chars().take(30).collect();
+            if preview.is_empty() {
+                "headline".to_string()
+            } else {
+                preview
+            }
+        };
+        let path = headline_file_path(&slug_source);
+        match save_headline(&path, &response) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 헤드라인 저장: {}{RESET}\n",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  헤드라인 저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -4213,5 +4377,83 @@ mod tests {
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("번역 결과"));
+    }
+
+    // --- headline tests ---
+
+    #[test]
+    fn parse_headline_args_inline_text() {
+        let (file, text) = parse_headline_args("삼성전자 1분기 실적 발표");
+        assert!(file.is_none());
+        assert_eq!(text, "삼성전자 1분기 실적 발표");
+    }
+
+    #[test]
+    fn parse_headline_args_file_flag() {
+        let (file, text) = parse_headline_args("--file draft.txt");
+        assert_eq!(file.as_deref(), Some("draft.txt"));
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn parse_headline_args_file_with_extra_text() {
+        let (file, text) = parse_headline_args("--file draft.txt 추가 맥락");
+        assert_eq!(file.as_deref(), Some("draft.txt"));
+        assert_eq!(text, "추가 맥락");
+    }
+
+    #[test]
+    fn parse_headline_args_empty() {
+        let (file, text) = parse_headline_args("");
+        assert!(file.is_none());
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn build_headline_prompt_basic() {
+        let prompt = build_headline_prompt("삼성전자가 1분기 영업이익 15조원을 기록했다.");
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert!(p.contains("삼성전자가 1분기 영업이익 15조원을 기록했다."));
+        assert!(p.contains("헤드라인"));
+        assert!(p.contains("스트레이트"));
+        assert!(p.contains("분석"));
+        assert!(p.contains("피처"));
+        assert!(p.contains("클릭유도"));
+    }
+
+    #[test]
+    fn build_headline_prompt_empty_returns_none() {
+        assert!(build_headline_prompt("").is_none());
+        assert!(build_headline_prompt("   ").is_none());
+    }
+
+    #[test]
+    fn headline_file_path_with_topic() {
+        let path = headline_file_path_with_date("삼성전자 실적", "2026-03-18");
+        assert_eq!(
+            path,
+            std::path::PathBuf::from(".journalist/headline/2026-03-18_삼성전자-실적.md")
+        );
+    }
+
+    #[test]
+    fn headline_file_path_empty_slug() {
+        let path = headline_file_path_with_date("", "2026-03-18");
+        assert_eq!(
+            path,
+            std::path::PathBuf::from(".journalist/headline/2026-03-18_headline.md")
+        );
+    }
+
+    #[test]
+    fn save_headline_creates_dir_and_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("headline").join("test.md");
+        let result = save_headline(&path, "# 헤드라인 후보\n\n[스트레이트] 테스트");
+        assert!(result.is_ok());
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("헤드라인 후보"));
     }
 }
