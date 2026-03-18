@@ -13,3 +13,11 @@
 - **테스트 3개** — 경로 생성(claim 있음/없음), 파일 저장 단위 테스트
 
   ── Task 2 / 4 ──
+완료. `/briefing [분야]` 커맨드를 구현했습니다:
+
+- **`commands_project.rs`**: `build_briefing_prompt()`, `briefing_file_path()`, `save_briefing()`, `handle_briefing()` 추가. DuckDuckGo/네이버 뉴스 검색 → 분야별 요약 브리핑 생성 → `.journalist/briefing/YYYY-MM-DD.md`에 저장
+- **`commands.rs`**: `KNOWN_COMMANDS`에 `/briefing` 등록, 도움말 추가, `BRIEFING_CATEGORIES` 탭 완성 지원, re-export 추가
+- **`repl.rs`**: `/briefing` 디스패치 추가
+- **테스트 4개**: 파일 경로 생성, 전체 분야 프롬프트, 특정 분야 프롬프트, 파일 저장 — 모두 통과
+
+  ── Task 3 / 4 ──
