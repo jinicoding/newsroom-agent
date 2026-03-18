@@ -2864,6 +2864,169 @@ pub async fn handle_timeline(
     }
 }
 
+// ── /translate ───────────────────────────────────────────────────────────
+
+const TRANSLATE_DIR: &str = ".journalist/translate";
+
+/// Parse `/translate` arguments: extract `--file <path>` and inline text.
+/// Returns `(Option<file_path>, remaining_text)`.
+pub fn parse_translate_args(args: &str) -> (Option<String>, String) {
+    let args = args.trim();
+    if let Some(rest) = args.strip_prefix("--file") {
+        let rest = rest.trim_start();
+        if rest.is_empty() {
+            return (None, String::new());
+        }
+        let mut path_end = rest.len();
+        for (i, ch) in rest.char_indices() {
+            if ch.is_whitespace() {
+                path_end = i;
+                break;
+            }
+        }
+        let file_path = rest[..path_end].to_string();
+        let remaining = rest[path_end..].trim().to_string();
+        (Some(file_path), remaining)
+    } else {
+        (None, args.to_string())
+    }
+}
+
+/// Build the prompt for `/translate`: localize foreign news for Korean readers.
+pub fn build_translate_prompt(article: &str) -> Option<String> {
+    if article.trim().is_empty() {
+        return None;
+    }
+    Some(format!(
+        "아래 외신 기사를 **한국 독자**를 위해 번역·현지화해주세요.\n\n\
+         ## 번역 지침\n\n\
+         1. **단순 직역이 아닌 현지화 번역**: 한국 독자가 맥락을 이해할 수 있도록 배경 설명을 추가하세요.\n\
+         2. **고유명사 현지화**: 인물명은 한글 표기(원어 병기), 기관명은 통용 한글명 사용.\n\
+         3. **단위 변환**: 달러→원화 환산(괄호 병기), 마일→킬로미터, 화씨→섭씨 등.\n\
+         4. **한국 관련성 부각**: 한국 경제·사회에 미치는 영향이 있다면 별도 문단으로 추가.\n\
+         5. **문체**: 한국 신문 기사체(경어체, 역피라미드 구조) 사용.\n\
+         6. **출처 표기**: 원문 매체명과 기자명을 기사 끝에 명시.\n\n\
+         ## 출력 형식\n\n\
+         ```\n\
+         # [번역 제목]\n\n\
+         [번역된 기사 본문]\n\n\
+         ## 한국 독자 참고사항\n\
+         (한국과의 관련성, 추가 맥락 설명)\n\n\
+         ## 주요 용어\n\
+         | 원문 | 번역 | 설명 |\n\
+         |------|------|------|\n\n\
+         ---\n\
+         원문: [매체명], [기자명]\n\
+         ```\n\n\
+         ---\n\n\
+         ## 원문 기사\n\n\
+         {article}"
+    ))
+}
+
+/// Build the translate file path using today's date.
+pub fn translate_file_path(slug_source: &str) -> std::path::PathBuf {
+    translate_file_path_with_date(slug_source, &today_str())
+}
+
+/// Build the translate file path with an explicit date string (for testing).
+pub fn translate_file_path_with_date(slug_source: &str, date: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(slug_source, 50);
+    let filename = if slug.is_empty() {
+        format!("{date}_translate.md")
+    } else {
+        format!("{date}_{slug}.md")
+    };
+    std::path::PathBuf::from(TRANSLATE_DIR).join(filename)
+}
+
+/// Save translate result to file. Creates the translate directory if needed.
+fn save_translate(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
+/// Handle the `/translate` command: translate and localize foreign articles for Korean readers.
+pub async fn handle_translate(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/translate").unwrap_or("").trim();
+    let (file_path, inline_text) = parse_translate_args(args);
+
+    // Read article from file or inline
+    let article = if let Some(ref path) = file_path {
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                println!(
+                    "{DIM}  파일 읽기: {path} ({} bytes){RESET}",
+                    content.len()
+                );
+                if inline_text.is_empty() {
+                    content
+                } else {
+                    format!("{content}\n\n{inline_text}")
+                }
+            }
+            Err(e) => {
+                eprintln!("{RED}  파일 읽기 실패: {path} — {e}{RESET}\n");
+                return;
+            }
+        }
+    } else {
+        inline_text
+    };
+
+    let prompt = match build_translate_prompt(&article) {
+        Some(p) => p,
+        None => {
+            println!("{DIM}  사용법: /translate <외신 기사 텍스트>{RESET}");
+            println!("{DIM}  또는:   /translate --file <경로>{RESET}");
+            println!("{DIM}  예시:   /translate --file reuters_article.txt{RESET}");
+            println!(
+                "{DIM}  외신 기사를 한국 독자용으로 번역·현지화합니다.{RESET}\n"
+            );
+            return;
+        }
+    };
+
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    // Save translation to .journalist/translate/
+    if !response.trim().is_empty() {
+        let slug_source = if let Some(ref path) = file_path {
+            std::path::Path::new(path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "translate".to_string())
+        } else {
+            let preview: String = article.chars().take(30).collect();
+            if preview.is_empty() {
+                "translate".to_string()
+            } else {
+                preview
+            }
+        };
+        let path = translate_file_path(&slug_source);
+        match save_translate(&path, &response) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 번역 저장: {}{RESET}\n",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  번역 저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -3975,5 +4138,80 @@ mod tests {
     fn build_timeline_prompt_no_research_section_when_empty() {
         let prompt = build_timeline_prompt("테스트 주제", &[]);
         assert!(!prompt.contains("기존 리서치 자료"));
+    }
+
+    // ── /translate tests ────────────────────────────────────────────────
+
+    #[test]
+    fn parse_translate_args_inline_text() {
+        let (file, text) = parse_translate_args("The Federal Reserve raised rates.");
+        assert!(file.is_none());
+        assert_eq!(text, "The Federal Reserve raised rates.");
+    }
+
+    #[test]
+    fn parse_translate_args_file_flag() {
+        let (file, text) = parse_translate_args("--file article.txt");
+        assert_eq!(file.as_deref(), Some("article.txt"));
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn parse_translate_args_file_with_extra_text() {
+        let (file, text) = parse_translate_args("--file article.txt additional context");
+        assert_eq!(file.as_deref(), Some("article.txt"));
+        assert_eq!(text, "additional context");
+    }
+
+    #[test]
+    fn parse_translate_args_empty() {
+        let (file, text) = parse_translate_args("");
+        assert!(file.is_none());
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn build_translate_prompt_basic() {
+        let prompt = build_translate_prompt("The Fed raised rates by 25bp.");
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert!(p.contains("The Fed raised rates by 25bp."));
+        assert!(p.contains("한국 독자"));
+        assert!(p.contains("현지화"));
+    }
+
+    #[test]
+    fn build_translate_prompt_empty_returns_none() {
+        assert!(build_translate_prompt("").is_none());
+        assert!(build_translate_prompt("   ").is_none());
+    }
+
+    #[test]
+    fn translate_file_path_with_topic() {
+        let path = translate_file_path_with_date("Fed rate hike", "2026-03-18");
+        assert_eq!(
+            path,
+            std::path::PathBuf::from(".journalist/translate/2026-03-18_fed-rate-hike.md")
+        );
+    }
+
+    #[test]
+    fn translate_file_path_empty_topic() {
+        let path = translate_file_path_with_date("", "2026-03-18");
+        assert_eq!(
+            path,
+            std::path::PathBuf::from(".journalist/translate/2026-03-18_translate.md")
+        );
+    }
+
+    #[test]
+    fn save_translate_creates_dir_and_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("translate").join("test.md");
+        let result = save_translate(&path, "# 번역 결과\n\n내용");
+        assert!(result.is_ok());
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("번역 결과"));
     }
 }

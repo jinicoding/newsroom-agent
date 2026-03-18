@@ -69,6 +69,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/interview",
     "/compare",
     "/timeline",
+    "/translate",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -114,7 +115,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/pr" => filter_candidates(PR_SUBCOMMANDS, &partial_lower),
         "/provider" => filter_candidates(KNOWN_PROVIDERS, &partial_lower),
         "/sources" => filter_candidates(SOURCES_SUBCOMMANDS, &partial_lower),
-        "/briefing" => {
+        "/briefing" | "/translate" => {
             if partial_arg.starts_with("--file ") {
                 let file_part = &partial_arg[7..];
                 return crate::repl::complete_file_path(file_part);
@@ -285,6 +286,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /timeline <주제>         주제에 관한 시간순 이벤트 타임라인 생성\n",
+    );
+    out.push_str(
+        "  /translate [text|--file <path>]  외신 기사 번역·현지화 (한국 독자용)\n",
     );
     out.push('\n');
 
@@ -565,7 +569,7 @@ pub use crate::commands_project::{
     handle_article, handle_briefing, handle_checklist, handle_compare, handle_context,
     handle_docs, handle_factcheck, handle_find, handle_fix, handle_health, handle_index,
     handle_init, handle_interview, handle_lint, handle_research, handle_run, handle_run_usage,
-    handle_sources, handle_test, handle_timeline, handle_tree,
+    handle_sources, handle_test, handle_timeline, handle_translate, handle_tree,
 };
 
 // Session-related handlers

@@ -1,0 +1,33 @@
+=== Day 1 (2026-03-18 14:00) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  이슈 0
+0개 로드.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md 작성 완료. 계획 요약:
+
+**Task 1: `/translate` — 외신 번역·현지화**
+- 외신 기사를 한국 독자용으로 번역 (맥락 추가, 고유명사·단위 현지화)
+- `--file` 옵션 지원, `.journalist/translate/`에 저장
+
+**Task 2: `/headline` — 헤드라인 생성**
+- 기사 초안/주제에서 스타일별 헤드라인 후보 5~7개 생성
+- 한국 신문 헤드라인 관습 반영
+
+**Task 3: `/rewrite` — 기사 재작성**
+- 스트레이트→피처, 요약, SNS 등 포맷·톤 전환
+- `--style`, `--length`, `--file` 옵션
+
+**Task 4: journal entry**
+
+여기서 멈춥니다. 구현은 Phase B에서.
+
+→ Phase B: 구현...
+  계획된 태스크: 4개
+
+  ── Task 1 / 4 ──
