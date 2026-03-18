@@ -48,3 +48,13 @@ Mode: 로컬 (Claude Max)
 - 테스트 11건 (파싱 4건 + 템플릿 7건) 모두 통과
 
   ── Task 3 / 4 ──
+`/summary` 커맨드 구현 완료.
+
+**변경 사항:**
+- `src/commands_project.rs`: `resolve_summary_input()`, `build_summary_prompt()`, `handle_summary()` 함수 추가 + 테스트 6개
+- `src/commands.rs`: `KNOWN_COMMANDS`에 `/summary` 추가, 헬프 텍스트 추가, `handle_summary` re-export
+- `src/repl.rs`: REPL 라우팅 추가
+
+**동작 방식:** `/summary <인자>` 입력 시 첫 토큰이 실제 파일이면 파일 내용을 읽고, 아니면 인라인 텍스트로 취급하여 3~5줄 요약 프롬프트를 AI에게 전달합니다.
+
+  ── Task 4 / 4 ──
