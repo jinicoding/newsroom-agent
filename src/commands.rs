@@ -71,6 +71,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/timeline",
     "/translate",
     "/headline",
+    "/rewrite",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -116,7 +117,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/pr" => filter_candidates(PR_SUBCOMMANDS, &partial_lower),
         "/provider" => filter_candidates(KNOWN_PROVIDERS, &partial_lower),
         "/sources" => filter_candidates(SOURCES_SUBCOMMANDS, &partial_lower),
-        "/briefing" | "/translate" | "/headline" => {
+        "/briefing" | "/translate" | "/headline" | "/rewrite" => {
             if partial_arg.starts_with("--file ") {
                 let file_part = &partial_arg[7..];
                 return crate::repl::complete_file_path(file_part);
@@ -293,6 +294,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /headline [text|--file <path>]   헤드라인 후보 5~7개 생성 (스트레이트/분석/피처/클릭유도)\n",
+    );
+    out.push_str(
+        "  /rewrite [text|--file <path>]    기사 재작성 (--style 스트레이트/피처/칼럼/요약/SNS --length 글자수)\n",
     );
     out.push('\n');
 
@@ -573,7 +577,8 @@ pub use crate::commands_project::{
     handle_article, handle_briefing, handle_checklist, handle_compare, handle_context,
     handle_docs, handle_factcheck, handle_find, handle_fix, handle_headline, handle_health,
     handle_index, handle_init, handle_interview, handle_lint, handle_research, handle_run,
-    handle_run_usage, handle_sources, handle_test, handle_timeline, handle_translate, handle_tree,
+    handle_rewrite, handle_run_usage, handle_sources, handle_test, handle_timeline,
+    handle_translate, handle_tree,
 };
 
 // Session-related handlers

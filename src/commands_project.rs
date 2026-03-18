@@ -3191,6 +3191,233 @@ pub async fn handle_headline(
     }
 }
 
+// ── /rewrite ─────────────────────────────────────────────────────────────
+
+const REWRITE_DIR: &str = ".journalist/drafts";
+
+/// Parse `/rewrite` arguments: supports `--style`, `--length`, `--file`, and inline text.
+/// Returns (Option<style>, Option<length>, Option<file_path>, inline_text).
+pub fn parse_rewrite_args(args: &str) -> (Option<String>, Option<String>, Option<String>, String) {
+    let args = args.trim();
+    let mut style: Option<String> = None;
+    let mut length: Option<String> = None;
+    let mut file_path: Option<String> = None;
+    let mut remaining_parts: Vec<String> = Vec::new();
+
+    let tokens: Vec<&str> = args.split_whitespace().collect();
+    let mut i = 0;
+    while i < tokens.len() {
+        match tokens[i] {
+            "--style" => {
+                if i + 1 < tokens.len() {
+                    style = Some(tokens[i + 1].to_string());
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            "--length" => {
+                if i + 1 < tokens.len() {
+                    length = Some(tokens[i + 1].to_string());
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            "--file" => {
+                if i + 1 < tokens.len() {
+                    file_path = Some(tokens[i + 1].to_string());
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            other => {
+                remaining_parts.push(other.to_string());
+                i += 1;
+            }
+        }
+    }
+
+    (style, length, file_path, remaining_parts.join(" "))
+}
+
+/// Build the prompt for `/rewrite`: rewrite an article in a different style/tone.
+pub fn build_rewrite_prompt(
+    article: &str,
+    style: Option<&str>,
+    length: Option<&str>,
+) -> Option<String> {
+    if article.trim().is_empty() {
+        return None;
+    }
+
+    let style_name = style.unwrap_or("스트레이트");
+    let style_desc = match style_name {
+        "스트레이트" | "straight" => {
+            "**스트레이트**: 역피라미드 구조. 핵심 사실을 첫 문단에 배치. 객관적이고 간결한 문체."
+        }
+        "피처" | "feature" => {
+            "**피처**: 내러티브형 구조. 인물·장면 묘사로 시작. 독자의 감정에 호소하는 문체."
+        }
+        "칼럼" | "column" | "opinion" => {
+            "**칼럼/오피니언**: 필자의 시각과 분석이 담긴 논평형. 주장-근거-결론 구조."
+        }
+        "요약" | "summary" => {
+            "**요약**: 핵심 사실만 간추린 브리핑형. 불릿포인트 활용 가능. 최대한 압축."
+        }
+        "sns" | "SNS" | "소셜" => {
+            "**SNS**: 소셜미디어에 적합한 짧고 임팩트 있는 문체. 이모지 활용 가능. 핵심만 전달."
+        }
+        other => {
+            // Allow custom style descriptions
+            return Some(format!(
+                "아래 기사를 **{other}** 스타일로 재작성해주세요.\n\n\
+                 {length_instruction}\n\n\
+                 ## 재작성 규칙\n\n\
+                 - 원문의 핵심 사실과 정보를 정확히 유지\n\
+                 - 인용문은 그대로 보존\n\
+                 - 숫자·고유명사의 정확성 유지\n\
+                 - 원문에 없는 사실을 추가하지 않음\n\n\
+                 ## 원문\n\n{article}",
+                length_instruction = length_instruction(length),
+            ));
+        }
+    };
+
+    Some(format!(
+        "아래 기사를 다음 스타일로 재작성해주세요.\n\n\
+         ## 목표 스타일\n\n\
+         {style_desc}\n\n\
+         {length_instruction}\n\n\
+         ## 재작성 규칙\n\n\
+         - 원문의 핵심 사실과 정보를 정확히 유지\n\
+         - 인용문은 그대로 보존\n\
+         - 숫자·고유명사의 정확성 유지\n\
+         - 원문에 없는 사실을 추가하지 않음\n\
+         - 문단 구조와 흐름을 목표 스타일에 맞게 재구성\n\n\
+         ## 원문\n\n{article}",
+        length_instruction = length_instruction(length),
+    ))
+}
+
+/// Build length instruction string for the rewrite prompt.
+fn length_instruction(length: Option<&str>) -> String {
+    match length {
+        Some(len) => format!("## 글자 수 제한\n\n공백 포함 **{len}자** 이내로 작성해주세요."),
+        None => String::new(),
+    }
+}
+
+/// Build rewrite output file path using today's date.
+pub fn rewrite_file_path(slug_source: &str) -> std::path::PathBuf {
+    rewrite_file_path_with_date(slug_source, &today_str())
+}
+
+/// Build rewrite file path with an explicit date string (for testing).
+pub fn rewrite_file_path_with_date(slug_source: &str, date: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(slug_source, 50);
+    let filename = if slug.is_empty() {
+        format!("{date}_rewrite.md")
+    } else {
+        format!("{date}_{slug}.md")
+    };
+    std::path::PathBuf::from(REWRITE_DIR).join(filename)
+}
+
+/// Save rewrite result to file. Creates the drafts directory if needed.
+fn save_rewrite(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
+/// Handle the `/rewrite` command: rewrite an article in a different style/tone.
+pub async fn handle_rewrite(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/rewrite").unwrap_or("").trim();
+    let (style, length, file_path, inline_text) = parse_rewrite_args(args);
+
+    // Read article from file or inline
+    let article = if let Some(ref path) = file_path {
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                println!(
+                    "{DIM}  파일 읽기: {path} ({} bytes){RESET}",
+                    content.len()
+                );
+                if inline_text.is_empty() {
+                    content
+                } else {
+                    format!("{content}\n\n{inline_text}")
+                }
+            }
+            Err(e) => {
+                eprintln!("{RED}  파일 읽기 실패: {path} — {e}{RESET}\n");
+                return;
+            }
+        }
+    } else {
+        inline_text
+    };
+
+    let prompt = match build_rewrite_prompt(&article, style.as_deref(), length.as_deref()) {
+        Some(p) => p,
+        None => {
+            println!("{DIM}  사용법: /rewrite <기사 텍스트>{RESET}");
+            println!("{DIM}  또는:   /rewrite --file <경로>{RESET}");
+            println!(
+                "{DIM}  옵션:   --style <스트레이트|피처|칼럼|요약|SNS>{RESET}"
+            );
+            println!("{DIM}  옵션:   --length <글자수>{RESET}");
+            println!(
+                "{DIM}  예시:   /rewrite --style 요약 --file draft.txt{RESET}"
+            );
+            println!(
+                "{DIM}  기존 기사를 다른 포맷·톤으로 재작성합니다.{RESET}\n"
+            );
+            return;
+        }
+    };
+
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    // Save rewrite to .journalist/drafts/
+    if !response.trim().is_empty() {
+        let slug_source = if let Some(ref path) = file_path {
+            std::path::Path::new(path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "rewrite".to_string())
+        } else {
+            let preview: String = article.chars().take(30).collect();
+            if preview.is_empty() {
+                "rewrite".to_string()
+            } else {
+                preview
+            }
+        };
+        let path = rewrite_file_path(&slug_source);
+        match save_rewrite(&path, &response) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 재작성 저장: {}{RESET}\n",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  재작성 저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -4455,5 +4682,134 @@ mod tests {
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("헤드라인 후보"));
+    }
+
+    // ── /rewrite tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn parse_rewrite_args_inline_text() {
+        let (style, length, file, text) = parse_rewrite_args("삼성전자 기사 본문");
+        assert!(style.is_none());
+        assert!(length.is_none());
+        assert!(file.is_none());
+        assert_eq!(text, "삼성전자 기사 본문");
+    }
+
+    #[test]
+    fn parse_rewrite_args_with_style() {
+        let (style, length, file, text) = parse_rewrite_args("--style 요약 기사 본문");
+        assert_eq!(style.as_deref(), Some("요약"));
+        assert!(length.is_none());
+        assert!(file.is_none());
+        assert_eq!(text, "기사 본문");
+    }
+
+    #[test]
+    fn parse_rewrite_args_with_all_options() {
+        let (style, length, file, text) =
+            parse_rewrite_args("--style 피처 --length 500 --file draft.txt 추가 맥락");
+        assert_eq!(style.as_deref(), Some("피처"));
+        assert_eq!(length.as_deref(), Some("500"));
+        assert_eq!(file.as_deref(), Some("draft.txt"));
+        assert_eq!(text, "추가 맥락");
+    }
+
+    #[test]
+    fn parse_rewrite_args_file_only() {
+        let (style, length, file, text) = parse_rewrite_args("--file article.txt");
+        assert!(style.is_none());
+        assert!(length.is_none());
+        assert_eq!(file.as_deref(), Some("article.txt"));
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn parse_rewrite_args_empty() {
+        let (style, length, file, text) = parse_rewrite_args("");
+        assert!(style.is_none());
+        assert!(length.is_none());
+        assert!(file.is_none());
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn build_rewrite_prompt_basic() {
+        let prompt = build_rewrite_prompt("삼성전자가 1분기 실적을 발표했다.", None, None);
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert!(p.contains("삼성전자가 1분기 실적을 발표했다."));
+        assert!(p.contains("스트레이트"));
+        assert!(p.contains("재작성"));
+    }
+
+    #[test]
+    fn build_rewrite_prompt_with_style() {
+        let prompt =
+            build_rewrite_prompt("기사 본문입니다.", Some("피처"), None);
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert!(p.contains("피처"));
+        assert!(p.contains("내러티브"));
+    }
+
+    #[test]
+    fn build_rewrite_prompt_with_length() {
+        let prompt =
+            build_rewrite_prompt("기사 본문입니다.", Some("요약"), Some("300"));
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert!(p.contains("요약"));
+        assert!(p.contains("300자"));
+    }
+
+    #[test]
+    fn build_rewrite_prompt_sns_style() {
+        let prompt = build_rewrite_prompt("기사 본문.", Some("sns"), None);
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert!(p.contains("SNS"));
+    }
+
+    #[test]
+    fn build_rewrite_prompt_custom_style() {
+        let prompt = build_rewrite_prompt("기사 본문.", Some("뉴스레터"), None);
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert!(p.contains("뉴스레터"));
+    }
+
+    #[test]
+    fn build_rewrite_prompt_empty_returns_none() {
+        assert!(build_rewrite_prompt("", None, None).is_none());
+        assert!(build_rewrite_prompt("   ", None, None).is_none());
+    }
+
+    #[test]
+    fn rewrite_file_path_with_topic() {
+        let path = rewrite_file_path_with_date("삼성전자 실적", "2026-03-18");
+        assert_eq!(
+            path,
+            std::path::PathBuf::from(".journalist/drafts/2026-03-18_삼성전자-실적.md")
+        );
+    }
+
+    #[test]
+    fn rewrite_file_path_empty_slug() {
+        let path = rewrite_file_path_with_date("", "2026-03-18");
+        assert_eq!(
+            path,
+            std::path::PathBuf::from(".journalist/drafts/2026-03-18_rewrite.md")
+        );
+    }
+
+    #[test]
+    fn save_rewrite_creates_dir_and_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("drafts").join("test.md");
+        let result = save_rewrite(&path, "# 재작성\n\n재작성된 기사 본문");
+        assert!(result.is_ok());
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("재작성"));
     }
 }
