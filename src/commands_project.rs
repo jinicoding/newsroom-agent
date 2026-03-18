@@ -2647,6 +2647,105 @@ pub async fn handle_interview(
     }
 }
 
+// ── /compare ────────────────────────────────────────────────────────────
+
+/// Parse `/compare` arguments: expects two file paths.
+/// Returns `(Option<path1>, Option<path2>)`.
+pub fn parse_compare_args(args: &str) -> (Option<String>, Option<String>) {
+    let args = args.trim();
+    let parts: Vec<&str> = args.split_whitespace().collect();
+    match parts.len() {
+        0 => (None, None),
+        1 => (Some(parts[0].to_string()), None),
+        _ => (Some(parts[0].to_string()), Some(parts[1].to_string())),
+    }
+}
+
+/// Build the prompt for `/compare`: journalism-focused comparison of two article drafts.
+pub fn build_compare_prompt(content1: &str, path1: &str, content2: &str, path2: &str) -> String {
+    format!(
+        "아래 두 기사 초안을 **저널리즘 관점**에서 비교 분석해주세요.\n\n\
+         단순한 텍스트 diff가 아니라, 다음 항목을 중심으로 분석해주세요:\n\n\
+         ## 비교 항목\n\n\
+         ### 1. 사실(팩트) 변경\n\
+         - 추가된 사실, 삭제된 사실, 수정된 사실을 각각 정리\n\
+         - 사실관계 변경이 기사의 방향성에 미치는 영향 분석\n\n\
+         ### 2. 톤/논조 변화\n\
+         - 전체적인 톤이 어떻게 바뀌었는지 (객관적↔주관적, 긍정적↔부정적 등)\n\
+         - 헤드라인이나 리드의 뉘앙스 변화\n\n\
+         ### 3. 출처/인용 변경\n\
+         - 추가/삭제/수정된 인용구나 취재원\n\
+         - 출처 변경이 기사 신뢰도에 미치는 영향\n\n\
+         ### 4. 구조 변경\n\
+         - 단락 순서 변경, 내용 재배치\n\
+         - 리드/본문/맺음 구조의 변화\n\n\
+         ### 5. 법적/윤리적 리스크 변화\n\
+         - 명예훼손, 개인정보 노출 등 리스크가 추가/해소되었는지\n\n\
+         ## 종합 평가\n\n\
+         수정이 기사 품질을 향상시켰는지, 주의가 필요한 부분은 무엇인지 정리해주세요.\n\n\
+         ---\n\n\
+         ## 초안 1: {path1}\n\n\
+         {content1}\n\n\
+         ---\n\n\
+         ## 초안 2: {path2}\n\n\
+         {content2}"
+    )
+}
+
+/// Handle the `/compare` command: compare two article drafts from a journalism perspective.
+pub async fn handle_compare(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/compare").unwrap_or("").trim();
+    let (path1, path2) = parse_compare_args(args);
+
+    let (p1, p2) = match (path1, path2) {
+        (Some(a), Some(b)) => (a, b),
+        _ => {
+            println!("{DIM}  사용법: /compare <파일1> <파일2>{RESET}");
+            println!("{DIM}  예시:   /compare draft_v1.md draft_v2.md{RESET}");
+            println!(
+                "{DIM}  두 기사 초안을 저널리즘 관점에서 비교 분석합니다.{RESET}"
+            );
+            println!(
+                "{DIM}  (사실 추가/삭제, 톤 변화, 출처 변경, 구조, 법적 리스크){RESET}\n"
+            );
+            return;
+        }
+    };
+
+    let content1 = match std::fs::read_to_string(&p1) {
+        Ok(c) => {
+            println!("{DIM}  파일 1 읽기: {p1} ({} bytes){RESET}", c.len());
+            c
+        }
+        Err(e) => {
+            eprintln!("{RED}  파일 읽기 실패: {p1} — {e}{RESET}\n");
+            return;
+        }
+    };
+
+    let content2 = match std::fs::read_to_string(&p2) {
+        Ok(c) => {
+            println!("{DIM}  파일 2 읽기: {p2} ({} bytes){RESET}", c.len());
+            c
+        }
+        Err(e) => {
+            eprintln!("{RED}  파일 읽기 실패: {p2} — {e}{RESET}\n");
+            return;
+        }
+    };
+
+    println!();
+
+    let prompt = build_compare_prompt(&content1, &p1, &content2, &p2);
+    run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -3663,5 +3762,41 @@ mod tests {
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("인터뷰 질문지"));
+    }
+
+    // --- compare tests ---
+
+    #[test]
+    fn parse_compare_args_two_files() {
+        let (a, b) = parse_compare_args("draft_v1.md draft_v2.md");
+        assert_eq!(a.as_deref(), Some("draft_v1.md"));
+        assert_eq!(b.as_deref(), Some("draft_v2.md"));
+    }
+
+    #[test]
+    fn parse_compare_args_one_file() {
+        let (a, b) = parse_compare_args("draft_v1.md");
+        assert_eq!(a.as_deref(), Some("draft_v1.md"));
+        assert!(b.is_none());
+    }
+
+    #[test]
+    fn parse_compare_args_empty() {
+        let (a, b) = parse_compare_args("");
+        assert!(a.is_none());
+        assert!(b.is_none());
+    }
+
+    #[test]
+    fn build_compare_prompt_contains_both_contents() {
+        let prompt = build_compare_prompt("기사 내용 1", "v1.md", "기사 내용 2", "v2.md");
+        assert!(prompt.contains("기사 내용 1"));
+        assert!(prompt.contains("기사 내용 2"));
+        assert!(prompt.contains("v1.md"));
+        assert!(prompt.contains("v2.md"));
+        assert!(prompt.contains("사실(팩트) 변경"));
+        assert!(prompt.contains("톤/논조 변화"));
+        assert!(prompt.contains("출처/인용 변경"));
+        assert!(prompt.contains("법적/윤리적 리스크"));
     }
 }

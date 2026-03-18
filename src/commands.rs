@@ -67,6 +67,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/briefing",
     "/checklist",
     "/interview",
+    "/compare",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -277,6 +278,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /interview <주제> [--source 취재원]  인터뷰 질문지 생성\n",
+    );
+    out.push_str(
+        "  /compare <파일1> <파일2>  두 기사 초안 비교 분석 (사실/톤/출처/구조 변경)\n",
     );
     out.push('\n');
 
@@ -554,11 +558,10 @@ pub use crate::commands_git::{
 
 // Project-related handlers
 pub use crate::commands_project::{
-    handle_article, handle_briefing, handle_checklist, handle_context, handle_docs,
-    handle_factcheck, handle_find, handle_fix, handle_health, handle_index, handle_init,
-    handle_interview, handle_lint, handle_research, handle_run, handle_run_usage,
-    handle_sources, handle_test,
-    handle_tree,
+    handle_article, handle_briefing, handle_checklist, handle_compare, handle_context,
+    handle_docs, handle_factcheck, handle_find, handle_fix, handle_health, handle_index,
+    handle_init, handle_interview, handle_lint, handle_research, handle_run, handle_run_usage,
+    handle_sources, handle_test, handle_tree,
 };
 
 // Session-related handlers
