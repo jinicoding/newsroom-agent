@@ -1,8 +1,8 @@
 name: Synthesize Memory
 
 on:
-  schedule:
-    - cron: '0 12 * * *'  # Daily at noon UTC
+  # schedule:
+  #   - cron: '0 12 * * *'  # disabled — using local synthesize_local.sh instead
   workflow_dispatch:       # Manual trigger
 
 permissions:
