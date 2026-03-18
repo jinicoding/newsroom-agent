@@ -1600,8 +1600,8 @@ pub fn handle_sources(input: &str) {
         "add" => {
             let rest = args.strip_prefix("add").unwrap_or("").trim();
             if rest.is_empty() {
-                println!("{DIM}  사용법: /sources add <이름> <소속> <연락처> [메모]{RESET}");
-                println!("{DIM}  예시: /sources add 홍길동 산업통상자원부 010-1234-5678 반도체 정책 담당{RESET}\n");
+                println!("{DIM}  사용법: /sources add <이름> <소속> <연락처> [메모] [--beat 분야]{RESET}");
+                println!("{DIM}  예시: /sources add 홍길동 산업통상자원부 010-1234-5678 반도체 정책 담당 --beat 경제{RESET}\n");
             } else {
                 sources_add(rest);
             }
@@ -1627,15 +1627,24 @@ pub fn handle_sources(input: &str) {
             let rest = args.strip_prefix("edit").unwrap_or("").trim();
             if rest.is_empty() {
                 println!("{DIM}  사용법: /sources edit <번호> <필드> <값>{RESET}");
-                println!("{DIM}  필드: name, org, contact, note{RESET}");
+                println!("{DIM}  필드: name, org, contact, note, beat{RESET}");
                 println!("{DIM}  예시: /sources edit 1 org 기획재정부{RESET}\n");
             } else {
                 sources_edit(rest);
             }
         }
+        "beat" => {
+            let beat_name = args.strip_prefix("beat").unwrap_or("").trim();
+            if beat_name.is_empty() {
+                println!("{DIM}  사용법: /sources beat <분야명>{RESET}");
+                println!("{DIM}  예시: /sources beat 경제{RESET}\n");
+            } else {
+                sources_beat_filter(beat_name);
+            }
+        }
         other => {
             println!("{DIM}  알 수 없는 하위 명령: {other}{RESET}");
-            println!("{DIM}  사용법: /sources [list|add|search|remove|edit]{RESET}\n");
+            println!("{DIM}  사용법: /sources [list|add|search|remove|edit|beat]{RESET}\n");
         }
     }
 }
@@ -1686,24 +1695,23 @@ fn sources_list() {
         let org = s["org"].as_str().unwrap_or("");
         let contact = s["contact"].as_str().unwrap_or("");
         let note = s["note"].as_str().unwrap_or("");
-        println!(
-            "  {}. {} | {} | {}{}",
-            i + 1,
-            name,
-            org,
-            contact,
-            if note.is_empty() {
-                String::new()
-            } else {
-                format!(" | {note}")
-            }
-        );
+        let beat = s["beat"].as_str().unwrap_or("");
+        let mut extra = String::new();
+        if !beat.is_empty() {
+            extra.push_str(&format!(" [{}]", beat));
+        }
+        if !note.is_empty() {
+            extra.push_str(&format!(" | {note}"));
+        }
+        println!("  {}. {} | {} | {}{}", i + 1, name, org, contact, extra);
     }
     println!("{RESET}");
 }
 
 fn sources_add(args: &str) {
-    let parts: Vec<&str> = args.splitn(4, ' ').collect();
+    // Extract --beat <value> if present, then parse remaining args
+    let (beat, remaining) = extract_beat_option(args);
+    let parts: Vec<&str> = remaining.splitn(4, ' ').collect();
     if parts.len() < 3 {
         println!("{DIM}  최소 이름, 소속, 연락처가 필요합니다.{RESET}\n");
         return;
@@ -1713,14 +1721,46 @@ fn sources_add(args: &str) {
         "org": parts[1],
         "contact": parts[2],
         "note": if parts.len() > 3 { parts[3] } else { "" },
+        "beat": beat,
     });
     let mut sources = load_sources();
     sources.push(entry);
     save_sources(&sources);
+    let beat_info = if beat.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", beat)
+    };
     println!(
-        "{DIM}  취재원 추가됨: {} ({}){RESET}\n",
+        "{DIM}  취재원 추가됨: {} ({}){beat_info}{RESET}\n",
         parts[0], parts[1]
     );
+}
+
+/// Extract `--beat <value>` from args string, returning (beat, remaining_args).
+fn extract_beat_option(args: &str) -> (&str, String) {
+    let words: Vec<&str> = args.split_whitespace().collect();
+    let mut beat = "";
+    let mut remaining = Vec::new();
+    let mut i = 0;
+    while i < words.len() {
+        if words[i] == "--beat" && i + 1 < words.len() {
+            beat = words[i + 1];
+            i += 2;
+        } else {
+            remaining.push(words[i]);
+            i += 1;
+        }
+    }
+    // Reconstruct remaining, preserving the note (last part) with spaces
+    // We need to be more careful: rebuild from original args minus --beat <val>
+    let remaining_str = if beat.is_empty() {
+        args.to_string()
+    } else {
+        let beat_pattern = format!("--beat {}", beat);
+        args.replace(&beat_pattern, "").split_whitespace().collect::<Vec<_>>().join(" ")
+    };
+    (beat, remaining_str)
 }
 
 fn sources_remove(args: &str) {
@@ -1750,7 +1790,7 @@ fn sources_edit(args: &str) {
     let parts: Vec<&str> = args.splitn(3, ' ').collect();
     if parts.len() < 3 {
         println!("{DIM}  사용법: /sources edit <번호> <필드> <값>{RESET}");
-        println!("{DIM}  필드: name, org, contact, note{RESET}\n");
+        println!("{DIM}  필드: name, org, contact, note, beat{RESET}\n");
         return;
     }
     let idx: usize = match parts[0].parse() {
@@ -1762,10 +1802,10 @@ fn sources_edit(args: &str) {
     };
     let field = parts[1];
     let value = parts[2];
-    let valid_fields = ["name", "org", "contact", "note"];
+    let valid_fields = ["name", "org", "contact", "note", "beat"];
     if !valid_fields.contains(&field) {
         println!("{DIM}  알 수 없는 필드: {field}{RESET}");
-        println!("{DIM}  사용 가능한 필드: name, org, contact, note{RESET}\n");
+        println!("{DIM}  사용 가능한 필드: name, org, contact, note, beat{RESET}\n");
         return;
     }
     let mut sources = load_sources();
@@ -1785,11 +1825,12 @@ fn sources_edit(args: &str) {
 /// Check whether a source entry matches a query (case-insensitive).
 fn source_matches(source: &serde_json::Value, query_lower: &str) -> bool {
     let text = format!(
-        "{} {} {} {}",
+        "{} {} {} {} {}",
         source["name"].as_str().unwrap_or(""),
         source["org"].as_str().unwrap_or(""),
         source["contact"].as_str().unwrap_or(""),
         source["note"].as_str().unwrap_or(""),
+        source["beat"].as_str().unwrap_or(""),
     )
     .to_lowercase();
     text.contains(query_lower)
@@ -1808,6 +1849,47 @@ fn sources_search(query: &str) {
         return;
     }
     println!("{DIM}  ── 검색 결과: {} 명 ──", matches.len());
+    for (i, s) in matches.iter().enumerate() {
+        let name = s["name"].as_str().unwrap_or("?");
+        let org = s["org"].as_str().unwrap_or("");
+        let contact = s["contact"].as_str().unwrap_or("");
+        let note = s["note"].as_str().unwrap_or("");
+        let beat = s["beat"].as_str().unwrap_or("");
+        let mut extra = String::new();
+        if !beat.is_empty() {
+            extra.push_str(&format!(" [{}]", beat));
+        }
+        if !note.is_empty() {
+            extra.push_str(&format!(" | {note}"));
+        }
+        println!("  {}. {} | {} | {}{}", i + 1, name, org, contact, extra);
+    }
+    println!("{RESET}");
+}
+
+fn sources_beat_filter(beat: &str) {
+    let sources = load_sources();
+    let beat_lower = beat.to_lowercase();
+    let matches: Vec<&serde_json::Value> = sources
+        .iter()
+        .filter(|s| {
+            s["beat"]
+                .as_str()
+                .unwrap_or("")
+                .to_lowercase()
+                == beat_lower
+        })
+        .collect();
+
+    if matches.is_empty() {
+        println!("{DIM}  '{beat}' 분야 취재원이 없습니다.{RESET}\n");
+        return;
+    }
+    println!(
+        "{DIM}  ── 분야별 취재원: {} ({} 명) ──",
+        beat,
+        matches.len()
+    );
     for (i, s) in matches.iter().enumerate() {
         let name = s["name"].as_str().unwrap_or("?");
         let org = s["org"].as_str().unwrap_or("");
@@ -2613,6 +2695,91 @@ mod tests {
         let matches: Vec<_> = sources.iter().filter(|s| source_matches(s, &query_lower)).collect();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0]["name"], "홍길동");
+    }
+
+    // --- sources beat tag ---
+
+    /// Helper: add a source entry with an optional beat field.
+    fn test_add_with_beat(path: &Path, args: &str, beat: &str) {
+        let parts: Vec<&str> = args.splitn(4, ' ').collect();
+        let entry = serde_json::json!({
+            "name": parts[0],
+            "org": parts.get(1).unwrap_or(&""),
+            "contact": parts.get(2).unwrap_or(&""),
+            "note": if parts.len() > 3 { parts[3] } else { "" },
+            "beat": beat,
+        });
+        let mut sources = load_sources_from(path);
+        sources.push(entry);
+        save_sources_to(&sources, path);
+    }
+
+    #[test]
+    fn sources_add_with_beat_field() {
+        let (_dir, path) = temp_sources_path();
+        test_add_with_beat(&path, "홍길동 산업부 010-1234 반도체 담당", "경제");
+        let sources = load_sources_from(&path);
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0]["beat"], "경제");
+        assert_eq!(sources[0]["name"], "홍길동");
+    }
+
+    #[test]
+    fn sources_add_without_beat_defaults_empty() {
+        let (_dir, path) = temp_sources_path();
+        test_add(&path, "홍길동 산업부 010-1234");
+        let sources = load_sources_from(&path);
+        // Legacy entries without beat field should return empty/null gracefully
+        let beat = sources[0]["beat"].as_str().unwrap_or("");
+        assert_eq!(beat, "");
+    }
+
+    #[test]
+    fn sources_search_matches_beat() {
+        let (_dir, path) = temp_sources_path();
+        test_add_with_beat(&path, "홍길동 산업부 010-1234", "경제");
+        test_add_with_beat(&path, "김영희 기획부 010-5678", "정치");
+
+        let sources = load_sources_from(&path);
+        let query_lower = "경제".to_lowercase();
+        let matches: Vec<_> = sources
+            .iter()
+            .filter(|s| source_matches(s, &query_lower))
+            .collect();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0]["name"], "홍길동");
+    }
+
+    #[test]
+    fn sources_beat_filter() {
+        let (_dir, path) = temp_sources_path();
+        test_add_with_beat(&path, "홍길동 산업부 010-1234", "경제");
+        test_add_with_beat(&path, "김영희 기획부 010-5678", "정치");
+        test_add_with_beat(&path, "박기자 IT부 010-9999", "경제");
+
+        let sources = load_sources_from(&path);
+        let beat = "경제";
+        let matches: Vec<_> = sources
+            .iter()
+            .filter(|s| s["beat"].as_str().unwrap_or("") == beat)
+            .collect();
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0]["name"], "홍길동");
+        assert_eq!(matches[1]["name"], "박기자");
+    }
+
+    #[test]
+    fn sources_edit_beat_field() {
+        let (_dir, path) = temp_sources_path();
+        test_add_with_beat(&path, "홍길동 산업부 010-1234", "경제");
+
+        // Edit beat field
+        let mut sources = load_sources_from(&path);
+        sources[0]["beat"] = serde_json::Value::String("IT".to_string());
+        save_sources_to(&sources, &path);
+
+        let sources = load_sources_from(&path);
+        assert_eq!(sources[0]["beat"], "IT");
     }
 
     // --- article prompt generation ---
