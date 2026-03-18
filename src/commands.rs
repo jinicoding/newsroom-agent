@@ -73,6 +73,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/headline",
     "/rewrite",
     "/clip",
+    "/summary",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -304,6 +305,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /clip list             스크랩 목록 보기\n",
+    );
+    out.push_str(
+        "  /summary <path|text>   문서 빠른 요약 (3~5줄)\n",
     );
     out.push('\n');
 
@@ -584,8 +588,8 @@ pub use crate::commands_project::{
     handle_article, handle_briefing, handle_checklist, handle_clip, handle_compare,
     handle_context, handle_docs, handle_factcheck, handle_find, handle_fix, handle_headline,
     handle_health, handle_index, handle_init, handle_interview, handle_lint, handle_research,
-    handle_run, handle_rewrite, handle_run_usage, handle_sources, handle_test, handle_timeline,
-    handle_translate, handle_tree,
+    handle_run, handle_rewrite, handle_run_usage, handle_sources, handle_summary, handle_test,
+    handle_timeline, handle_translate, handle_tree,
 };
 
 // Session-related handlers

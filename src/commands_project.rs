@@ -1,5 +1,5 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
-//! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck, /briefing, /clip.
+//! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck, /briefing, /clip, /summary.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -3673,6 +3673,80 @@ pub async fn handle_clip(
     }
 }
 
+// ── /summary ─────────────────────────────────────────────────────────────
+
+/// Parse `/summary` arguments: if the argument is an existing file path, read it;
+/// otherwise treat it as inline text.
+pub fn resolve_summary_input(args: &str) -> Option<String> {
+    let args = args.trim();
+    if args.is_empty() {
+        return None;
+    }
+
+    // Check if the first token is an existing file
+    let first_token = args.split_whitespace().next().unwrap_or("");
+    if std::path::Path::new(first_token).is_file() {
+        match std::fs::read_to_string(first_token) {
+            Ok(content) => {
+                println!(
+                    "{DIM}  파일 읽기: {first_token} ({} bytes){RESET}",
+                    content.len()
+                );
+                Some(content)
+            }
+            Err(e) => {
+                eprintln!("{RED}  파일 읽기 실패: {first_token} — {e}{RESET}\n");
+                None
+            }
+        }
+    } else {
+        Some(args.to_string())
+    }
+}
+
+/// Build the prompt for `/summary`: generate a concise 3–5 line summary.
+pub fn build_summary_prompt(text: &str) -> Option<String> {
+    if text.trim().is_empty() {
+        return None;
+    }
+    Some(format!(
+        "아래 문서를 읽고 **3~5줄로 핵심 요약**을 작성해주세요.\n\n\
+         ## 요약 규칙\n\n\
+         1. **첫 줄**: 가장 중요한 사실/결론을 한 문장으로.\n\
+         2. **나머지**: 핵심 근거, 배경, 수치를 간결하게.\n\
+         3. 전문 용어가 있으면 괄호 안에 간단히 풀어주세요.\n\
+         4. 출처나 날짜 등 메타정보가 있으면 포함하세요.\n\
+         5. 한국어로 작성하세요.\n\n\
+         ---\n\n\
+         {text}"
+    ))
+}
+
+/// Handle `/summary <filepath or text>`.
+pub async fn handle_summary(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/summary").unwrap_or("").trim();
+
+    let text = match resolve_summary_input(args) {
+        Some(t) if !t.trim().is_empty() => t,
+        _ => {
+            println!("{DIM}  사용법: /summary <파일경로 또는 텍스트>{RESET}");
+            println!("{DIM}  예시:   /summary press_release.txt{RESET}");
+            println!("{DIM}  예시:   /summary 정부가 오늘 새로운 부동산 정책을 발표했다...{RESET}");
+            println!("{DIM}  보도자료, 판결문, 정책문서 등을 3~5줄로 빠르게 요약합니다.{RESET}\n");
+            return;
+        }
+    };
+
+    let prompt = build_summary_prompt(&text).unwrap();
+    run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -5193,5 +5267,51 @@ mod tests {
         assert!(content.contains("<!-- source: https://example.com/test -->"));
         assert!(content.contains("기사 제목"));
         assert!(content.contains("본문 내용"));
+    }
+
+    // ── /summary tests ──
+
+    #[test]
+    fn build_summary_prompt_basic() {
+        let prompt = build_summary_prompt("정부가 오늘 새로운 부동산 정책을 발표했다.");
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert!(p.contains("정부가 오늘 새로운 부동산 정책을 발표했다."));
+        assert!(p.contains("3~5줄"));
+        assert!(p.contains("핵심 요약"));
+    }
+
+    #[test]
+    fn build_summary_prompt_empty_returns_none() {
+        assert!(build_summary_prompt("").is_none());
+        assert!(build_summary_prompt("   ").is_none());
+    }
+
+    #[test]
+    fn resolve_summary_input_inline_text() {
+        let result = resolve_summary_input("정부가 부동산 정책을 발표했다");
+        assert_eq!(result, Some("정부가 부동산 정책을 발표했다".to_string()));
+    }
+
+    #[test]
+    fn resolve_summary_input_empty() {
+        assert!(resolve_summary_input("").is_none());
+        assert!(resolve_summary_input("   ").is_none());
+    }
+
+    #[test]
+    fn resolve_summary_input_reads_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file_path = dir.path().join("test_doc.txt");
+        std::fs::write(&file_path, "보도자료 내용입니다.").unwrap();
+        let result = resolve_summary_input(file_path.to_str().unwrap());
+        assert_eq!(result, Some("보도자료 내용입니다.".to_string()));
+    }
+
+    #[test]
+    fn resolve_summary_input_nonexistent_file_treated_as_text() {
+        let result = resolve_summary_input("no_such_file_xyz.txt");
+        // Non-existent file path is treated as inline text
+        assert_eq!(result, Some("no_such_file_xyz.txt".to_string()));
     }
 }
