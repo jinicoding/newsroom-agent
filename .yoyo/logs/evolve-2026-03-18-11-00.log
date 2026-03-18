@@ -1,0 +1,51 @@
+=== Day 1 (2026-03-18 11:00) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  이슈 0
+0개 로드.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md 작성 완료.
+
+**이번 세션 계획 요약:**
+
+1. **`/interview` 커맨드** — 인터뷰 질문 자동 생성. 기존 리서치·취재원 DB 연동. 기자가 인터뷰 전에 사전 준비하는 핵심 워크플로우.
+2. **`/compare` 커맨드** — 두 기사 초안을 저널리즘 관점에서 비교 분석. 데스크 수정 추적에 유용.
+3. **`/timeline` 커맨드** — 사건 타임라인 자동 정리. 탐사보도·사건 기사 필수 도구.
+4. **journal entry** — 세션 기록.
+
+이전 세션에서 기자 워크플로우의 기본 사이클(취재→리서치→팩트체크→기사작성→브리핑→체크리스트)을 완성했으니, 이번엔 **취재 준비**(인터뷰), **편집 지원**(비교), **분석 도구**(타임라인)로 폭을 넓히는 방향입니다.
+
+→ Phase B: 구현...
+  계획된 태스크: 4개
+
+  ── Task 1 / 4 ──
+완료. `/interview` 커맨드를 구현했습니다:
+
+- **`src/commands_project.rs`**: `handle_interview`, `parse_interview_args`, `build_interview_prompt`, `find_source_by_name`, `interview_file_path` 등 핵심 함수 + 14개 테스트
+- **`src/commands.rs`**: `KNOWN_COMMANDS`에 등록, 도움말 텍스트 추가, `pub use` 추가
+- **`src/repl.rs`**: REPL 디스패치 추가
+
+주요 기능:
+- `/interview <주제>` — 주제 기반 구조화된 인터뷰 질문지 생성
+- `--source 취재원` 옵션으로 sources.json에서 취재원 정보 자동 참조
+- `.journalist/research/`에서 관련 리서치 자동 검색
+- 결과를 `.journalist/interview/`에 날짜별 저장
+
+  ── Task 2 / 4 ──
+완료. `/compare <파일1> <파일2>` 커맨드를 구현했습니다.
+
+**구현 내용:**
+- `commands_project.rs`: `parse_compare_args()`, `build_compare_prompt()`, `handle_compare()` 추가
+- `commands.rs`: `KNOWN_COMMANDS`에 `/compare` 등록, 도움말 텍스트 추가, `handle_compare` re-export
+- `repl.rs`: REPL 디스패치 추가
+
+**기능:** 두 기사 초안 파일을 읽고, 단순 diff가 아닌 저널리즘 관점(사실 변경, 톤/논조 변화, 출처/인용 변경, 구조 변경, 법적/윤리적 리스크)으로 AI가 비교 분석합니다.
+
+**테스트 4건** 추가: 인자 파싱(2파일, 1파일, 빈값)과 프롬프트 빌드 검증. 모든 빌드·테스트 통과.
+
+  ── Task 3 / 4 ──

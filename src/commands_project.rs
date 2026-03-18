@@ -2746,6 +2746,124 @@ pub async fn handle_compare(
     auto_compact_if_needed(agent);
 }
 
+// ── /timeline ────────────────────────────────────────────────────────────
+
+const TIMELINE_DIR: &str = ".journalist/timeline";
+
+/// Build the timeline file path using today's date.
+pub fn timeline_file_path(topic: &str) -> std::path::PathBuf {
+    timeline_file_path_with_date(topic, &today_str())
+}
+
+/// Build the timeline file path with an explicit date string (for testing).
+pub fn timeline_file_path_with_date(topic: &str, date: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(topic, 50);
+    let filename = if slug.is_empty() {
+        format!("{date}_timeline.md")
+    } else {
+        format!("{date}_{slug}.md")
+    };
+    std::path::PathBuf::from(TIMELINE_DIR).join(filename)
+}
+
+/// Save timeline to file. Creates the timeline directory if needed.
+fn save_timeline(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
+/// Build the prompt for `/timeline`: generate a chronological event timeline.
+pub fn build_timeline_prompt(topic: &str, research: &[(String, String)]) -> String {
+    let mut prompt = format!(
+        "주제 **\"{topic}\"**에 대한 **시간순 이벤트 타임라인**을 작성해주세요.\n\n\
+         ## 작성 지침\n\n\
+         1. 웹 검색을 통해 주제에 관한 주요 사건들을 조사하세요.\n\
+         2. 각 이벤트를 **날짜(또는 시기) | 사건 | 의미** 형식으로 정리하세요.\n\
+         3. 가능한 한 정확한 날짜를 사용하고, 불확실한 경우 \"경\" 또는 \"무렵\"으로 표시하세요.\n\
+         4. 탐사보도나 사건 기사 작성에 활용할 수 있도록 인과관계를 포함하세요.\n\
+         5. 출처가 확인된 사실만 포함하고, 불확실한 내용은 ⚠로 표시하세요.\n\n\
+         ## 출력 형식\n\n\
+         ```\n\
+         # [주제] 타임라인\n\n\
+         ## 배경\n\
+         (주제에 대한 간략한 배경 설명)\n\n\
+         ## 타임라인\n\
+         | 날짜 | 사건 | 의미/영향 |\n\
+         |------|------|----------|\n\
+         | YYYY-MM-DD | 사건 설명 | 영향 설명 |\n\n\
+         ## 핵심 쟁점\n\
+         (현재 진행 중인 쟁점이나 향후 주목할 사항)\n\n\
+         ## 출처\n\
+         (참고한 주요 출처 목록)\n\
+         ```\n"
+    );
+
+    if !research.is_empty() {
+        prompt.push_str("\n## 참고할 기존 리서치 자료\n\n");
+        for (filename, content) in research {
+            prompt.push_str(&format!("### {filename}\n\n{content}\n\n---\n\n"));
+        }
+        prompt.push_str(
+            "위 리서치 자료에서 날짜와 이벤트를 추출하고, 웹 검색으로 추가 사건을 보강해주세요.\n",
+        );
+    }
+
+    prompt
+}
+
+/// Handle the `/timeline` command: generate a chronological event timeline for a topic.
+pub async fn handle_timeline(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let topic = input.strip_prefix("/timeline").unwrap_or("").trim();
+
+    if topic.is_empty() {
+        println!("{DIM}  사용법: /timeline <주제>{RESET}");
+        println!("{DIM}  예시:   /timeline 후쿠시마 오염수 방류{RESET}");
+        println!("{DIM}  주제에 관한 시간순 이벤트 타임라인을 생성합니다.{RESET}");
+        println!("{DIM}  리서치 자료에서 날짜/이벤트를 추출하고 웹 검색으로 보강합니다.{RESET}\n");
+        return;
+    }
+
+    // Search for related research files
+    let research = find_related_research(topic);
+    if !research.is_empty() {
+        println!(
+            "{GREEN}  📎 관련 리서치 {}건 발견{RESET}",
+            research.len()
+        );
+        for (filename, _) in &research {
+            println!("     - {filename}");
+        }
+    }
+    println!();
+
+    let prompt = build_timeline_prompt(topic, &research);
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    // Save timeline to .journalist/timeline/
+    if !response.trim().is_empty() {
+        let path = timeline_file_path(topic);
+        match save_timeline(&path, &response) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 타임라인 저장: {}{RESET}\n",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  타임라인 저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -3798,5 +3916,64 @@ mod tests {
         assert!(prompt.contains("톤/논조 변화"));
         assert!(prompt.contains("출처/인용 변경"));
         assert!(prompt.contains("법적/윤리적 리스크"));
+    }
+
+    // --- timeline tests ---
+
+    #[test]
+    fn timeline_file_path_with_topic() {
+        let path = timeline_file_path_with_date("후쿠시마 오염수 방류", "2026-03-18");
+        assert_eq!(
+            path,
+            std::path::PathBuf::from(".journalist/timeline/2026-03-18_후쿠시마-오염수-방류.md")
+        );
+    }
+
+    #[test]
+    fn timeline_file_path_empty_topic() {
+        let path = timeline_file_path_with_date("", "2026-03-18");
+        assert_eq!(
+            path,
+            std::path::PathBuf::from(".journalist/timeline/2026-03-18_timeline.md")
+        );
+    }
+
+    #[test]
+    fn save_timeline_creates_dir_and_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("timeline").join("test.md");
+        let result = save_timeline(&path, "# 타임라인\n\n| 날짜 | 사건 |");
+        assert!(result.is_ok());
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("타임라인"));
+    }
+
+    #[test]
+    fn build_timeline_prompt_contains_topic() {
+        let prompt = build_timeline_prompt("반도체 수출 규제", &[]);
+        assert!(prompt.contains("반도체 수출 규제"));
+        assert!(prompt.contains("시간순 이벤트 타임라인"));
+        assert!(prompt.contains("날짜"));
+        assert!(prompt.contains("사건"));
+        assert!(prompt.contains("출처"));
+    }
+
+    #[test]
+    fn build_timeline_prompt_includes_research() {
+        let research = vec![
+            ("2026-03-17_반도체.md".to_string(), "리서치 내용 1".to_string()),
+            ("2026-03-16_수출.md".to_string(), "리서치 내용 2".to_string()),
+        ];
+        let prompt = build_timeline_prompt("반도체 수출", &research);
+        assert!(prompt.contains("리서치 내용 1"));
+        assert!(prompt.contains("리서치 내용 2"));
+        assert!(prompt.contains("기존 리서치 자료"));
+    }
+
+    #[test]
+    fn build_timeline_prompt_no_research_section_when_empty() {
+        let prompt = build_timeline_prompt("테스트 주제", &[]);
+        assert!(!prompt.contains("기존 리서치 자료"));
     }
 }
