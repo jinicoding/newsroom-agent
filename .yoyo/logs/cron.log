@@ -137,3 +137,13 @@ SESSION_PLAN.md 작성 완료.
 **테스트 4건** 추가: 인자 파싱(2파일, 1파일, 빈값)과 프롬프트 빌드 검증. 모든 빌드·테스트 통과.
 
   ── Task 3 / 4 ──
+완료. `/timeline` 커맨드를 구현하고 커밋했습니다.
+
+구현 내용:
+- **`src/commands_project.rs`**: `TIMELINE_DIR`, `timeline_file_path`, `save_timeline`, `build_timeline_prompt`, `handle_timeline` 추가 + 테스트 6개 (파일 경로, 저장, 프롬프트 빌드)
+- **`src/commands.rs`**: `KNOWN_COMMANDS`에 `/timeline` 등록, help 텍스트 추가, `handle_timeline` re-export
+- **`src/repl.rs`**: `/timeline` 디스패치 추가
+
+사용법: `/timeline <주제>` — 리서치 자료에서 날짜/이벤트를 추출하고 웹 검색으로 보강하여 `.journalist/timeline/`에 저장합니다.
+
+  ── Task 4 / 4 ──
