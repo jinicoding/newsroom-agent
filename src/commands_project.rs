@@ -1682,6 +1682,47 @@ fn research_search(keyword: &str) {
     println!();
 }
 
+/// Format a list of `NewsItem`s into a context block for the research prompt.
+pub fn build_news_context(items: &[NewsItem]) -> String {
+    if items.is_empty() {
+        return String::new();
+    }
+    let mut ctx = String::from(
+        "\n\n[네이버 뉴스 API 검색 결과 — 아래 뉴스를 참고하여 리서치하세요]\n",
+    );
+    for (i, item) in items.iter().enumerate() {
+        ctx.push_str(&format!("{}. {}", i + 1, item.title));
+        if !item.pub_date.is_empty() {
+            ctx.push_str(&format!(" ({})", item.pub_date));
+        }
+        ctx.push('\n');
+        if !item.link.is_empty() {
+            ctx.push_str(&format!("   링크: {}\n", item.link));
+        }
+        if !item.description.is_empty() {
+            ctx.push_str(&format!("   요약: {}\n", item.description));
+        }
+    }
+    ctx
+}
+
+/// Build the full research prompt, optionally injecting news API results.
+pub fn build_research_prompt(topic: &str, news_context: &str) -> String {
+    let encoded = topic.replace(' ', "+");
+    format!(
+        "다음 주제에 대해 웹 리서치를 수행해주세요: {topic}\n\n\
+         다음 단계를 따라주세요:\n\
+         1. DuckDuckGo로 검색: curl -s \"https://lite.duckduckgo.com/lite?q={encoded}\" | sed 's/<[^>]*>//g' | head -80\n\
+         2. 네이버 뉴스 검색: curl -s \"https://search.naver.com/search.naver?where=news&query={encoded}\" | sed 's/<[^>]*>//g' | head -80\n\
+         3. 검색 결과를 종합하여 다음을 정리:\n\
+            - **핵심 사실** — 확인된 주요 정보\n\
+            - **주요 출처** — 신뢰할 수 있는 출처 목록\n\
+            - **쟁점** — 다른 시각이나 논란\n\
+            - **추가 취재 제안** — 더 파고들 수 있는 방향\n\n\
+         모든 정보에 출처를 명시하고, 확인되지 않은 내용은 명확히 표시하세요.{news_context}",
+    )
+}
+
 /// Handle the /research command: web research on a topic using DuckDuckGo/Naver.
 pub async fn handle_research(
     agent: &mut Agent,
@@ -1717,20 +1758,19 @@ pub async fn handle_research(
         return;
     }
 
-    let prompt = format!(
-        "다음 주제에 대해 웹 리서치를 수행해주세요: {topic}\n\n\
-         다음 단계를 따라주세요:\n\
-         1. DuckDuckGo로 검색: curl -s \"https://lite.duckduckgo.com/lite?q={}\" | sed 's/<[^>]*>//g' | head -80\n\
-         2. 네이버 뉴스 검색: curl -s \"https://search.naver.com/search.naver?where=news&query={}\" | sed 's/<[^>]*>//g' | head -80\n\
-         3. 검색 결과를 종합하여 다음을 정리:\n\
-            - **핵심 사실** — 확인된 주요 정보\n\
-            - **주요 출처** — 신뢰할 수 있는 출처 목록\n\
-            - **쟁점** — 다른 시각이나 논란\n\
-            - **추가 취재 제안** — 더 파고들 수 있는 방향\n\n\
-         모든 정보에 출처를 명시하고, 확인되지 않은 내용은 명확히 표시하세요.",
-        topic.replace(' ', "+"),
-        topic.replace(' ', "+"),
-    );
+    // If Naver News API is configured, fetch recent news to enrich the prompt
+    let news_context = match fetch_news_results(topic, 5) {
+        Ok(items) if !items.is_empty() => {
+            println!(
+                "{DIM}  네이버 뉴스 API: {}건 수집{RESET}",
+                items.len()
+            );
+            build_news_context(&items)
+        }
+        _ => String::new(),
+    };
+
+    let prompt = build_research_prompt(topic, &news_context);
 
     let response = run_prompt(agent, &prompt, session_total, model).await;
     auto_compact_if_needed(agent);
@@ -5042,6 +5082,60 @@ mod tests {
 
         let results = research_search_in("test", &research_dir);
         assert!(results.is_empty());
+    }
+
+    // --- build_news_context / build_research_prompt tests ---
+
+    #[test]
+    fn build_news_context_empty_items() {
+        let ctx = build_news_context(&[]);
+        assert!(ctx.is_empty());
+    }
+
+    #[test]
+    fn build_news_context_formats_items() {
+        let items = vec![
+            NewsItem {
+                title: "반도체 수출 증가".to_string(),
+                link: "https://example.com/1".to_string(),
+                description: "요약 내용".to_string(),
+                pub_date: "Mon, 17 Mar 2026".to_string(),
+            },
+            NewsItem {
+                title: "두 번째 뉴스".to_string(),
+                link: "https://example.com/2".to_string(),
+                description: String::new(),
+                pub_date: String::new(),
+            },
+        ];
+        let ctx = build_news_context(&items);
+        assert!(ctx.contains("네이버 뉴스 API 검색 결과"));
+        assert!(ctx.contains("1. 반도체 수출 증가 (Mon, 17 Mar 2026)"));
+        assert!(ctx.contains("링크: https://example.com/1"));
+        assert!(ctx.contains("요약: 요약 내용"));
+        assert!(ctx.contains("2. 두 번째 뉴스"));
+        // No pub_date for second item — no parentheses
+        assert!(!ctx.contains("2. 두 번째 뉴스 ("));
+        // No description for second item — no 요약 line
+        assert!(!ctx.contains("요약: \n"));
+    }
+
+    #[test]
+    fn build_research_prompt_without_news() {
+        let prompt = build_research_prompt("반도체 수출 동향", "");
+        assert!(prompt.contains("반도체 수출 동향"));
+        assert!(prompt.contains("DuckDuckGo"));
+        assert!(prompt.contains("반도체+수출+동향"));
+        assert!(!prompt.contains("네이버 뉴스 API 검색 결과"));
+    }
+
+    #[test]
+    fn build_research_prompt_with_news_context() {
+        let news = "\n\n[네이버 뉴스 API 검색 결과]\n1. 테스트 뉴스\n";
+        let prompt = build_research_prompt("AI 동향", news);
+        assert!(prompt.contains("AI 동향"));
+        assert!(prompt.contains("DuckDuckGo"));
+        assert!(prompt.ends_with(news));
     }
 
     #[test]
