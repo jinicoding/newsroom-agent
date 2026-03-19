@@ -1,5 +1,5 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
-//! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck, /briefing, /clip, /summary.
+//! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck, /briefing, /clip, /news, /summary.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -3673,6 +3673,361 @@ pub async fn handle_clip(
     }
 }
 
+// ── /news ────────────────────────────────────────────────────────────────
+
+/// A single news search result.
+#[derive(Debug, Clone)]
+pub struct NewsItem {
+    pub title: String,
+    pub link: String,
+    pub description: String,
+    pub pub_date: String,
+}
+
+/// Strip HTML tags and decode common HTML entities.
+pub fn strip_html_tags(s: &str) -> String {
+    // Remove HTML tags
+    let mut result = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for ch in s.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => result.push(ch),
+            _ => {}
+        }
+    }
+    // Decode common HTML entities
+    result
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+}
+
+/// Parse Naver News API JSON response into a list of `NewsItem`.
+pub fn parse_naver_news_json(json: &str) -> Vec<NewsItem> {
+    // Minimal JSON parsing without serde — extract items array
+    let items_start = match json.find("\"items\"") {
+        Some(pos) => pos,
+        None => return Vec::new(),
+    };
+    let array_start = match json[items_start..].find('[') {
+        Some(pos) => items_start + pos,
+        None => return Vec::new(),
+    };
+    let array_end = match json[array_start..].rfind(']') {
+        Some(pos) => array_start + pos + 1,
+        None => return Vec::new(),
+    };
+    let array_str = &json[array_start..array_end];
+
+    // Split by objects — find each {...}
+    let mut results = Vec::new();
+    let mut depth = 0;
+    let mut obj_start = None;
+    for (i, ch) in array_str.char_indices() {
+        match ch {
+            '{' => {
+                if depth == 0 {
+                    obj_start = Some(i);
+                }
+                depth += 1;
+            }
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    if let Some(start) = obj_start {
+                        let obj = &array_str[start..=i];
+                        if let Some(item) = parse_news_item(obj) {
+                            results.push(item);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    results
+}
+
+/// Extract a field value from a JSON object string (simple key-value parsing).
+fn json_extract_string(obj: &str, key: &str) -> Option<String> {
+    let search = format!("\"{}\"", key);
+    let key_pos = obj.find(&search)?;
+    let after_key = &obj[key_pos + search.len()..];
+    // Skip whitespace and colon
+    let after_colon = after_key.trim_start().strip_prefix(':')?;
+    let after_colon = after_colon.trim_start();
+    if !after_colon.starts_with('"') {
+        return None;
+    }
+    let value_start = 1; // skip opening quote
+    let mut escaped = false;
+    let mut end = None;
+    for (i, ch) in after_colon[value_start..].char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '"' {
+            end = Some(value_start + i);
+            break;
+        }
+    }
+    let end = end?;
+    Some(after_colon[value_start..end].to_string())
+}
+
+/// Parse a single news item JSON object.
+fn parse_news_item(obj: &str) -> Option<NewsItem> {
+    let title = json_extract_string(obj, "title").unwrap_or_default();
+    let link = json_extract_string(obj, "link").unwrap_or_default();
+    let description = json_extract_string(obj, "description").unwrap_or_default();
+    let pub_date = json_extract_string(obj, "pubDate").unwrap_or_default();
+
+    if title.is_empty() && link.is_empty() {
+        return None;
+    }
+
+    Some(NewsItem {
+        title: strip_html_tags(&title),
+        link,
+        description: strip_html_tags(&description),
+        pub_date,
+    })
+}
+
+/// Generate file path for saving a news item as a clip.
+pub fn news_clip_path(item: &NewsItem, date: &str) -> std::path::PathBuf {
+    clip_file_path(&item.link, date)
+}
+
+/// Search Naver News via API (with env vars) or fallback to curl-based search.
+fn fetch_news_results(keyword: &str, display: u32) -> Result<Vec<NewsItem>, String> {
+    let client_id = std::env::var("NAVER_CLIENT_ID").ok();
+    let client_secret = std::env::var("NAVER_CLIENT_SECRET").ok();
+
+    if let (Some(id), Some(secret)) = (client_id, client_secret) {
+        // Use Naver News API
+        let encoded = keyword.replace(' ', "%20");
+        let url = format!(
+            "https://openapi.naver.com/v1/search/news.json?query={}&display={}&sort=date",
+            encoded, display
+        );
+        let output = std::process::Command::new("curl")
+            .args([
+                "-s",
+                "--max-time",
+                "10",
+                "-H",
+                &format!("X-Naver-Client-Id: {}", id),
+                "-H",
+                &format!("X-Naver-Client-Secret: {}", secret),
+                &url,
+            ])
+            .output()
+            .map_err(|e| format!("curl 실행 실패: {e}"))?;
+
+        if !output.status.success() {
+            return Err(format!(
+                "API 요청 실패: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let body = String::from_utf8_lossy(&output.stdout).to_string();
+        Ok(parse_naver_news_json(&body))
+    } else {
+        // Fallback: curl-based web scraping via DuckDuckGo lite
+        let encoded = keyword.replace(' ', "+");
+        let url = format!(
+            "https://lite.duckduckgo.com/lite/?q={}+site:news.naver.com&kl=kr-kr",
+            encoded
+        );
+        let output = std::process::Command::new("curl")
+            .args([
+                "-sL",
+                "--max-time",
+                "10",
+                "-A",
+                "Mozilla/5.0",
+                &url,
+            ])
+            .output()
+            .map_err(|e| format!("curl 실행 실패: {e}"))?;
+
+        if !output.status.success() {
+            return Err("웹 검색 실패".to_string());
+        }
+        let body = String::from_utf8_lossy(&output.stdout).to_string();
+        // Parse DuckDuckGo lite results: extract links and titles
+        let mut results = Vec::new();
+        for line in body.lines() {
+            if let Some(href_pos) = line.find("href=\"") {
+                let after = &line[href_pos + 6..];
+                if let Some(end) = after.find('"') {
+                    let link = &after[..end];
+                    if link.contains("news.naver.com") || link.contains("n.news.naver.com") {
+                        // Extract text between > and <
+                        let title = if let Some(gt) = line.rfind('>') {
+                            let rest = &line[gt + 1..];
+                            if let Some(lt) = rest.find('<') {
+                                strip_html_tags(&rest[..lt])
+                            } else {
+                                strip_html_tags(rest)
+                            }
+                        } else {
+                            String::new()
+                        };
+                        if !title.trim().is_empty() {
+                            results.push(NewsItem {
+                                title: title.trim().to_string(),
+                                link: link.to_string(),
+                                description: String::new(),
+                                pub_date: String::new(),
+                            });
+                        }
+                    }
+                }
+            }
+            if results.len() >= display as usize {
+                break;
+            }
+        }
+        if results.is_empty() {
+            Err("검색 결과가 없습니다. NAVER_CLIENT_ID/NAVER_CLIENT_SECRET 환경변수를 설정하면 더 정확한 결과를 얻을 수 있습니다.".to_string())
+        } else {
+            Ok(results)
+        }
+    }
+}
+
+/// Display news search results.
+fn display_news_results(results: &[NewsItem]) {
+    println!();
+    for (i, item) in results.iter().enumerate() {
+        println!(
+            "  {BOLD}{YELLOW}[{}]{RESET} {BOLD}{}{RESET}",
+            i + 1,
+            item.title
+        );
+        if !item.pub_date.is_empty() {
+            println!("  {DIM}    {}{RESET}", item.pub_date);
+        }
+        if !item.description.is_empty() {
+            println!("  {DIM}    {}{RESET}", item.description);
+        }
+        println!("  {DIM}    {}{RESET}", item.link);
+        println!();
+    }
+}
+
+/// Thread-local storage for last news search results (for `/news save`).
+use std::cell::RefCell;
+thread_local! {
+    static LAST_NEWS_RESULTS: RefCell<Vec<NewsItem>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Handle the `/news` command.
+pub async fn handle_news(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/news").unwrap_or("").trim();
+
+    if args.is_empty() || args == "help" {
+        println!("{DIM}  사용법: /news <키워드>     뉴스 검색{RESET}");
+        println!("{DIM}          /news save <번호>  검색 결과를 클립으로 저장{RESET}");
+        println!(
+            "{DIM}  환경변수: NAVER_CLIENT_ID, NAVER_CLIENT_SECRET (미설정 시 웹 검색 폴백){RESET}"
+        );
+        println!("{DIM}  예시:   /news 반도체 수출{RESET}\n");
+        return;
+    }
+
+    // Handle /news save <number>
+    if let Some(save_args) = args.strip_prefix("save") {
+        let save_args = save_args.trim();
+        let num: usize = match save_args.parse() {
+            Ok(n) if n >= 1 => n,
+            _ => {
+                eprintln!("{RED}  유효한 번호를 입력하세요 (예: /news save 1){RESET}\n");
+                return;
+            }
+        };
+        LAST_NEWS_RESULTS.with(|results| {
+            let results = results.borrow();
+            if results.is_empty() {
+                eprintln!("{RED}  먼저 /news <키워드>로 검색하세요.{RESET}\n");
+                return;
+            }
+            if num > results.len() {
+                eprintln!(
+                    "{RED}  번호 범위 초과: 1~{} 사이의 번호를 입력하세요.{RESET}\n",
+                    results.len()
+                );
+                return;
+            }
+            let item = &results[num - 1];
+            let date = today_str();
+            let path = news_clip_path(item, &date);
+            let content = format!(
+                "# {}\n\n- 날짜: {}\n- 링크: {}\n\n{}\n",
+                item.title, item.pub_date, item.link, item.description
+            );
+            match save_clip(&path, &item.link, &content) {
+                Ok(_) => {
+                    println!(
+                        "{GREEN}  ✓ 저장: {}{RESET}\n",
+                        path.display()
+                    );
+                }
+                Err(e) => {
+                    eprintln!("{RED}  저장 실패: {e}{RESET}\n");
+                }
+            }
+        });
+        return;
+    }
+
+    // Regular search
+    let keyword = args;
+    println!("{DIM}  '{keyword}' 뉴스 검색 중...{RESET}");
+
+    match fetch_news_results(keyword, 10) {
+        Ok(results) if results.is_empty() => {
+            println!("{DIM}  검색 결과가 없습니다.{RESET}\n");
+        }
+        Ok(results) => {
+            display_news_results(&results);
+            println!(
+                "{DIM}  💡 /news save <번호> 로 기사를 클립에 저장할 수 있습니다.{RESET}\n"
+            );
+            // Store for /news save
+            LAST_NEWS_RESULTS.with(|cell| {
+                *cell.borrow_mut() = results;
+            });
+        }
+        Err(e) => {
+            eprintln!("{RED}  뉴스 검색 실패: {e}{RESET}\n");
+            // Fallback: ask the agent to search
+            let prompt = format!(
+                "'{keyword}'에 대한 최신 뉴스를 검색해서 정리해줘. \
+                 제목, 날짜, 요약, 출처 링크를 포함해서 목록으로 보여줘."
+            );
+            run_prompt(agent, &prompt, session_total, model).await;
+            auto_compact_if_needed(agent);
+        }
+    }
+}
+
 // ── /summary ─────────────────────────────────────────────────────────────
 
 /// Parse `/summary` arguments: if the argument is an existing file path, read it;
@@ -5313,5 +5668,76 @@ mod tests {
         let result = resolve_summary_input("no_such_file_xyz.txt");
         // Non-existent file path is treated as inline text
         assert_eq!(result, Some("no_such_file_xyz.txt".to_string()));
+    }
+
+    // ── /news tests ──
+
+    #[test]
+    fn news_command_recognized() {
+        use crate::commands::{is_unknown_command, KNOWN_COMMANDS};
+        assert!(!is_unknown_command("/news"));
+        assert!(!is_unknown_command("/news 반도체"));
+        assert!(
+            KNOWN_COMMANDS.contains(&"/news"),
+            "/news should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn news_command_matching() {
+        let news_matches = |s: &str| s == "/news" || s.starts_with("/news ");
+        assert!(news_matches("/news"));
+        assert!(news_matches("/news 반도체"));
+        assert!(news_matches("/news save 1"));
+        assert!(!news_matches("/newsroom"));
+        assert!(!news_matches("/newsletter"));
+    }
+
+    #[test]
+    fn parse_news_results_valid_json() {
+        let json = r#"{"items":[
+            {"title":"<b>반도체</b> 수출 호조","link":"https://news.example.com/1","description":"반도체 수출이...","pubDate":"Thu, 19 Mar 2026 10:00:00 +0900"},
+            {"title":"삼성 <b>반도체</b> 신공장","link":"https://news.example.com/2","description":"삼성전자가...","pubDate":"Wed, 18 Mar 2026 09:00:00 +0900"}
+        ]}"#;
+        let results = parse_naver_news_json(json);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "반도체 수출 호조"); // HTML tags stripped
+        assert_eq!(results[0].link, "https://news.example.com/1");
+        assert!(results[0].description.contains("반도체"));
+        assert!(results[0].pub_date.contains("2026"));
+    }
+
+    #[test]
+    fn parse_news_results_empty() {
+        let json = r#"{"items":[]}"#;
+        let results = parse_naver_news_json(json);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn parse_news_results_invalid_json() {
+        let results = parse_naver_news_json("not json");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn strip_html_tags_basic() {
+        assert_eq!(strip_html_tags("<b>hello</b>"), "hello");
+        assert_eq!(strip_html_tags("no tags"), "no tags");
+        assert_eq!(strip_html_tags("<a href=\"x\">link</a>"), "link");
+        assert_eq!(strip_html_tags("&amp; &lt; &gt; &quot;"), "& < > \"");
+    }
+
+    #[test]
+    fn news_save_path_generation() {
+        let items = vec![NewsItem {
+            title: "테스트 기사".to_string(),
+            link: "https://news.example.com/article/42".to_string(),
+            description: "기사 요약".to_string(),
+            pub_date: "2026-03-19".to_string(),
+        }];
+        let path = news_clip_path(&items[0], "2026-03-19");
+        assert!(path.starts_with(".journalist/clips/"));
+        assert!(path.to_string_lossy().ends_with(".md"));
     }
 }
