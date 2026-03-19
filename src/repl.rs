@@ -666,6 +666,10 @@ pub async fn run_repl(
                 commands::handle_deadline(input);
                 continue;
             }
+            s if s == "/export" || s.starts_with("/export ") => {
+                commands::handle_export(input);
+                continue;
+            }
             s if s.starts_with('/') && is_unknown_command(s) => {
                 let cmd = s.split_whitespace().next().unwrap_or(s);
                 eprintln!("{RED}  unknown command: {cmd}{RESET}");

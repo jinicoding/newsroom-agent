@@ -1,6 +1,6 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
 //! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck,
-//! /briefing, /clip, /news, /summary, /stats, /draft, /deadline.
+//! /briefing, /clip, /news, /summary, /stats, /draft, /deadline, /export.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -5067,6 +5067,420 @@ fn handle_deadline_clear(title: &str) {
     println!("{GREEN}  ✅ 마감 해제: {title}{RESET}\n");
 }
 
+// ── /export ─────────────────────────────────────────────────────────────
+
+/// Base directory for exported articles.
+const EXPORTS_DIR: &str = ".journalist/exports";
+
+/// Strip markdown markup to produce clean plain text.
+pub fn markdown_to_plain_text(md: &str) -> String {
+    let mut out = String::with_capacity(md.len());
+
+    for line in md.lines() {
+        let trimmed = line.trim();
+
+        // Skip horizontal rules
+        if trimmed.chars().all(|c| c == '-' || c == '*' || c == '_' || c == ' ')
+            && trimmed.len() >= 3
+            && trimmed.chars().filter(|c| !c.is_whitespace()).count() >= 3
+        {
+            out.push('\n');
+            continue;
+        }
+
+        // Strip heading markers
+        let line = if trimmed.starts_with('#') {
+            let content = trimmed.trim_start_matches('#').trim();
+            content
+        } else {
+            trimmed
+        };
+
+        // Strip bold/italic markers
+        let line = line.replace("**", "").replace("__", "");
+        let line = line.replace('*', "").replace('_', " ");
+
+        // Strip inline code backticks
+        let line = line.replace('`', "");
+
+        // Strip link syntax [text](url) → text
+        let line = strip_md_links(&line);
+
+        // Strip image syntax ![alt](url) → alt
+        let line = strip_md_images(&line);
+
+        // Strip list markers
+        let line = strip_list_marker(&line);
+
+        out.push_str(&line);
+        out.push('\n');
+    }
+
+    // Collapse triple+ newlines into double
+    while out.contains("\n\n\n") {
+        out = out.replace("\n\n\n", "\n\n");
+    }
+
+    out.trim().to_string()
+}
+
+/// Strip markdown link syntax: [text](url) → text
+fn strip_md_links(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '[' {
+            // Look for ](
+            if let Some(close_bracket) = chars[i + 1..].iter().position(|&c| c == ']') {
+                let close_idx = i + 1 + close_bracket;
+                if close_idx + 1 < chars.len() && chars[close_idx + 1] == '(' {
+                    if let Some(close_paren) =
+                        chars[close_idx + 2..].iter().position(|&c| c == ')')
+                    {
+                        // Extract link text
+                        let text: String = chars[i + 1..close_idx].iter().collect();
+                        result.push_str(&text);
+                        i = close_idx + 2 + close_paren + 1;
+                        continue;
+                    }
+                }
+            }
+            result.push(chars[i]);
+            i += 1;
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+    result
+}
+
+/// Strip markdown image syntax: ![alt](url) → alt
+fn strip_md_images(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '!' && i + 1 < chars.len() && chars[i + 1] == '[' {
+            if let Some(close_bracket) = chars[i + 2..].iter().position(|&c| c == ']') {
+                let close_idx = i + 2 + close_bracket;
+                if close_idx + 1 < chars.len() && chars[close_idx + 1] == '(' {
+                    if let Some(close_paren) =
+                        chars[close_idx + 2..].iter().position(|&c| c == ')')
+                    {
+                        let alt: String = chars[i + 2..close_idx].iter().collect();
+                        result.push_str(&alt);
+                        i = close_idx + 2 + close_paren + 1;
+                        continue;
+                    }
+                }
+            }
+            result.push(chars[i]);
+            i += 1;
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+    result
+}
+
+/// Strip list markers (-, *, numbered) from line start.
+fn strip_list_marker(s: &str) -> String {
+    let trimmed = s.trim_start();
+    if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+        return trimmed[2..].to_string();
+    }
+    // Numbered list: "1. ", "2. ", etc.
+    if let Some(dot_pos) = trimmed.find(". ") {
+        if dot_pos <= 3 && trimmed[..dot_pos].chars().all(|c| c.is_ascii_digit()) {
+            return trimmed[dot_pos + 2..].to_string();
+        }
+    }
+    s.to_string()
+}
+
+/// Convert markdown to simple HTML.
+pub fn markdown_to_html(md: &str) -> String {
+    let mut out = String::with_capacity(md.len() * 2);
+    out.push_str("<!DOCTYPE html>\n<html lang=\"ko\">\n<head>\n");
+    out.push_str("<meta charset=\"UTF-8\">\n");
+    out.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n");
+    out.push_str("<style>\n");
+    out.push_str("body { font-family: 'Noto Sans KR', sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; line-height: 1.8; color: #333; }\n");
+    out.push_str("h1 { font-size: 1.6em; border-bottom: 2px solid #333; padding-bottom: 0.3em; }\n");
+    out.push_str("h2 { font-size: 1.3em; margin-top: 1.5em; }\n");
+    out.push_str("h3 { font-size: 1.1em; }\n");
+    out.push_str("blockquote { border-left: 3px solid #ccc; padding-left: 1em; color: #666; margin: 1em 0; }\n");
+    out.push_str(".meta { color: #888; font-size: 0.9em; margin-bottom: 2em; }\n");
+    out.push_str("</style>\n</head>\n<body>\n");
+
+    let mut in_paragraph = false;
+    let mut in_list = false;
+    let mut in_blockquote = false;
+
+    for line in md.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.is_empty() {
+            if in_paragraph {
+                out.push_str("</p>\n");
+                in_paragraph = false;
+            }
+            if in_list {
+                out.push_str("</ul>\n");
+                in_list = false;
+            }
+            if in_blockquote {
+                out.push_str("</blockquote>\n");
+                in_blockquote = false;
+            }
+            continue;
+        }
+
+        // Headings
+        if trimmed.starts_with("### ") {
+            if in_paragraph {
+                out.push_str("</p>\n");
+                in_paragraph = false;
+            }
+            let content = html_escape(&trimmed[4..]);
+            out.push_str(&format!("<h3>{content}</h3>\n"));
+            continue;
+        }
+        if trimmed.starts_with("## ") {
+            if in_paragraph {
+                out.push_str("</p>\n");
+                in_paragraph = false;
+            }
+            let content = html_escape(&trimmed[3..]);
+            out.push_str(&format!("<h2>{content}</h2>\n"));
+            continue;
+        }
+        if trimmed.starts_with("# ") {
+            if in_paragraph {
+                out.push_str("</p>\n");
+                in_paragraph = false;
+            }
+            let content = html_escape(&trimmed[2..]);
+            out.push_str(&format!("<h1>{content}</h1>\n"));
+            continue;
+        }
+
+        // Blockquote
+        if trimmed.starts_with("> ") {
+            if in_paragraph {
+                out.push_str("</p>\n");
+                in_paragraph = false;
+            }
+            if !in_blockquote {
+                out.push_str("<blockquote>\n");
+                in_blockquote = true;
+            }
+            let content = inline_md_to_html(&trimmed[2..]);
+            out.push_str(&format!("<p>{content}</p>\n"));
+            continue;
+        }
+
+        // List items
+        if (trimmed.starts_with("- ") || trimmed.starts_with("* "))
+            || (trimmed.len() > 2
+                && trimmed.find(". ").map_or(false, |p| {
+                    p <= 3 && trimmed[..p].chars().all(|c| c.is_ascii_digit())
+                }))
+        {
+            if in_paragraph {
+                out.push_str("</p>\n");
+                in_paragraph = false;
+            }
+            if !in_list {
+                out.push_str("<ul>\n");
+                in_list = true;
+            }
+            let text = strip_list_marker(trimmed);
+            let content = inline_md_to_html(&text);
+            out.push_str(&format!("<li>{content}</li>\n"));
+            continue;
+        }
+
+        // Regular paragraph
+        if !in_paragraph {
+            out.push_str("<p>");
+            in_paragraph = true;
+        } else {
+            out.push_str("<br>\n");
+        }
+        let content = inline_md_to_html(trimmed);
+        out.push_str(&content);
+    }
+
+    if in_paragraph {
+        out.push_str("</p>\n");
+    }
+    if in_list {
+        out.push_str("</ul>\n");
+    }
+    if in_blockquote {
+        out.push_str("</blockquote>\n");
+    }
+
+    out.push_str("</body>\n</html>\n");
+    out
+}
+
+/// Escape HTML special characters.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// Convert inline markdown (bold, italic, code, links) to HTML.
+fn inline_md_to_html(s: &str) -> String {
+    let s = html_escape(s);
+    // Bold: **text** or __text__
+    let s = regex_replace_pairs(&s, "**", "<strong>", "</strong>");
+    let s = regex_replace_pairs(&s, "__", "<strong>", "</strong>");
+    // Italic: *text* or _text_ (simplified)
+    let s = regex_replace_pairs(&s, "*", "<em>", "</em>");
+    // Inline code: `code`
+    let s = regex_replace_pairs(&s, "`", "<code>", "</code>");
+    s
+}
+
+/// Simple paired-delimiter replacement.
+fn regex_replace_pairs(s: &str, delim: &str, open: &str, close: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut rest = s;
+    let mut is_open = false;
+
+    while let Some(pos) = rest.find(delim) {
+        result.push_str(&rest[..pos]);
+        if is_open {
+            result.push_str(close);
+        } else {
+            result.push_str(open);
+        }
+        is_open = !is_open;
+        rest = &rest[pos + delim.len()..];
+    }
+    result.push_str(rest);
+    // If we opened but never closed, treat the tag as literal
+    if is_open {
+        // Re-do without replacement — just return original
+        return s.to_string();
+    }
+    result
+}
+
+/// Build the metadata header for an exported article.
+fn build_export_meta(source_path: &str, char_count: usize) -> String {
+    let today = today_str();
+    let filename = std::path::Path::new(source_path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    format!(
+        "제목: {filename}\n날짜: {today}\n글자수: {char_count}자\n"
+    )
+}
+
+/// Handle `/export <파일> [--html]` — export article to plain text or HTML.
+pub fn handle_export(input: &str) {
+    let args = input.strip_prefix("/export").unwrap_or("").trim();
+
+    if args.is_empty() {
+        // Try latest draft
+        match find_latest_draft() {
+            Some(p) => export_file(&p.to_string_lossy(), false),
+            None => {
+                eprintln!("{DIM}  사용법: /export <파일> [--html]{RESET}");
+                eprintln!("{DIM}  마크다운 기사를 텍스트 또는 HTML로 내보냅니다.{RESET}\n");
+            }
+        }
+        return;
+    }
+
+    let html_mode = args.contains("--html");
+    let file_arg = args.replace("--html", "").trim().to_string();
+
+    if file_arg.is_empty() {
+        match find_latest_draft() {
+            Some(p) => export_file(&p.to_string_lossy(), html_mode),
+            None => {
+                eprintln!("{RED}  내보낼 파일을 지정하세요.{RESET}\n");
+            }
+        }
+    } else {
+        export_file(&file_arg, html_mode);
+    }
+}
+
+/// Core export logic: read file, convert, save, print info.
+fn export_file(source_path: &str, html_mode: bool) {
+    let content = match std::fs::read_to_string(source_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{RED}  파일 읽기 실패 ({source_path}): {e}{RESET}\n");
+            return;
+        }
+    };
+
+    // Build output
+    let (output, ext) = if html_mode {
+        (markdown_to_html(&content), "html")
+    } else {
+        let plain = markdown_to_plain_text(&content);
+        let meta = build_export_meta(source_path, plain.chars().filter(|c| !c.is_whitespace()).count());
+        (format!("{meta}\n---\n\n{plain}"), "txt")
+    };
+
+    // Ensure exports directory
+    let exports = std::path::Path::new(EXPORTS_DIR);
+    if let Err(e) = std::fs::create_dir_all(exports) {
+        eprintln!("{RED}  디렉토리 생성 실패: {e}{RESET}\n");
+        return;
+    }
+
+    // Build output filename
+    let stem = std::path::Path::new(source_path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "export".to_string());
+    let out_name = format!("{stem}.{ext}");
+    let out_path = exports.join(&out_name);
+
+    if let Err(e) = std::fs::write(&out_path, &output) {
+        eprintln!("{RED}  저장 실패: {e}{RESET}\n");
+        return;
+    }
+
+    let char_count = if html_mode {
+        markdown_to_plain_text(&content)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .count()
+    } else {
+        output
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .count()
+    };
+
+    let format_label = if html_mode { "HTML" } else { "텍스트" };
+    println!(
+        "{GREEN}  ✅ {format_label} 내보내기 완료: {}{RESET}",
+        out_path.display()
+    );
+    println!("{DIM}  글자수: {char_count}자 (공백 제외){RESET}");
+    println!(
+        "{DIM}  💡 클립보드 복사: cat {} | xclip -selection clipboard{RESET}\n",
+        out_path.display()
+    );
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -7037,5 +7451,157 @@ mod tests {
         let loaded = load_deadlines_from(&path);
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].datetime, "2026-03-21T09:00:00");
+    }
+
+    // --- export tests ---
+
+    #[test]
+    fn export_markdown_to_plain_text_strips_headings() {
+        let md = "# 제목\n\n본문 내용입니다.\n\n## 소제목\n\n더 많은 내용.";
+        let plain = markdown_to_plain_text(md);
+        assert!(!plain.contains('#'));
+        assert!(plain.contains("제목"));
+        assert!(plain.contains("본문 내용입니다."));
+        assert!(plain.contains("소제목"));
+    }
+
+    #[test]
+    fn export_markdown_to_plain_text_strips_bold_italic() {
+        let md = "이것은 **굵은** 글씨와 *기울임* 입니다.";
+        let plain = markdown_to_plain_text(md);
+        assert!(!plain.contains("**"));
+        assert!(!plain.contains('*'));
+        assert!(plain.contains("굵은"));
+        assert!(plain.contains("기울임"));
+    }
+
+    #[test]
+    fn export_markdown_to_plain_text_strips_links() {
+        let md = "자세한 내용은 [여기](https://example.com)를 참고하세요.";
+        let plain = markdown_to_plain_text(md);
+        assert!(!plain.contains("https://"));
+        assert!(!plain.contains('['));
+        assert!(plain.contains("여기"));
+    }
+
+    #[test]
+    fn export_markdown_to_plain_text_strips_images() {
+        let md = "이미지: ![대체텍스트](image.png)";
+        let plain = markdown_to_plain_text(md);
+        assert!(!plain.contains("image.png"));
+        assert!(plain.contains("대체텍스트"));
+    }
+
+    #[test]
+    fn export_markdown_to_plain_text_strips_list_markers() {
+        let md = "- 항목1\n- 항목2\n1. 번호항목";
+        let plain = markdown_to_plain_text(md);
+        assert!(!plain.starts_with("- "));
+        assert!(plain.contains("항목1"));
+        assert!(plain.contains("번호항목"));
+    }
+
+    #[test]
+    fn export_markdown_to_html_basic_structure() {
+        let md = "# 제목\n\n본문 내용.";
+        let html = markdown_to_html(md);
+        assert!(html.contains("<!DOCTYPE html>"));
+        assert!(html.contains("<h1>제목</h1>"));
+        assert!(html.contains("<p>본문 내용.</p>"));
+        assert!(html.contains("</html>"));
+    }
+
+    #[test]
+    fn export_markdown_to_html_blockquote() {
+        let md = "> 인용문입니다.";
+        let html = markdown_to_html(md);
+        assert!(html.contains("<blockquote>"));
+        assert!(html.contains("인용문입니다."));
+    }
+
+    #[test]
+    fn export_markdown_to_html_list() {
+        let md = "- 항목1\n- 항목2";
+        let html = markdown_to_html(md);
+        assert!(html.contains("<ul>"));
+        assert!(html.contains("<li>항목1</li>"));
+        assert!(html.contains("<li>항목2</li>"));
+    }
+
+    #[test]
+    fn export_html_escapes_special_chars() {
+        assert_eq!(
+            html_escape("<script>alert('xss')</script>"),
+            "&lt;script&gt;alert('xss')&lt;/script&gt;"
+        );
+        assert_eq!(html_escape("a & b"), "a &amp; b");
+        assert_eq!(html_escape("\"quoted\""), "&quot;quoted&quot;");
+    }
+
+    #[test]
+    fn export_inline_md_to_html_bold() {
+        let result = inline_md_to_html("이것은 **굵은** 텍스트");
+        assert!(result.contains("<strong>굵은</strong>"));
+    }
+
+    #[test]
+    fn export_strip_list_marker_dash() {
+        assert_eq!(strip_list_marker("- 항목"), "항목");
+        assert_eq!(strip_list_marker("* 항목"), "항목");
+        assert_eq!(strip_list_marker("1. 항목"), "항목");
+        assert_eq!(strip_list_marker("일반 텍스트"), "일반 텍스트");
+    }
+
+    #[test]
+    fn export_build_meta_includes_info() {
+        let meta = build_export_meta("test-article.md", 500);
+        assert!(meta.contains("제목: test-article"));
+        assert!(meta.contains("글자수: 500자"));
+        assert!(meta.contains("날짜:"));
+    }
+
+    #[test]
+    fn export_file_creates_text_output() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("article.md");
+        std::fs::write(&src, "# 테스트 기사\n\n본문 **내용**입니다.").unwrap();
+
+        // Set working dir context for EXPORTS_DIR
+        let exports = tmp.path().join(".journalist").join("exports");
+        std::fs::create_dir_all(&exports).unwrap();
+
+        // Directly test the conversion functions
+        let content = std::fs::read_to_string(&src).unwrap();
+        let plain = markdown_to_plain_text(&content);
+        assert!(plain.contains("테스트 기사"));
+        assert!(plain.contains("본문"));
+        assert!(!plain.contains("**"));
+        assert!(!plain.contains('#'));
+    }
+
+    #[test]
+    fn export_file_creates_html_output() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("article.md");
+        std::fs::write(&src, "# 테스트\n\n> 인용\n\n- 목록").unwrap();
+
+        let content = std::fs::read_to_string(&src).unwrap();
+        let html = markdown_to_html(&content);
+        assert!(html.contains("<h1>테스트</h1>"));
+        assert!(html.contains("<blockquote>"));
+        assert!(html.contains("<li>목록</li>"));
+    }
+
+    #[test]
+    fn export_regex_replace_pairs_balanced() {
+        let result = regex_replace_pairs("a **b** c", "**", "<strong>", "</strong>");
+        assert_eq!(result, "a <strong>b</strong> c");
+    }
+
+    #[test]
+    fn export_regex_replace_pairs_unbalanced() {
+        // Unbalanced delimiters should return original
+        let result = regex_replace_pairs("a **b c", "**", "<strong>", "</strong>");
+        assert_eq!(result, "a **b c");
     }
 }

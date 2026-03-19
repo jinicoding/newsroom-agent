@@ -36,3 +36,14 @@ SESSION_PLAN.md 작성 완료.
 7개 테스트 작성 및 통과, AI 호출 없이 로컬 동작, 탭 완성 지원.
 
   ── Task 2 / 4 ──
+완료. `/deadline` 커맨드가 구현되었습니다:
+
+- **`/deadline set <제목> <시간>`** — 마감 설정 (`18:00`, `2026-03-20 09:00` 형식 지원)
+- **`/deadline list`** (또는 `/deadline`) — 남은 시간 순 정렬, 색상 강조 (🔴 초과, 🟡 1시간 이내, 🟢 여유)
+- **`/deadline clear <제목>`** — 마감 해제
+- 데이터는 `.journalist/deadlines.json`에 저장
+- AI 호출 없이 로컬 즉시 동작
+- 탭 완성 지원 (`/deadline <Tab>` → set, list, clear)
+- 테스트 12개 추가 (파싱, 저장/로드, 남은 시간 계산, 윤년 등)
+
+  ── Task 3 / 4 ──
