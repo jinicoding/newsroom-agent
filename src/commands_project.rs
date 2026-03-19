@@ -1,5 +1,5 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
-//! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck, /briefing, /clip, /news, /summary.
+//! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck, /briefing, /clip, /news, /summary, /stats.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -4142,6 +4142,158 @@ pub async fn handle_summary(
     auto_compact_if_needed(agent);
 }
 
+// ── /stats ──────────────────────────────────────────────────────────────
+
+/// Text statistics computed locally (no AI).
+#[derive(Debug, PartialEq)]
+pub struct TextStats {
+    pub chars_with_spaces: usize,
+    pub chars_without_spaces: usize,
+    pub words: usize,
+    pub sentences: usize,
+    pub paragraphs: usize,
+    /// Estimated reading time in seconds (based on ~500 chars/min for Korean).
+    pub reading_time_secs: u64,
+}
+
+/// Compute text statistics from a string.
+pub fn compute_text_stats(text: &str) -> TextStats {
+    let chars_with_spaces = text.chars().count();
+    let chars_without_spaces = text.chars().filter(|c| !c.is_whitespace()).count();
+
+    // Word count: split on whitespace, count non-empty tokens
+    let words = text.split_whitespace().count();
+
+    // Sentence count: split on sentence-ending punctuation (. ! ? 。)
+    let sentences = text
+        .chars()
+        .filter(|&c| c == '.' || c == '!' || c == '?' || c == '。')
+        .count()
+        .max(if chars_without_spaces > 0 { 1 } else { 0 });
+
+    // Paragraph count: sequences of non-empty lines separated by blank lines
+    let paragraphs = text
+        .split('\n')
+        .fold((0usize, false), |(count, in_para), line| {
+            let non_empty = !line.trim().is_empty();
+            if non_empty && !in_para {
+                (count + 1, true)
+            } else if !non_empty {
+                (count, false)
+            } else {
+                (count, in_para)
+            }
+        })
+        .0;
+
+    // Korean reading speed ~500 chars/min (excluding spaces)
+    let reading_time_secs = if chars_without_spaces > 0 {
+        (chars_without_spaces as u64 * 60) / 500
+    } else {
+        0
+    };
+
+    TextStats {
+        chars_with_spaces,
+        chars_without_spaces,
+        words,
+        sentences,
+        paragraphs,
+        reading_time_secs,
+    }
+}
+
+/// Find the most recently modified file in `.journalist/drafts/`.
+fn find_latest_draft() -> Option<std::path::PathBuf> {
+    let dir = std::path::Path::new(DRAFTS_DIR);
+    if !dir.exists() {
+        return None;
+    }
+    let mut best: Option<(std::path::PathBuf, std::time::SystemTime)> = None;
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map_or(true, |e| e != "md") {
+                continue;
+            }
+            if let Ok(meta) = entry.metadata() {
+                if let Ok(modified) = meta.modified() {
+                    if best.as_ref().map_or(true, |(_, t)| modified > *t) {
+                        best = Some((path, modified));
+                    }
+                }
+            }
+        }
+    }
+    best.map(|(p, _)| p)
+}
+
+/// Format reading time as human-readable string.
+fn format_reading_time(secs: u64) -> String {
+    if secs < 60 {
+        format!("{}초", secs)
+    } else {
+        let min = secs / 60;
+        let sec = secs % 60;
+        if sec == 0 {
+            format!("{}분", min)
+        } else {
+            format!("{}분 {}초", min, sec)
+        }
+    }
+}
+
+/// Handle `/stats [파일경로]` — show text statistics for a file.
+pub fn handle_stats(input: &str) {
+    let arg = input.strip_prefix("/stats").unwrap_or("").trim();
+
+    let (path, content) = if arg.is_empty() {
+        // No argument: find latest draft
+        match find_latest_draft() {
+            Some(p) => match std::fs::read_to_string(&p) {
+                Ok(c) => (p.to_string_lossy().to_string(), c),
+                Err(e) => {
+                    eprintln!("{RED}  파일 읽기 실패: {e}{RESET}\n");
+                    return;
+                }
+            },
+            None => {
+                eprintln!("{DIM}  분석할 파일이 없습니다. 경로를 지정하거나 /article로 초안을 먼저 작성하세요.{RESET}\n");
+                return;
+            }
+        }
+    } else {
+        match std::fs::read_to_string(arg) {
+            Ok(c) => (arg.to_string(), c),
+            Err(e) => {
+                eprintln!("{RED}  파일 읽기 실패 ({arg}): {e}{RESET}\n");
+                return;
+            }
+        }
+    };
+
+    let stats = compute_text_stats(&content);
+
+    println!("{BOLD}  📊 기사 통계: {path}{RESET}");
+    println!("{DIM}  ──────────────────────────────{RESET}");
+    println!(
+        "  글자 수 (공백 포함)  {}",
+        stats.chars_with_spaces
+    );
+    println!(
+        "  글자 수 (공백 제외)  {}",
+        stats.chars_without_spaces
+    );
+    println!("  단어 수             {}", stats.words);
+    println!("  문장 수             {}", stats.sentences);
+    println!("  문단 수             {}", stats.paragraphs);
+    println!(
+        "  예상 읽기 시간       {}",
+        format_reading_time(stats.reading_time_secs)
+    );
+    println!();
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -5833,5 +5985,75 @@ mod tests {
         let path = news_clip_path(&items[0], "2026-03-19");
         assert!(path.starts_with(".journalist/clips/"));
         assert!(path.to_string_lossy().ends_with(".md"));
+    }
+
+    // ── /stats tests ──
+
+    #[test]
+    fn stats_empty_text() {
+        let stats = compute_text_stats("");
+        assert_eq!(stats.chars_with_spaces, 0);
+        assert_eq!(stats.chars_without_spaces, 0);
+        assert_eq!(stats.words, 0);
+        assert_eq!(stats.sentences, 0);
+        assert_eq!(stats.paragraphs, 0);
+        assert_eq!(stats.reading_time_secs, 0);
+    }
+
+    #[test]
+    fn stats_single_sentence() {
+        let text = "오늘 서울 날씨는 맑음.";
+        let stats = compute_text_stats(text);
+        assert_eq!(stats.chars_with_spaces, 13);
+        assert_eq!(stats.chars_without_spaces, 10);
+        assert_eq!(stats.words, 4); // "오늘" "서울" "날씨는" "맑음."
+        assert_eq!(stats.sentences, 1);
+        assert_eq!(stats.paragraphs, 1);
+    }
+
+    #[test]
+    fn stats_multiple_paragraphs() {
+        let text = "첫 번째 문단입니다.\n\n두 번째 문단입니다.\n\n세 번째 문단입니다.";
+        let stats = compute_text_stats(text);
+        assert_eq!(stats.paragraphs, 3);
+        assert_eq!(stats.sentences, 3);
+    }
+
+    #[test]
+    fn stats_reading_time() {
+        // 500 chars (no spaces) → 60 seconds
+        let text = "가".repeat(500);
+        let stats = compute_text_stats(&text);
+        assert_eq!(stats.reading_time_secs, 60);
+    }
+
+    #[test]
+    fn stats_mixed_punctuation() {
+        let text = "정말요? 네! 좋습니다.";
+        let stats = compute_text_stats(text);
+        assert_eq!(stats.sentences, 3);
+    }
+
+    #[test]
+    fn format_reading_time_seconds_only() {
+        assert_eq!(format_reading_time(30), "30초");
+    }
+
+    #[test]
+    fn format_reading_time_minutes_only() {
+        assert_eq!(format_reading_time(120), "2분");
+    }
+
+    #[test]
+    fn format_reading_time_mixed() {
+        assert_eq!(format_reading_time(90), "1분 30초");
+    }
+
+    #[test]
+    fn stats_words_english() {
+        let text = "Hello world. This is a test.";
+        let stats = compute_text_stats(text);
+        assert_eq!(stats.words, 6);
+        assert_eq!(stats.sentences, 2);
     }
 }

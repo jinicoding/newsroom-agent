@@ -654,6 +654,10 @@ pub async fn run_repl(
                     .await;
                 continue;
             }
+            s if s == "/stats" || s.starts_with("/stats ") => {
+                commands::handle_stats(input);
+                continue;
+            }
             s if s.starts_with('/') && is_unknown_command(s) => {
                 let cmd = s.split_whitespace().next().unwrap_or(s);
                 eprintln!("{RED}  unknown command: {cmd}{RESET}");
