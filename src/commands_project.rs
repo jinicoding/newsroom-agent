@@ -1,5 +1,6 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
-//! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck, /briefing, /clip, /news, /summary, /stats.
+//! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck,
+//! /briefing, /clip, /news, /summary, /stats, /draft.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -4294,6 +4295,437 @@ pub fn handle_stats(input: &str) {
     println!();
 }
 
+// ── /draft ──────────────────────────────────────────────────────────────
+
+/// Base directory for versioned drafts: `.journalist/drafts/<slug>/v1.md, v2.md, ...`
+const DRAFT_VERSIONS_BASE: &str = ".journalist/drafts";
+
+/// Format a UNIX timestamp as "YYYY-MM-DD HH:MM" (UTC).
+fn format_unix_timestamp(secs: u64) -> String {
+    let s = secs as i64;
+    let days = s / 86400;
+    let time_of_day = s % 86400;
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+
+    // Convert days since epoch to y/m/d (civil calendar)
+    // Algorithm from Howard Hinnant's chrono-compatible date library
+    let z = days + 719468;
+    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+
+    format!("{y:04}-{m:02}-{d:02} {hours:02}:{minutes:02}")
+}
+
+/// Return the directory path for a given draft title.
+fn draft_versions_dir(title: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(title, 50);
+    std::path::PathBuf::from(DRAFT_VERSIONS_BASE).join(slug)
+}
+
+/// Find the next version number for a draft title.
+fn next_version_number(dir: &std::path::Path) -> u32 {
+    if !dir.exists() {
+        return 1;
+    }
+    let mut max = 0u32;
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(rest) = name.strip_prefix('v') {
+                if let Some(num_str) = rest.strip_suffix(".md") {
+                    if let Ok(n) = num_str.parse::<u32>() {
+                        if n > max {
+                            max = n;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    max + 1
+}
+
+/// List all version files in a draft directory, sorted by version number.
+fn list_versions(dir: &std::path::Path) -> Vec<(u32, std::path::PathBuf)> {
+    let mut versions = Vec::new();
+    if !dir.exists() {
+        return versions;
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(rest) = name.strip_prefix('v') {
+                if let Some(num_str) = rest.strip_suffix(".md") {
+                    if let Ok(n) = num_str.parse::<u32>() {
+                        versions.push((n, entry.path()));
+                    }
+                }
+            }
+        }
+    }
+    versions.sort_by_key(|(n, _)| *n);
+    versions
+}
+
+/// Handle `/draft` command with subcommands: save, list, load, diff.
+pub fn handle_draft(input: &str) {
+    let args = input.strip_prefix("/draft").unwrap_or("").trim();
+
+    if args.is_empty() {
+        print_draft_usage();
+        return;
+    }
+
+    let (sub, rest) = match args.split_once(char::is_whitespace) {
+        Some((s, r)) => (s, r.trim()),
+        None => (args, ""),
+    };
+
+    match sub {
+        "save" => handle_draft_save(rest),
+        "list" => handle_draft_list(rest),
+        "load" => handle_draft_load(rest),
+        "diff" => handle_draft_diff(rest),
+        _ => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {sub}{RESET}");
+            print_draft_usage();
+        }
+    }
+}
+
+fn print_draft_usage() {
+    println!("{DIM}  사용법:");
+    println!("    /draft save <제목> [파일]   기사를 버전별로 저장 (파일 미지정 시 최신 초안)");
+    println!("    /draft list [제목]          저장된 초안 목록");
+    println!("    /draft load <제목> [버전]   특정 버전 불러오기 (미지정 시 최신)");
+    println!("    /draft diff <제목> [v1] [v2] 두 버전 간 차이 비교{RESET}\n");
+}
+
+/// `/draft save <title> [file]`
+fn handle_draft_save(args: &str) {
+    if args.is_empty() {
+        eprintln!("{RED}  제목을 지정하세요: /draft save <제목> [파일]{RESET}\n");
+        return;
+    }
+
+    let (title, file_arg) = match args.split_once(char::is_whitespace) {
+        Some((t, f)) => (t.trim(), f.trim()),
+        None => (args, ""),
+    };
+
+    // Read content: from file argument, or find latest draft
+    let content = if !file_arg.is_empty() {
+        match std::fs::read_to_string(file_arg) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("{RED}  파일 읽기 실패 ({file_arg}): {e}{RESET}\n");
+                return;
+            }
+        }
+    } else {
+        match find_latest_draft() {
+            Some(p) => match std::fs::read_to_string(&p) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("{RED}  파일 읽기 실패: {e}{RESET}\n");
+                    return;
+                }
+            },
+            None => {
+                eprintln!("{RED}  저장할 파일이 없습니다. 파일 경로를 지정하거나 /article로 초안을 먼저 작성하세요.{RESET}\n");
+                return;
+            }
+        }
+    };
+
+    let dir = draft_versions_dir(title);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("{RED}  디렉토리 생성 실패: {e}{RESET}\n");
+        return;
+    }
+
+    let ver = next_version_number(&dir);
+    let path = dir.join(format!("v{ver}.md"));
+    if let Err(e) = std::fs::write(&path, &content) {
+        eprintln!("{RED}  저장 실패: {e}{RESET}\n");
+        return;
+    }
+
+    let char_count = content.chars().count();
+    println!(
+        "{GREEN}  ✅ 저장: {title} v{ver} ({char_count}자) → {}{RESET}\n",
+        path.display()
+    );
+}
+
+/// `/draft list [title]`
+fn handle_draft_list(title: &str) {
+    if title.is_empty() {
+        // List all draft titles
+        let base = std::path::Path::new(DRAFT_VERSIONS_BASE);
+        if !base.exists() {
+            println!("{DIM}  저장된 초안이 없습니다.{RESET}\n");
+            return;
+        }
+        let mut entries: Vec<(String, usize, String, usize)> = Vec::new();
+        if let Ok(dirs) = std::fs::read_dir(base) {
+            for entry in dirs.flatten() {
+                if !entry.file_type().map_or(false, |ft| ft.is_dir()) {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().to_string();
+                let versions = list_versions(&entry.path());
+                if versions.is_empty() {
+                    continue;
+                }
+                let ver_count = versions.len();
+                // Last modified time of the latest version
+                let last_path = &versions.last().unwrap().1;
+                let modified = std::fs::metadata(last_path)
+                    .and_then(|m| m.modified())
+                    .ok();
+                let date_str = modified
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| format_unix_timestamp(d.as_secs()))
+                    .unwrap_or_else(|| "-".to_string());
+                // Char count of latest version
+                let char_count = std::fs::read_to_string(last_path)
+                    .map(|c| c.chars().count())
+                    .unwrap_or(0);
+                entries.push((name, ver_count, date_str, char_count));
+            }
+        }
+
+        if entries.is_empty() {
+            println!("{DIM}  저장된 초안이 없습니다.{RESET}\n");
+            return;
+        }
+
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        println!("{BOLD}  📝 초안 목록{RESET}");
+        println!("{DIM}  ──────────────────────────────{RESET}");
+        for (name, ver_count, date, chars) in &entries {
+            println!("  {name}  (v{ver_count}, {date}, {chars}자)");
+        }
+        println!();
+    } else {
+        // List versions for a specific title
+        let dir = draft_versions_dir(title);
+        let versions = list_versions(&dir);
+        if versions.is_empty() {
+            eprintln!("{DIM}  '{title}'에 저장된 버전이 없습니다.{RESET}\n");
+            return;
+        }
+
+        println!("{BOLD}  📝 {title} 버전 목록{RESET}");
+        println!("{DIM}  ──────────────────────────────{RESET}");
+        for (ver, path) in &versions {
+            let modified = std::fs::metadata(path)
+                .and_then(|m| m.modified())
+                .ok();
+            let date_str = modified
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| format_unix_timestamp(d.as_secs()))
+                .unwrap_or_else(|| "-".to_string());
+            let char_count = std::fs::read_to_string(path)
+                .map(|c| c.chars().count())
+                .unwrap_or(0);
+            println!("  v{ver}  ({date_str}, {char_count}자)");
+        }
+        println!();
+    }
+}
+
+/// `/draft load <title> [version]`
+fn handle_draft_load(args: &str) {
+    if args.is_empty() {
+        eprintln!("{RED}  제목을 지정하세요: /draft load <제목> [버전]{RESET}\n");
+        return;
+    }
+
+    let (title, ver_arg) = match args.split_once(char::is_whitespace) {
+        Some((t, v)) => (t.trim(), v.trim()),
+        None => (args, ""),
+    };
+
+    let dir = draft_versions_dir(title);
+    let versions = list_versions(&dir);
+    if versions.is_empty() {
+        eprintln!("{DIM}  '{title}'에 저장된 버전이 없습니다.{RESET}\n");
+        return;
+    }
+
+    let target_ver = if ver_arg.is_empty() {
+        // Load latest
+        versions.last().unwrap().0
+    } else {
+        // Parse version: accept "v3" or "3"
+        let num_str = ver_arg.strip_prefix('v').unwrap_or(ver_arg);
+        match num_str.parse::<u32>() {
+            Ok(n) => n,
+            Err(_) => {
+                eprintln!("{RED}  버전 번호가 올바르지 않습니다: {ver_arg}{RESET}\n");
+                return;
+            }
+        }
+    };
+
+    let path = dir.join(format!("v{target_ver}.md"));
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            let char_count = content.chars().count();
+            println!(
+                "{BOLD}  📄 {title} v{target_ver} ({char_count}자){RESET}"
+            );
+            println!("{DIM}  ──────────────────────────────{RESET}");
+            println!("{content}");
+        }
+        Err(_) => {
+            let available: Vec<String> = versions.iter().map(|(v, _)| format!("v{v}")).collect();
+            eprintln!(
+                "{RED}  v{target_ver} 버전이 존재하지 않습니다. 사용 가능: {}{RESET}\n",
+                available.join(", ")
+            );
+        }
+    }
+}
+
+/// `/draft diff <title> [v1] [v2]`
+fn handle_draft_diff(args: &str) {
+    if args.is_empty() {
+        eprintln!("{RED}  제목을 지정하세요: /draft diff <제목> [v1] [v2]{RESET}\n");
+        return;
+    }
+
+    let parts: Vec<&str> = args.split_whitespace().collect();
+    let title = parts[0];
+
+    let dir = draft_versions_dir(title);
+    let versions = list_versions(&dir);
+    if versions.len() < 2 {
+        eprintln!("{DIM}  비교하려면 최소 2개 버전이 필요합니다.{RESET}\n");
+        return;
+    }
+
+    // Determine which two versions to compare
+    let (v1, v2) = if parts.len() >= 3 {
+        let parse_ver = |s: &str| -> Option<u32> {
+            let num_str = s.strip_prefix('v').unwrap_or(s);
+            num_str.parse().ok()
+        };
+        match (parse_ver(parts[1]), parse_ver(parts[2])) {
+            (Some(a), Some(b)) => (a, b),
+            _ => {
+                eprintln!("{RED}  버전 번호가 올바르지 않습니다.{RESET}\n");
+                return;
+            }
+        }
+    } else if parts.len() == 2 {
+        // One version specified: compare it with the latest
+        let parse_ver = |s: &str| -> Option<u32> {
+            let num_str = s.strip_prefix('v').unwrap_or(s);
+            num_str.parse().ok()
+        };
+        match parse_ver(parts[1]) {
+            Some(a) => {
+                let latest = versions.last().unwrap().0;
+                if a == latest {
+                    // Compare with second-to-last
+                    let prev = versions[versions.len() - 2].0;
+                    (prev, a)
+                } else {
+                    (a, latest)
+                }
+            }
+            None => {
+                eprintln!("{RED}  버전 번호가 올바르지 않습니다.{RESET}\n");
+                return;
+            }
+        }
+    } else {
+        // No versions specified: compare last two
+        let len = versions.len();
+        (versions[len - 2].0, versions[len - 1].0)
+    };
+
+    let path1 = dir.join(format!("v{v1}.md"));
+    let path2 = dir.join(format!("v{v2}.md"));
+
+    let content1 = match std::fs::read_to_string(&path1) {
+        Ok(c) => c,
+        Err(_) => {
+            eprintln!("{RED}  v{v1} 버전이 존재하지 않습니다.{RESET}\n");
+            return;
+        }
+    };
+    let content2 = match std::fs::read_to_string(&path2) {
+        Ok(c) => c,
+        Err(_) => {
+            eprintln!("{RED}  v{v2} 버전이 존재하지 않습니다.{RESET}\n");
+            return;
+        }
+    };
+
+    let lines1: Vec<&str> = content1.lines().collect();
+    let lines2: Vec<&str> = content2.lines().collect();
+
+    println!(
+        "{BOLD}  📊 {title}: v{v1} → v{v2} 비교{RESET}"
+    );
+    println!("{DIM}  ──────────────────────────────{RESET}");
+
+    // Simple line-by-line diff
+    let max_lines = lines1.len().max(lines2.len());
+    let mut adds = 0usize;
+    let mut removes = 0usize;
+    let mut changes = Vec::new();
+
+    for i in 0..max_lines {
+        let l1 = lines1.get(i).copied();
+        let l2 = lines2.get(i).copied();
+        match (l1, l2) {
+            (Some(a), Some(b)) if a == b => {}
+            (Some(a), Some(b)) => {
+                changes.push(format!("{RED}  - [{ln}] {a}{RESET}", ln = i + 1));
+                changes.push(format!("{GREEN}  + [{ln}] {b}{RESET}", ln = i + 1));
+                removes += 1;
+                adds += 1;
+            }
+            (Some(a), None) => {
+                changes.push(format!("{RED}  - [{ln}] {a}{RESET}", ln = i + 1));
+                removes += 1;
+            }
+            (None, Some(b)) => {
+                changes.push(format!("{GREEN}  + [{ln}] {b}{RESET}", ln = i + 1));
+                adds += 1;
+            }
+            (None, None) => {}
+        }
+    }
+
+    if changes.is_empty() {
+        println!("{DIM}  두 버전이 동일합니다.{RESET}\n");
+    } else {
+        let c1_chars = content1.chars().count();
+        let c2_chars = content2.chars().count();
+        println!(
+            "{DIM}  v{v1}: {c1_chars}자 → v{v2}: {c2_chars}자 (차이: {adds} 추가, {removes} 삭제){RESET}"
+        );
+        for line in &changes {
+            println!("{line}");
+        }
+        println!();
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -6055,5 +6487,78 @@ mod tests {
         let stats = compute_text_stats(text);
         assert_eq!(stats.words, 6);
         assert_eq!(stats.sentences, 2);
+    }
+
+    // ── /draft tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn draft_versions_dir_uses_slug() {
+        let dir = draft_versions_dir("테스트 기사");
+        assert!(dir.to_string_lossy().contains("테스트-기사"));
+        assert!(dir.starts_with(DRAFT_VERSIONS_BASE));
+    }
+
+    #[test]
+    fn draft_next_version_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("draft-test");
+        // Dir doesn't exist yet
+        assert_eq!(next_version_number(&dir), 1);
+        // Create dir, still empty
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(next_version_number(&dir), 1);
+    }
+
+    #[test]
+    fn draft_next_version_increments() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("draft-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("v1.md"), "first").unwrap();
+        assert_eq!(next_version_number(&dir), 2);
+        std::fs::write(dir.join("v2.md"), "second").unwrap();
+        assert_eq!(next_version_number(&dir), 3);
+    }
+
+    #[test]
+    fn draft_list_versions_sorted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("draft-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        // Create out of order
+        std::fs::write(dir.join("v3.md"), "third").unwrap();
+        std::fs::write(dir.join("v1.md"), "first").unwrap();
+        std::fs::write(dir.join("v2.md"), "second").unwrap();
+        // Also a non-version file
+        std::fs::write(dir.join("notes.txt"), "ignore").unwrap();
+
+        let versions = list_versions(&dir);
+        assert_eq!(versions.len(), 3);
+        assert_eq!(versions[0].0, 1);
+        assert_eq!(versions[1].0, 2);
+        assert_eq!(versions[2].0, 3);
+    }
+
+    #[test]
+    fn draft_list_versions_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("nonexistent");
+        let versions = list_versions(&dir);
+        assert!(versions.is_empty());
+    }
+
+    #[test]
+    fn draft_format_unix_timestamp_epoch() {
+        // 2024-01-01 00:00 UTC = 1704067200
+        let s = format_unix_timestamp(1_704_067_200);
+        assert_eq!(s, "2024-01-01 00:00");
+    }
+
+    #[test]
+    fn draft_format_unix_timestamp_nonzero_time() {
+        // 2025-06-15 14:30 UTC = 1750000200
+        let s = format_unix_timestamp(1_750_000_200);
+        assert!(s.starts_with("2025-"));
+        assert!(s.contains(':'));
     }
 }
