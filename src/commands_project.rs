@@ -1,6 +1,6 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
 //! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck,
-//! /briefing, /clip, /news, /summary, /stats, /draft.
+//! /briefing, /clip, /news, /summary, /stats, /draft, /deadline.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -4726,6 +4726,347 @@ fn handle_draft_diff(args: &str) {
     }
 }
 
+// ── /deadline ────────────────────────────────────────────────────────────
+
+const DEADLINES_FILE: &str = ".journalist/deadlines.json";
+
+/// A single deadline entry.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+struct Deadline {
+    title: String,
+    /// ISO 8601 datetime string (e.g. "2026-03-20T09:00:00")
+    datetime: String,
+}
+
+fn deadlines_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(DEADLINES_FILE)
+}
+
+fn load_deadlines_from(path: &std::path::Path) -> Vec<Deadline> {
+    match std::fs::read_to_string(path) {
+        Ok(s) if !s.trim().is_empty() => serde_json::from_str(&s).unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+fn save_deadlines_to(deadlines: &[Deadline], path: &std::path::Path) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let json = serde_json::to_string_pretty(deadlines).unwrap_or_default();
+    let _ = std::fs::write(path, json);
+}
+
+/// Get today's date as "YYYY-MM-DD" string using local timezone.
+fn today_date_string() -> String {
+    // Use the `date` command output format or calculate from SystemTime
+    // We'll compute from UNIX epoch + local offset
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    format_date_from_epoch(now.as_secs())
+}
+
+/// Format epoch seconds as "YYYY-MM-DD" (UTC).
+fn format_date_from_epoch(secs: u64) -> String {
+    // Reuse the existing format_unix_timestamp and take just the date part
+    let ts = format_unix_timestamp(secs);
+    ts.split(' ').next().unwrap_or("2026-01-01").to_string()
+}
+
+/// Parse a time/datetime string into an ISO 8601 datetime.
+/// Accepts: "18:00", "2026-03-20 09:00", "2026-03-20T09:00"
+fn parse_deadline_datetime(input: &str) -> Option<String> {
+    parse_deadline_datetime_with_today(input, &today_date_string())
+}
+
+/// Testable version that accepts today's date as parameter.
+fn parse_deadline_datetime_with_today(input: &str, today: &str) -> Option<String> {
+    let input = input.trim();
+    // Full datetime: "2026-03-20 09:00" or "2026-03-20T09:00"
+    if input.len() >= 16 && (input.contains('T') || input.chars().filter(|c| *c == '-').count() >= 2)
+    {
+        let normalized = input.replace('T', " ");
+        let parts: Vec<&str> = normalized.split(' ').collect();
+        if parts.len() >= 2 {
+            let date = parts[0];
+            let time = parts[1];
+            let date_parts: Vec<&str> = date.split('-').collect();
+            if date_parts.len() == 3
+                && date_parts[0].len() == 4
+                && date_parts[1].len() == 2
+                && date_parts[2].len() == 2
+            {
+                let time_parts: Vec<&str> = time.split(':').collect();
+                if time_parts.len() >= 2 {
+                    return Some(format!("{}T{}:00", date, time));
+                }
+            }
+        }
+        return None;
+    }
+
+    // Time only: "18:00" — use today's date
+    if input.contains(':') && input.len() <= 5 {
+        let time_parts: Vec<&str> = input.split(':').collect();
+        if time_parts.len() == 2
+            && time_parts[0].parse::<u32>().is_ok()
+            && time_parts[1].parse::<u32>().is_ok()
+        {
+            return Some(format!("{today}T{input}:00"));
+        }
+    }
+
+    None
+}
+
+/// Parse "YYYY-MM-DDTHH:MM:SS" into epoch seconds (UTC).
+fn datetime_to_epoch(datetime: &str) -> Option<u64> {
+    // Parse "YYYY-MM-DDTHH:MM:SS"
+    let dt = datetime.replace('T', " ");
+    let parts: Vec<&str> = dt.split(' ').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let date_parts: Vec<u64> = parts[0].split('-').filter_map(|s| s.parse().ok()).collect();
+    let time_parts: Vec<u64> = parts[1].split(':').filter_map(|s| s.parse().ok()).collect();
+    if date_parts.len() != 3 || time_parts.len() < 2 {
+        return None;
+    }
+    let (year, month, day) = (date_parts[0], date_parts[1], date_parts[2]);
+    let (hour, minute) = (time_parts[0], time_parts[1]);
+    let second = time_parts.get(2).copied().unwrap_or(0);
+
+    // Simple days-from-epoch calculation
+    let mut total_days: i64 = 0;
+    for y in 1970..year {
+        total_days += if is_leap_year(y) { 366 } else { 365 };
+    }
+    let days_in_months = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    for m in 1..month {
+        total_days += days_in_months[m as usize] as i64;
+        if m == 2 && is_leap_year(year) {
+            total_days += 1;
+        }
+    }
+    total_days += (day as i64) - 1;
+
+    let epoch = total_days * 86400 + (hour as i64) * 3600 + (minute as i64) * 60 + second as i64;
+    if epoch >= 0 {
+        Some(epoch as u64)
+    } else {
+        None
+    }
+}
+
+fn is_leap_year(y: u64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0)
+}
+
+/// Calculate remaining time from now to a deadline datetime string.
+/// Returns (total_seconds_remaining, human_readable_string).
+fn remaining_time(datetime: &str) -> (i64, String) {
+    let target_epoch = match datetime_to_epoch(datetime) {
+        Some(e) => e as i64,
+        None => return (0, "파싱 불가".to_string()),
+    };
+
+    let now_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    let total_secs = target_epoch - now_epoch;
+
+    if total_secs <= 0 {
+        let elapsed = -total_secs;
+        let hours = elapsed / 3600;
+        let mins = (elapsed % 3600) / 60;
+        if hours > 0 {
+            return (total_secs, format!("{hours}시간 {mins}분 초과"));
+        }
+        return (total_secs, format!("{mins}분 초과"));
+    }
+
+    let hours = total_secs / 3600;
+    let mins = (total_secs % 3600) / 60;
+    if hours >= 24 {
+        let days = hours / 24;
+        let rem_hours = hours % 24;
+        (total_secs, format!("{days}일 {rem_hours}시간 {mins}분 남음"))
+    } else if hours > 0 {
+        (total_secs, format!("{hours}시간 {mins}분 남음"))
+    } else {
+        (total_secs, format!("{mins}분 남음"))
+    }
+}
+
+/// Handle `/deadline` command with subcommands: set, list, clear.
+pub fn handle_deadline(input: &str) {
+    let args = input.strip_prefix("/deadline").unwrap_or("").trim();
+
+    if args.is_empty() {
+        // Default to list
+        handle_deadline_list();
+        return;
+    }
+
+    let (sub, rest) = match args.split_once(char::is_whitespace) {
+        Some((s, r)) => (s, r.trim()),
+        None => (args, ""),
+    };
+
+    match sub {
+        "set" => handle_deadline_set(rest),
+        "list" => handle_deadline_list(),
+        "clear" => handle_deadline_clear(rest),
+        _ => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {sub}{RESET}");
+            print_deadline_usage();
+        }
+    }
+}
+
+fn print_deadline_usage() {
+    println!("{DIM}  사용법:");
+    println!("    /deadline set <제목> <시간>   마감 설정 (예: 18:00, 2026-03-20 09:00)");
+    println!("    /deadline list               활성 마감 목록 (남은 시간 순)");
+    println!("    /deadline clear <제목>       마감 해제");
+    println!("    /deadline                    (list와 동일){RESET}\n");
+}
+
+fn handle_deadline_set(args: &str) {
+    if args.is_empty() {
+        eprintln!("{RED}  사용법: /deadline set <제목> <시간>{RESET}\n");
+        return;
+    }
+
+    // Parse: last token(s) that look like time, rest is title
+    // Try to find time at end: "제목 18:00" or "제목 2026-03-20 09:00"
+    let parts: Vec<&str> = args.rsplitn(3, char::is_whitespace).collect();
+
+    let (title, time_str) = if parts.len() >= 3 {
+        // Try "title date time" pattern first
+        let maybe_datetime = format!("{} {}", parts[1], parts[0]);
+        if parse_deadline_datetime(&maybe_datetime).is_some() {
+            let title_end = args.len() - parts[0].len() - parts[1].len() - 2;
+            (&args[..title_end], maybe_datetime)
+        } else if parse_deadline_datetime(parts[0]).is_some() {
+            let title_end = args.len() - parts[0].len() - 1;
+            (&args[..title_end], parts[0].to_string())
+        } else {
+            eprintln!("{RED}  시간 형식을 인식할 수 없습니다: {}{RESET}", parts[0]);
+            eprintln!("{DIM}  예: 18:00, 2026-03-20 09:00{RESET}\n");
+            return;
+        }
+    } else if parts.len() == 2 {
+        if parse_deadline_datetime(parts[0]).is_some() {
+            let title_end = args.len() - parts[0].len() - 1;
+            (&args[..title_end], parts[0].to_string())
+        } else {
+            eprintln!("{RED}  시간 형식을 인식할 수 없습니다: {}{RESET}", parts[0]);
+            eprintln!("{DIM}  예: 18:00, 2026-03-20 09:00{RESET}\n");
+            return;
+        }
+    } else {
+        eprintln!("{RED}  제목과 시간을 모두 지정하세요: /deadline set <제목> <시간>{RESET}\n");
+        return;
+    };
+
+    let datetime = match parse_deadline_datetime(&time_str) {
+        Some(dt) => dt,
+        None => {
+            eprintln!("{RED}  시간 형식을 인식할 수 없습니다: {time_str}{RESET}");
+            eprintln!("{DIM}  예: 18:00, 2026-03-20 09:00{RESET}\n");
+            return;
+        }
+    };
+
+    let path = deadlines_path();
+    let mut deadlines = load_deadlines_from(&path);
+
+    // Update existing or add new
+    if let Some(existing) = deadlines.iter_mut().find(|d| d.title == title) {
+        existing.datetime = datetime.clone();
+    } else {
+        deadlines.push(Deadline {
+            title: title.to_string(),
+            datetime: datetime.clone(),
+        });
+    }
+
+    save_deadlines_to(&deadlines, &path);
+
+    let (_, remaining) = remaining_time(&datetime);
+    println!(
+        "{GREEN}  ⏰ 마감 설정: {title} → {datetime} ({remaining}){RESET}\n"
+    );
+}
+
+fn handle_deadline_list() {
+    let path = deadlines_path();
+    let deadlines = load_deadlines_from(&path);
+
+    if deadlines.is_empty() {
+        println!("{DIM}  설정된 마감이 없습니다.{RESET}\n");
+        return;
+    }
+
+    // Sort by remaining time (ascending — most urgent first)
+    let mut with_remaining: Vec<(Deadline, i64, String)> = deadlines
+        .iter()
+        .map(|d| {
+            let (secs, text) = remaining_time(&d.datetime);
+            (d.clone(), secs, text)
+        })
+        .collect();
+    with_remaining.sort_by_key(|(_, secs, _)| *secs);
+
+    println!("{BOLD}  ⏰ 마감 목록{RESET}");
+    println!("{DIM}  ──────────────────────────────{RESET}");
+    for (deadline, secs, remaining_text) in &with_remaining {
+        if *secs <= 0 {
+            // Overdue — highlight in red
+            println!(
+                "  {RED}🔴 {}: {} ({}){RESET}",
+                deadline.title, deadline.datetime, remaining_text
+            );
+        } else if *secs <= 3600 {
+            // Less than 1 hour — highlight in yellow
+            println!(
+                "  {YELLOW}🟡 {}: {} ({}){RESET}",
+                deadline.title, deadline.datetime, remaining_text
+            );
+        } else {
+            println!(
+                "  {GREEN}🟢 {}: {} ({}){RESET}",
+                deadline.title, deadline.datetime, remaining_text
+            );
+        }
+    }
+    println!();
+}
+
+fn handle_deadline_clear(title: &str) {
+    if title.is_empty() {
+        eprintln!("{RED}  제목을 지정하세요: /deadline clear <제목>{RESET}\n");
+        return;
+    }
+
+    let path = deadlines_path();
+    let mut deadlines = load_deadlines_from(&path);
+    let before_len = deadlines.len();
+    deadlines.retain(|d| d.title != title);
+
+    if deadlines.len() == before_len {
+        eprintln!("{DIM}  '{title}' 마감을 찾을 수 없습니다.{RESET}\n");
+        return;
+    }
+
+    save_deadlines_to(&deadlines, &path);
+    println!("{GREEN}  ✅ 마감 해제: {title}{RESET}\n");
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -6560,5 +6901,141 @@ mod tests {
         let s = format_unix_timestamp(1_750_000_200);
         assert!(s.starts_with("2025-"));
         assert!(s.contains(':'));
+    }
+
+    // ── /deadline tests ─────────────────────────────────────────────────
+
+    fn temp_deadlines_path() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("deadlines.json");
+        (dir, path)
+    }
+
+    #[test]
+    fn deadline_load_empty_returns_empty() {
+        let (_dir, path) = temp_deadlines_path();
+        let deadlines = load_deadlines_from(&path);
+        assert!(deadlines.is_empty());
+    }
+
+    #[test]
+    fn deadline_save_and_load_roundtrip() {
+        let (_dir, path) = temp_deadlines_path();
+        let deadlines = vec![
+            Deadline {
+                title: "반도체 기사".to_string(),
+                datetime: "2026-03-20T18:00:00".to_string(),
+            },
+            Deadline {
+                title: "사설".to_string(),
+                datetime: "2026-03-20T09:00:00".to_string(),
+            },
+        ];
+        save_deadlines_to(&deadlines, &path);
+        let loaded = load_deadlines_from(&path);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].title, "반도체 기사");
+        assert_eq!(loaded[1].datetime, "2026-03-20T09:00:00");
+    }
+
+    #[test]
+    fn deadline_parse_time_only() {
+        let result = parse_deadline_datetime_with_today("18:00", "2026-03-19");
+        assert_eq!(result, Some("2026-03-19T18:00:00".to_string()));
+    }
+
+    #[test]
+    fn deadline_parse_full_datetime_space() {
+        let result = parse_deadline_datetime_with_today("2026-03-20 09:00", "2026-03-19");
+        assert_eq!(result, Some("2026-03-20T09:00:00".to_string()));
+    }
+
+    #[test]
+    fn deadline_parse_full_datetime_t() {
+        let result = parse_deadline_datetime_with_today("2026-03-20T09:00", "2026-03-19");
+        assert_eq!(result, Some("2026-03-20T09:00:00".to_string()));
+    }
+
+    #[test]
+    fn deadline_parse_invalid_returns_none() {
+        assert!(parse_deadline_datetime_with_today("invalid", "2026-03-19").is_none());
+        assert!(parse_deadline_datetime_with_today("", "2026-03-19").is_none());
+    }
+
+    #[test]
+    fn deadline_datetime_to_epoch_roundtrip() {
+        // 2026-03-20T09:00:00 UTC
+        let epoch = datetime_to_epoch("2026-03-20T09:00:00");
+        assert!(epoch.is_some());
+        let e = epoch.unwrap();
+        // 2026-03-20 should be > 2025-01-01 epoch
+        assert!(e > 1_735_689_600);
+    }
+
+    #[test]
+    fn deadline_is_leap_year() {
+        assert!(is_leap_year(2000));
+        assert!(is_leap_year(2024));
+        assert!(!is_leap_year(1900));
+        assert!(!is_leap_year(2023));
+    }
+
+    #[test]
+    fn deadline_remaining_time_future() {
+        // Use a date far in the future
+        let (secs, text) = remaining_time("2099-12-31T23:59:00");
+        assert!(secs > 0);
+        assert!(text.contains("남음"));
+    }
+
+    #[test]
+    fn deadline_remaining_time_past() {
+        let (secs, text) = remaining_time("2020-01-01T00:00:00");
+        assert!(secs <= 0);
+        assert!(text.contains("초과"));
+    }
+
+    #[test]
+    fn deadline_clear_removes_entry() {
+        let (_dir, path) = temp_deadlines_path();
+        let deadlines = vec![
+            Deadline {
+                title: "기사A".to_string(),
+                datetime: "2026-03-20T18:00:00".to_string(),
+            },
+            Deadline {
+                title: "기사B".to_string(),
+                datetime: "2026-03-21T09:00:00".to_string(),
+            },
+        ];
+        save_deadlines_to(&deadlines, &path);
+
+        let mut loaded = load_deadlines_from(&path);
+        loaded.retain(|d| d.title != "기사A");
+        save_deadlines_to(&loaded, &path);
+
+        let final_deadlines = load_deadlines_from(&path);
+        assert_eq!(final_deadlines.len(), 1);
+        assert_eq!(final_deadlines[0].title, "기사B");
+    }
+
+    #[test]
+    fn deadline_set_updates_existing() {
+        let (_dir, path) = temp_deadlines_path();
+        let mut deadlines = vec![Deadline {
+            title: "기사A".to_string(),
+            datetime: "2026-03-20T18:00:00".to_string(),
+        }];
+        save_deadlines_to(&deadlines, &path);
+
+        // Simulate update
+        if let Some(existing) = deadlines.iter_mut().find(|d| d.title == "기사A") {
+            existing.datetime = "2026-03-21T09:00:00".to_string();
+        }
+        save_deadlines_to(&deadlines, &path);
+
+        let loaded = load_deadlines_from(&path);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].datetime, "2026-03-21T09:00:00");
     }
 }

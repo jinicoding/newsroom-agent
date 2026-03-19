@@ -77,6 +77,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/news",
     "/stats",
     "/draft",
+    "/deadline",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -112,6 +113,9 @@ pub const SOURCES_SUBCOMMANDS: &[&str] = &["list", "add", "search", "remove", "e
 /// Draft subcommand names for `/draft <Tab>` completion.
 pub const DRAFT_SUBCOMMANDS: &[&str] = &["save", "list", "load", "diff"];
 
+/// Deadline subcommand names for `/deadline <Tab>` completion.
+pub const DEADLINE_SUBCOMMANDS: &[&str] = &["set", "list", "clear"];
+
 /// Return context-aware argument completions for a given command and partial argument.
 ///
 /// `cmd` is the slash command (e.g. "/model"), `partial_arg` is what the user has typed
@@ -126,6 +130,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/provider" => filter_candidates(KNOWN_PROVIDERS, &partial_lower),
         "/sources" => filter_candidates(SOURCES_SUBCOMMANDS, &partial_lower),
         "/draft" => filter_candidates(DRAFT_SUBCOMMANDS, &partial_lower),
+        "/deadline" => filter_candidates(DEADLINE_SUBCOMMANDS, &partial_lower),
         "/briefing" | "/translate" | "/headline" | "/rewrite" => {
             if partial_arg.starts_with("--file ") {
                 let file_part = &partial_arg[7..];
@@ -324,6 +329,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /draft <sub> <제목>    기사 초안 버전 관리 (save|list|load|diff)\n",
+    );
+    out.push_str(
+        "  /deadline <sub>        마감 카운트다운 (set|list|clear)\n",
     );
     out.push('\n');
 
@@ -604,7 +612,7 @@ pub use crate::commands_project::{
     handle_article, handle_briefing, handle_checklist, handle_clip, handle_compare,
     handle_context, handle_docs, handle_factcheck, handle_find, handle_fix, handle_headline,
     handle_health, handle_index, handle_init, handle_interview, handle_lint, handle_research,
-    handle_draft, handle_news, handle_run, handle_rewrite, handle_run_usage, handle_sources, handle_stats,
+    handle_deadline, handle_draft, handle_news, handle_run, handle_rewrite, handle_run_usage, handle_sources, handle_stats,
     handle_summary, handle_test, handle_timeline, handle_translate, handle_tree,
 };
 
