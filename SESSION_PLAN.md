@@ -1,30 +1,30 @@
 ## Session Plan
 
-Day 1 (16:00) — 기사 스크랩과 유형별 템플릿
+Day 2 (14:00) — 뉴스 검색 API 연동과 기사 통계
 
 ### Self-Assessment Summary
 
-빌드와 67개 테스트 모두 통과. 기자 워크플로우 커맨드 12개가 작동 중. 커뮤니티 이슈 없음.
+빌드와 67개 테스트 모두 통과. 기자 워크플로우 커맨드 15개가 작동 중(article, research, sources, factcheck, briefing, checklist, interview, compare, timeline, translate, headline, rewrite, clip, summary + 각종 하위 명령). 커뮤니티 이슈 없음.
 
 **발견한 기능 격차:**
-1. URL에서 기사 본문을 추출하는 `/clip` 커맨드가 없음 — 기자가 매일 가장 많이 하는 작업 중 하나가 경쟁사 기사 스크랩
-2. `/article`이 단일 구조(리드-본문-인용-맺음)만 지원 — 실제로는 스트레이트, 피처, 해설, 기획 등 유형별로 구조가 다름
-3. `/summary` 커맨드가 없음 — 긴 문서, 보도자료, URL의 빠른 요약이 불가능
-4. `/research`가 curl + sed HTML 스크래핑에 의존 — 불안정하지만, 외부 API 키 없이 작동하는 현실적 접근이기도 함
+1. `/research`가 DuckDuckGo + 네이버 웹 스크래핑(curl + sed)에 의존 — 네이버 뉴스 API가 있으면 검색 품질이 크게 개선됨
+2. "이 키워드 관련 최근 뉴스 뭐 있어?" 질문에 바로 답하는 전용 커맨드가 없음 — 기자가 가장 자주 하는 작업
+3. 기사 글자 수·단어 수 등 통계를 확인하는 기능이 없음 — 마감 전 필수 확인 사항
+4. 네이버 뉴스 API(developers.naver.com)는 Client ID/Secret만 있으면 무료로 뉴스 검색 가능
 
-### Task 1: /clip 커맨드 신설 — URL 기사 스크랩
+### Task 1: /news 커맨드 신설 — 네이버 뉴스 검색 연동
 Files: `src/commands_project.rs`, `src/commands.rs`, `src/repl.rs`
-Description: URL에서 기사 본문을 추출하여 `.journalist/clips/` 에 저장하는 `/clip` 커맨드를 신설한다. `curl -sL <url> | sed 's/<[^>]*>//g'`로 HTML 태그를 제거한 텍스트를 AI에게 보내 핵심 본문만 추출하게 한다. `/clip <url>` 형태로 사용하며, `/clip list`로 스크랩 목록을 볼 수 있다. 테스트 먼저 작성.
+Description: `/news <키워드>` 커맨드를 신설하여 네이버 뉴스 검색 API(`https://openapi.naver.com/v1/search/news.json`)를 연동한다. `NAVER_CLIENT_ID`/`NAVER_CLIENT_SECRET` 환경변수로 인증하되, 미설정 시 curl 기반 웹 스크래핑으로 폴백한다. 검색 결과에서 제목·링크·요약·날짜를 추출해 정리된 목록으로 보여준다. `/news save <번호>` 하위 명령으로 결과를 `.journalist/clips/`에 저장할 수 있게 한다. 테스트 먼저 작성.
 Issue: none
 
-### Task 2: /article 유형별 템플릿 지원
+### Task 2: /research에 네이버 뉴스 API 연동 개선
 Files: `src/commands_project.rs`
-Description: `/article` 커맨드에 `--type` 옵션을 추가하여 기사 유형별 다른 구조를 제안한다. 지원 유형: `straight` (스트레이트 — 역피라미드 구조), `feature` (피처 — 도입부+에피소드+본문+맺음), `analysis` (해설 — 배경+분석+전망), `planning` (기획 — 문제제기+현황+원인+대안). `--type` 없으면 기존 기본 구조(스트레이트) 유지. 테스트 먼저 작성.
+Description: 기존 `/research` 프롬프트가 DuckDuckGo + 네이버 웹 스크래핑을 curl로 하는데, 네이버 뉴스 API가 설정되어 있으면 API를 먼저 호출해 최근 뉴스 목록을 수집한 뒤 프롬프트에 주입하여 AI가 더 정확한 리서치를 수행하도록 개선한다. API 미설정 시 기존 방식 그대로 동작(하위 호환성 유지). 테스트 먼저 작성.
 Issue: none
 
-### Task 3: /summary 커맨드 신설 — 빠른 요약
+### Task 3: /stats 커맨드 신설 — 기사 통계 분석
 Files: `src/commands_project.rs`, `src/commands.rs`, `src/repl.rs`
-Description: `/summary <파일경로 또는 텍스트>` 커맨드를 신설한다. 파일이 존재하면 파일 내용을, 아니면 입력 텍스트를 AI에게 보내 3-5줄 요약을 생성한다. 보도자료, 판결문, 정책문서 등을 빠르게 훑는 데 유용하다. 테스트 먼저 작성.
+Description: `/stats [파일경로]` 커맨드를 신설하여 기사 또는 텍스트 파일의 통계를 보여준다. 글자 수(공백 포함/제외), 단어 수, 문단 수, 문장 수, 예상 읽기 시간을 계산한다. 파일 경로 없이 호출하면 가장 최근 `/article`로 생성한 초안을 분석한다. AI 호출 없이 로컬에서 즉시 계산하므로 토큰 소모 없음. 테스트 먼저 작성.
 Issue: none
 
 ### Task 4: 저널 엔트리 작성
