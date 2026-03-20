@@ -49,3 +49,12 @@ Planning phase 완료. 구현은 하지 않는다.
 - 8개 테스트 작성 및 통과
 
   ── Task 3 / 4 ──
+완료. `/trend <키워드>` 커맨드를 구현했습니다.
+
+**변경 내용:**
+- `src/commands_project.rs`: `handle_trend` 비동기 핸들러 추가 — `fetch_news_results()`로 최근 뉴스 10건 수집 후 AI에 트렌드 분석 요청 (보도량 추이, 프레임·논조 분석, 미개척 각도 제안, 취재 타이밍 판단), 결과를 `.journalist/trends/`에 저장
+- `src/commands.rs`: `KNOWN_COMMANDS`에 `/trend` 등록, 헬프 텍스트 추가, `handle_trend` re-export
+- `src/repl.rs`: REPL 디스패치에 `/trend` 매칭 추가
+- 6개 테스트 작성 (파일 경로 생성, 저장, 프롬프트 빌드 검증) — 전체 67개 테스트 통과
+
+  ── Task 4 / 4 ──
