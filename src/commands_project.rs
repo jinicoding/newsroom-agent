@@ -8068,6 +8068,387 @@ fn is_valid_time(s: &str) -> bool {
         && parts[1].parse::<u32>().map_or(false, |m| m < 60)
 }
 
+// ── /collaborate ─────────────────────────────────────────────────────────
+
+const COLLABORATE_DIR: &str = ".journalist/collaborate";
+
+/// A collaborative reporting project.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+struct CollabProject {
+    name: String,
+    reporters: Vec<String>,
+    notes: Vec<CollabNote>,
+    status: CollabStatus,
+    created_at: String,
+}
+
+/// A single note within a collaborative project.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+struct CollabNote {
+    reporter: String,
+    content: String,
+    timestamp: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum CollabStatus {
+    Active,
+    Closed,
+}
+
+fn collab_project_path(project_name: &str) -> std::path::PathBuf {
+    std::path::Path::new(COLLABORATE_DIR).join(format!("{project_name}.json"))
+}
+
+#[cfg(test)]
+fn collab_project_path_in(dir: &std::path::Path, project_name: &str) -> std::path::PathBuf {
+    dir.join(format!("{project_name}.json"))
+}
+
+fn load_collab_project_from(path: &std::path::Path) -> Option<CollabProject> {
+    match std::fs::read_to_string(path) {
+        Ok(s) if !s.trim().is_empty() => serde_json::from_str(&s).ok(),
+        _ => None,
+    }
+}
+
+fn save_collab_project_to(project: &CollabProject, path: &std::path::Path) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let json = serde_json::to_string_pretty(project).unwrap_or_default();
+    let _ = std::fs::write(path, json);
+}
+
+fn list_collab_projects_in(dir: &std::path::Path) -> Vec<CollabProject> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+    let mut projects = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("json") {
+            if let Some(proj) = load_collab_project_from(&path) {
+                projects.push(proj);
+            }
+        }
+    }
+    projects.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    projects
+}
+
+fn now_timestamp() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let ts = format_unix_timestamp(secs);
+    ts.replace(' ', "T") + ":00"
+}
+
+pub fn handle_collaborate(input: &str) {
+    let args = input.strip_prefix("/collaborate").unwrap_or("").trim();
+
+    if args.is_empty() {
+        collab_list_impl(std::path::Path::new(COLLABORATE_DIR));
+        return;
+    }
+
+    let (sub, rest) = match args.split_once(char::is_whitespace) {
+        Some((s, r)) => (s, r.trim()),
+        None => (args, ""),
+    };
+
+    match sub {
+        "start" => collab_start(rest),
+        "note" => collab_note(rest),
+        "list" => collab_list_impl(std::path::Path::new(COLLABORATE_DIR)),
+        "view" => collab_view(rest),
+        "close" => collab_close(rest),
+        _ => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {sub}{RESET}");
+            print_collaborate_usage();
+        }
+    }
+}
+
+fn print_collaborate_usage() {
+    println!("{DIM}  사용법:");
+    println!("    /collaborate start <프로젝트명> [--reporters 기자1,기자2]  공동취재 프로젝트 생성");
+    println!("    /collaborate note <프로젝트명> <내용> [--reporter 기자명]  메모 추가");
+    println!("    /collaborate list                                          활성 프로젝트 목록");
+    println!("    /collaborate view <프로젝트명>                             프로젝트 메모 조회");
+    println!("    /collaborate close <프로젝트명>                            프로젝트 종료");
+    println!("    /collaborate                                               (list와 동일){RESET}\n");
+}
+
+fn collab_start(args: &str) {
+    if args.is_empty() {
+        eprintln!("{RED}  사용법: /collaborate start <프로젝트명> [--reporters 기자1,기자2]{RESET}\n");
+        return;
+    }
+
+    let (name, reporters) = parse_collab_start_args(args);
+
+    if name.is_empty() {
+        eprintln!("{RED}  프로젝트명을 입력하세요.{RESET}\n");
+        return;
+    }
+
+    let path = collab_project_path(&name);
+    if let Some(existing) = load_collab_project_from(&path) {
+        if existing.status == CollabStatus::Active {
+            eprintln!("{RED}  이미 활성 프로젝트가 존재합니다: {name}{RESET}\n");
+            return;
+        }
+    }
+
+    let project = CollabProject {
+        name: name.clone(),
+        reporters: reporters.clone(),
+        notes: Vec::new(),
+        status: CollabStatus::Active,
+        created_at: now_timestamp(),
+    };
+
+    save_collab_project_to(&project, &path);
+
+    println!("{DIM}  공동취재 프로젝트 생성: {name}{RESET}");
+    if !reporters.is_empty() {
+        println!("{DIM}  참여 기자: {}{RESET}", reporters.join(", "));
+    }
+    println!();
+}
+
+fn parse_collab_start_args(args: &str) -> (String, Vec<String>) {
+    let mut name = String::new();
+    let mut reporters: Vec<String> = Vec::new();
+
+    let parts: Vec<&str> = args.split_whitespace().collect();
+    let mut i = 0;
+    while i < parts.len() {
+        if parts[i] == "--reporters" {
+            if i + 1 < parts.len() {
+                reporters = parts[i + 1]
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                i += 2;
+            } else {
+                i += 1;
+            }
+        } else {
+            if name.is_empty() {
+                name = parts[i].to_string();
+            }
+            i += 1;
+        }
+    }
+
+    (name, reporters)
+}
+
+fn collab_note(args: &str) {
+    if args.is_empty() {
+        eprintln!(
+            "{RED}  사용법: /collaborate note <프로젝트명> <내용> [--reporter 기자명]{RESET}\n"
+        );
+        return;
+    }
+
+    let (project_name, content, reporter) = match parse_collab_note_args(args) {
+        Some(v) => v,
+        None => {
+            eprintln!("{RED}  사용법: /collaborate note <프로젝트명> <내용> [--reporter 기자명]{RESET}\n");
+            return;
+        }
+    };
+
+    let path = collab_project_path(&project_name);
+    let mut project = match load_collab_project_from(&path) {
+        Some(p) => p,
+        None => {
+            eprintln!("{RED}  프로젝트를 찾을 수 없습니다: {project_name}{RESET}\n");
+            return;
+        }
+    };
+
+    if project.status == CollabStatus::Closed {
+        eprintln!("{RED}  종료된 프로젝트입니다: {project_name}{RESET}\n");
+        return;
+    }
+
+    let note = CollabNote {
+        reporter: reporter.clone(),
+        content: content.clone(),
+        timestamp: now_timestamp(),
+    };
+
+    project.notes.push(note);
+    save_collab_project_to(&project, &path);
+
+    let reporter_display = if reporter.is_empty() {
+        "익명".to_string()
+    } else {
+        reporter
+    };
+    println!(
+        "{DIM}  메모 추가 ({reporter_display}): {content}{RESET}\n"
+    );
+}
+
+fn parse_collab_note_args(args: &str) -> Option<(String, String, String)> {
+    let parts: Vec<&str> = args.split_whitespace().collect();
+    if parts.len() < 2 {
+        return None;
+    }
+
+    let project_name = parts[0].to_string();
+    let mut content_parts: Vec<&str> = Vec::new();
+    let mut reporter = String::new();
+
+    let mut i = 1;
+    while i < parts.len() {
+        if parts[i] == "--reporter" {
+            if i + 1 < parts.len() {
+                reporter = parts[i + 1].to_string();
+                i += 2;
+            } else {
+                i += 1;
+            }
+        } else {
+            content_parts.push(parts[i]);
+            i += 1;
+        }
+    }
+
+    let content = content_parts.join(" ");
+    if content.is_empty() {
+        return None;
+    }
+
+    Some((project_name, content, reporter))
+}
+
+fn collab_list_impl(dir: &std::path::Path) {
+    let projects = list_collab_projects_in(dir);
+
+    let active: Vec<&CollabProject> = projects
+        .iter()
+        .filter(|p| p.status == CollabStatus::Active)
+        .collect();
+
+    if active.is_empty() {
+        println!("{DIM}  활성 공동취재 프로젝트가 없습니다.{RESET}\n");
+        return;
+    }
+
+    println!("{DIM}  ── 활성 공동취재 프로젝트 ──{RESET}");
+    for (i, proj) in active.iter().enumerate() {
+        let reporters_str = if proj.reporters.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", proj.reporters.join(", "))
+        };
+        println!(
+            "{DIM}  {}. {}{} — 메모 {}건{RESET}",
+            i + 1,
+            proj.name,
+            reporters_str,
+            proj.notes.len()
+        );
+    }
+    println!();
+}
+
+fn collab_view(args: &str) {
+    if args.is_empty() {
+        eprintln!("{RED}  사용법: /collaborate view <프로젝트명>{RESET}\n");
+        return;
+    }
+
+    let project_name = args.split_whitespace().next().unwrap_or("");
+    let path = collab_project_path(project_name);
+    let project = match load_collab_project_from(&path) {
+        Some(p) => p,
+        None => {
+            eprintln!("{RED}  프로젝트를 찾을 수 없습니다: {project_name}{RESET}\n");
+            return;
+        }
+    };
+
+    let status_str = match project.status {
+        CollabStatus::Active => "활성",
+        CollabStatus::Closed => "종료",
+    };
+    println!(
+        "{DIM}  ── {} ({}) ──{RESET}",
+        project.name, status_str
+    );
+    if !project.reporters.is_empty() {
+        println!(
+            "{DIM}  참여 기자: {}{RESET}",
+            project.reporters.join(", ")
+        );
+    }
+    println!(
+        "{DIM}  생성: {}{RESET}",
+        project.created_at
+    );
+
+    if project.notes.is_empty() {
+        println!("{DIM}  (메모 없음){RESET}");
+    } else {
+        println!("{DIM}  ── 메모 ({}) ──{RESET}", project.notes.len());
+        for (i, note) in project.notes.iter().enumerate() {
+            let reporter_str = if note.reporter.is_empty() {
+                "익명"
+            } else {
+                &note.reporter
+            };
+            println!(
+                "{DIM}  {}. [{reporter_str}] {} — {}{RESET}",
+                i + 1,
+                note.content,
+                note.timestamp
+            );
+        }
+    }
+    println!();
+}
+
+fn collab_close(args: &str) {
+    if args.is_empty() {
+        eprintln!("{RED}  사용법: /collaborate close <프로젝트명>{RESET}\n");
+        return;
+    }
+
+    let project_name = args.split_whitespace().next().unwrap_or("");
+    let path = collab_project_path(project_name);
+    let mut project = match load_collab_project_from(&path) {
+        Some(p) => p,
+        None => {
+            eprintln!("{RED}  프로젝트를 찾을 수 없습니다: {project_name}{RESET}\n");
+            return;
+        }
+    };
+
+    if project.status == CollabStatus::Closed {
+        println!("{DIM}  이미 종료된 프로젝트입니다: {project_name}{RESET}\n");
+        return;
+    }
+
+    project.status = CollabStatus::Closed;
+    save_collab_project_to(&project, &path);
+    println!(
+        "{DIM}  프로젝트 종료: {project_name} (메모 {}건 보존){RESET}\n",
+        project.notes.len()
+    );
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -11145,5 +11526,178 @@ mod tests {
         assert!(!is_valid_time("1:30"));
         assert!(!is_valid_time("abc"));
         assert!(!is_valid_time("12345"));
+    }
+
+    // ── /collaborate tests ──────────────────────────────────────────────
+
+    fn temp_collab_dir() -> tempfile::TempDir {
+        tempfile::TempDir::new().unwrap()
+    }
+
+    #[test]
+    fn collab_start_creates_project() {
+        let dir = temp_collab_dir();
+        let path = collab_project_path_in(dir.path(), "반도체취재");
+
+        let project = CollabProject {
+            name: "반도체취재".to_string(),
+            reporters: vec!["김기자".to_string(), "이기자".to_string()],
+            notes: Vec::new(),
+            status: CollabStatus::Active,
+            created_at: "2026-03-20T14:00:00".to_string(),
+        };
+        save_collab_project_to(&project, &path);
+
+        let loaded = load_collab_project_from(&path).unwrap();
+        assert_eq!(loaded.name, "반도체취재");
+        assert_eq!(loaded.reporters.len(), 2);
+        assert_eq!(loaded.status, CollabStatus::Active);
+        assert!(loaded.notes.is_empty());
+    }
+
+    #[test]
+    fn collab_note_adds_entry() {
+        let dir = temp_collab_dir();
+        let path = collab_project_path_in(dir.path(), "국회취재");
+
+        let mut project = CollabProject {
+            name: "국회취재".to_string(),
+            reporters: vec!["박기자".to_string()],
+            notes: Vec::new(),
+            status: CollabStatus::Active,
+            created_at: "2026-03-20T10:00:00".to_string(),
+        };
+        save_collab_project_to(&project, &path);
+
+        // Add a note
+        let note = CollabNote {
+            reporter: "박기자".to_string(),
+            content: "법안 소위 통과 확인".to_string(),
+            timestamp: "2026-03-20T11:00:00".to_string(),
+        };
+        project.notes.push(note);
+        save_collab_project_to(&project, &path);
+
+        let loaded = load_collab_project_from(&path).unwrap();
+        assert_eq!(loaded.notes.len(), 1);
+        assert_eq!(loaded.notes[0].reporter, "박기자");
+        assert_eq!(loaded.notes[0].content, "법안 소위 통과 확인");
+    }
+
+    #[test]
+    fn collab_close_marks_closed() {
+        let dir = temp_collab_dir();
+        let path = collab_project_path_in(dir.path(), "경제분석");
+
+        let mut project = CollabProject {
+            name: "경제분석".to_string(),
+            reporters: Vec::new(),
+            notes: Vec::new(),
+            status: CollabStatus::Active,
+            created_at: "2026-03-20T09:00:00".to_string(),
+        };
+        save_collab_project_to(&project, &path);
+
+        project.status = CollabStatus::Closed;
+        save_collab_project_to(&project, &path);
+
+        let loaded = load_collab_project_from(&path).unwrap();
+        assert_eq!(loaded.status, CollabStatus::Closed);
+    }
+
+    #[test]
+    fn collab_list_shows_active_only() {
+        let dir = temp_collab_dir();
+
+        let active = CollabProject {
+            name: "활성프로젝트".to_string(),
+            reporters: Vec::new(),
+            notes: Vec::new(),
+            status: CollabStatus::Active,
+            created_at: "2026-03-20T08:00:00".to_string(),
+        };
+        save_collab_project_to(&active, &collab_project_path_in(dir.path(), "활성프로젝트"));
+
+        let closed = CollabProject {
+            name: "종료프로젝트".to_string(),
+            reporters: Vec::new(),
+            notes: Vec::new(),
+            status: CollabStatus::Closed,
+            created_at: "2026-03-20T07:00:00".to_string(),
+        };
+        save_collab_project_to(&closed, &collab_project_path_in(dir.path(), "종료프로젝트"));
+
+        let all = list_collab_projects_in(dir.path());
+        assert_eq!(all.len(), 2);
+        let active_count = all.iter().filter(|p| p.status == CollabStatus::Active).count();
+        assert_eq!(active_count, 1);
+    }
+
+    #[test]
+    fn collab_parse_start_args() {
+        let (name, reporters) = parse_collab_start_args("반도체 --reporters 김기자,이기자");
+        assert_eq!(name, "반도체");
+        assert_eq!(reporters, vec!["김기자", "이기자"]);
+    }
+
+    #[test]
+    fn collab_parse_start_args_no_reporters() {
+        let (name, reporters) = parse_collab_start_args("국회취재");
+        assert_eq!(name, "국회취재");
+        assert!(reporters.is_empty());
+    }
+
+    #[test]
+    fn collab_parse_note_args() {
+        let result = parse_collab_note_args("반도체 삼성 공장 가동률 확인 --reporter 김기자");
+        assert!(result.is_some());
+        let (project, content, reporter) = result.unwrap();
+        assert_eq!(project, "반도체");
+        assert_eq!(content, "삼성 공장 가동률 확인");
+        assert_eq!(reporter, "김기자");
+    }
+
+    #[test]
+    fn collab_parse_note_args_no_reporter() {
+        let result = parse_collab_note_args("반도체 취재 메모 내용");
+        assert!(result.is_some());
+        let (project, content, reporter) = result.unwrap();
+        assert_eq!(project, "반도체");
+        assert_eq!(content, "취재 메모 내용");
+        assert!(reporter.is_empty());
+    }
+
+    #[test]
+    fn collab_parse_note_args_missing_content() {
+        let result = parse_collab_note_args("반도체");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn collab_multiple_notes_preserve_order() {
+        let dir = temp_collab_dir();
+        let path = collab_project_path_in(dir.path(), "순서테스트");
+
+        let mut project = CollabProject {
+            name: "순서테스트".to_string(),
+            reporters: vec!["A기자".to_string(), "B기자".to_string()],
+            notes: Vec::new(),
+            status: CollabStatus::Active,
+            created_at: "2026-03-20T08:00:00".to_string(),
+        };
+
+        for i in 1..=3 {
+            project.notes.push(CollabNote {
+                reporter: format!("기자{i}"),
+                content: format!("메모 {i}"),
+                timestamp: format!("2026-03-20T{:02}:00:00", 8 + i),
+            });
+        }
+        save_collab_project_to(&project, &path);
+
+        let loaded = load_collab_project_from(&path).unwrap();
+        assert_eq!(loaded.notes.len(), 3);
+        assert_eq!(loaded.notes[0].content, "메모 1");
+        assert_eq!(loaded.notes[2].content, "메모 3");
     }
 }

@@ -89,6 +89,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/data",
     "/follow",
     "/desk",
+    "/collaborate",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -148,6 +149,9 @@ pub const FOLLOW_SUBCOMMANDS: &[&str] = &["add", "list", "done", "remind"];
 /// Desk subcommand names for `/desk <Tab>` completion.
 pub const DESK_SUBCOMMANDS: &[&str] = &["assign", "list", "done", "feedback", "pitch"];
 
+/// Collaborate subcommand names for `/collaborate <Tab>` completion.
+pub const COLLABORATE_SUBCOMMANDS: &[&str] = &["start", "note", "list", "view", "close"];
+
 /// Return context-aware argument completions for a given command and partial argument.
 ///
 /// `cmd` is the slash command (e.g. "/model"), `partial_arg` is what the user has typed
@@ -170,6 +174,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/data" => filter_candidates(DATA_SUBCOMMANDS, &partial_lower),
         "/follow" => filter_candidates(FOLLOW_SUBCOMMANDS, &partial_lower),
         "/desk" => filter_candidates(DESK_SUBCOMMANDS, &partial_lower),
+        "/collaborate" => filter_candidates(COLLABORATE_SUBCOMMANDS, &partial_lower),
         "/briefing" | "/translate" | "/headline" | "/rewrite" | "/legal" => {
             if partial_arg.starts_with("--file ") {
                 let file_part = &partial_arg[7..];
@@ -401,6 +406,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /desk [cmd]        데스크 업무 지시 큐 (assign|list|done|feedback|pitch)\n",
+    );
+    out.push_str(
+        "  /collaborate [cmd] 공동취재 메모 공유 (start|note|list|view|close)\n",
     );
     out.push('\n');
 
@@ -683,7 +691,7 @@ pub use crate::commands_project::{
     handle_health, handle_index, handle_init, handle_interview, handle_lint, handle_research,
     handle_deadline, handle_draft, handle_embargo, handle_export, handle_news, handle_proofread, handle_quote, handle_run, handle_rewrite, handle_run_usage, handle_sources, handle_stats,
     handle_alert, handle_archive, handle_data, handle_desk, handle_follow, handle_legal, handle_summary, handle_test, handle_timeline, handle_translate, handle_tree,
-    handle_trend,
+    handle_collaborate, handle_trend,
 };
 
 // Session-related handlers

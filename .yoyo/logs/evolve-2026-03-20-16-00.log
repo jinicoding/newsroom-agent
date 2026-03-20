@@ -28,3 +28,11 @@ SESSION_PLAN.md 작성 완료. 계획을 요약하면:
   계획된 태스크: 4개
 
   ── Task 1 / 4 ──
+완료. `/desk` 커맨드를 구현하고 커밋했습니다.
+
+**구현 내용:**
+- `src/commands_project.rs`: `DeskAssignment` 구조체, JSON 저장/로드, 5개 하위 커맨드 (assign, list, done, feedback, pitch) + 8개 테스트
+- `src/commands.rs`: `KNOWN_COMMANDS`에 `/desk` 추가, 탭 자동완성, 도움말 텍스트
+- `src/repl.rs`: REPL 디스패치 추가
+
+  ── Task 2 / 4 ──
