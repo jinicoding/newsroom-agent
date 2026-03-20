@@ -675,6 +675,10 @@ pub async fn run_repl(
                     .await;
                 continue;
             }
+            s if s == "/quote" || s.starts_with("/quote ") => {
+                commands::handle_quote(input);
+                continue;
+            }
             s if s.starts_with('/') && is_unknown_command(s) => {
                 let cmd = s.split_whitespace().next().unwrap_or(s);
                 eprintln!("{RED}  unknown command: {cmd}{RESET}");

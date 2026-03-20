@@ -1,6 +1,6 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
 //! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck,
-//! /briefing, /clip, /news, /summary, /stats, /draft, /deadline, /export.
+//! /briefing, /clip, /news, /summary, /stats, /draft, /deadline, /export, /quote.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -5656,6 +5656,227 @@ pub async fn handle_proofread(
     }
 }
 
+// ── /quote ──────────────────────────────────────────────────────────────
+
+/// Quotes database path.
+const QUOTES_FILE: &str = ".journalist/quotes.json";
+
+/// Handle the /quote command: manage interview quotes.
+pub fn handle_quote(input: &str) {
+    let args = input.strip_prefix("/quote").unwrap_or("").trim();
+
+    match args.split_whitespace().next().unwrap_or("list") {
+        "add" => {
+            let rest = args.strip_prefix("add").unwrap_or("").trim();
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /quote add <취재원> <발언>{RESET}");
+                println!("{DIM}  예시: /quote add 홍길동 \"반도체 수출이 3개월 연속 증가했습니다\"{RESET}\n");
+            } else {
+                quote_add(rest);
+            }
+        }
+        "list" => {
+            let rest = args.strip_prefix("list").unwrap_or("").trim();
+            quote_list(rest);
+        }
+        "search" => {
+            let rest = args.strip_prefix("search").unwrap_or("").trim();
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /quote search <키워드>{RESET}\n");
+            } else {
+                quote_search(rest);
+            }
+        }
+        "remove" => {
+            let rest = args.strip_prefix("remove").unwrap_or("").trim();
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /quote remove <번호>{RESET}");
+                println!("{DIM}  예시: /quote remove 2{RESET}\n");
+            } else {
+                quote_remove(rest);
+            }
+        }
+        other => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {other}{RESET}");
+            println!("{DIM}  사용법: /quote [add|list|search|remove]{RESET}\n");
+        }
+    }
+}
+
+fn load_quotes() -> Vec<serde_json::Value> {
+    load_quotes_from(std::path::Path::new(QUOTES_FILE))
+}
+
+fn load_quotes_from(path: &std::path::Path) -> Vec<serde_json::Value> {
+    if !path.exists() {
+        return Vec::new();
+    }
+    match std::fs::read_to_string(path) {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn save_quotes(quotes: &[serde_json::Value]) {
+    save_quotes_to(quotes, std::path::Path::new(QUOTES_FILE));
+}
+
+fn save_quotes_to(quotes: &[serde_json::Value], path: &std::path::Path) {
+    ensure_sources_dir_at(path);
+    if let Ok(json) = serde_json::to_string_pretty(quotes) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
+/// Look up source org from sources.json by name.
+fn source_org_for(name: &str) -> Option<String> {
+    let sources = load_sources();
+    for s in &sources {
+        if s["name"].as_str() == Some(name) {
+            if let Some(org) = s["org"].as_str() {
+                if !org.is_empty() {
+                    return Some(org.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn quote_add(args: &str) {
+    // Parse: <취재원> <발언> — the first token is the source name, rest is the quote
+    let parts: Vec<&str> = args.splitn(2, ' ').collect();
+    if parts.len() < 2 || parts[1].is_empty() {
+        println!("{DIM}  취재원 이름과 발언 내용이 모두 필요합니다.{RESET}\n");
+        return;
+    }
+    let source_name = parts[0];
+    let text = parts[1].trim_matches('"');
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let timestamp = format_unix_timestamp(secs);
+
+    let entry = serde_json::json!({
+        "source": source_name,
+        "text": text,
+        "timestamp": timestamp,
+    });
+    let mut quotes = load_quotes();
+    quotes.push(entry);
+    save_quotes(&quotes);
+
+    let org_info = source_org_for(source_name)
+        .map(|o| format!(" ({})", o))
+        .unwrap_or_default();
+    println!(
+        "{DIM}  인용문 추가됨: {source_name}{org_info} — \"{text}\" [{timestamp}]{RESET}\n"
+    );
+}
+
+fn quote_list(filter_source: &str) {
+    let quotes = load_quotes();
+    if quotes.is_empty() {
+        println!("{DIM}  인용문 DB가 비어 있습니다.");
+        println!("  /quote add <취재원> <발언> 으로 추가하세요.{RESET}\n");
+        return;
+    }
+
+    let filtered: Vec<(usize, &serde_json::Value)> = if filter_source.is_empty() {
+        quotes.iter().enumerate().collect()
+    } else {
+        quotes
+            .iter()
+            .enumerate()
+            .filter(|(_, q)| {
+                q["source"]
+                    .as_str()
+                    .map(|s| s == filter_source)
+                    .unwrap_or(false)
+            })
+            .collect()
+    };
+
+    if filtered.is_empty() {
+        println!("{DIM}  '{filter_source}' 취재원의 인용문이 없습니다.{RESET}\n");
+        return;
+    }
+
+    let title = if filter_source.is_empty() {
+        format!("인용문 목록 ({} 건)", filtered.len())
+    } else {
+        let org_info = source_org_for(filter_source)
+            .map(|o| format!(" ({})", o))
+            .unwrap_or_default();
+        format!(
+            "{filter_source}{org_info} 인용문 ({} 건)",
+            filtered.len()
+        )
+    };
+    println!("{DIM}  ── {title} ──");
+    for (i, q) in &filtered {
+        let source = q["source"].as_str().unwrap_or("?");
+        let text = q["text"].as_str().unwrap_or("");
+        let ts = q["timestamp"].as_str().unwrap_or("");
+        println!("  {}. [{ts}] {source}: \"{text}\"", i + 1);
+    }
+    println!("{RESET}");
+}
+
+fn quote_search(keyword: &str) {
+    let quotes = load_quotes();
+    let keyword_lower = keyword.to_lowercase();
+    let matches: Vec<(usize, &serde_json::Value)> = quotes
+        .iter()
+        .enumerate()
+        .filter(|(_, q)| {
+            let text = q["text"].as_str().unwrap_or("").to_lowercase();
+            let source = q["source"].as_str().unwrap_or("").to_lowercase();
+            text.contains(&keyword_lower) || source.contains(&keyword_lower)
+        })
+        .collect();
+
+    if matches.is_empty() {
+        println!("{DIM}  '{keyword}' 검색 결과가 없습니다.{RESET}\n");
+        return;
+    }
+
+    println!("{DIM}  ── 인용문 검색: '{keyword}' ({} 건) ──", matches.len());
+    for (i, q) in &matches {
+        let source = q["source"].as_str().unwrap_or("?");
+        let text = q["text"].as_str().unwrap_or("");
+        let ts = q["timestamp"].as_str().unwrap_or("");
+        println!("  {}. [{ts}] {source}: \"{text}\"", i + 1);
+    }
+    println!("{RESET}");
+}
+
+fn quote_remove(args: &str) {
+    let idx: usize = match args.parse() {
+        Ok(n) if n >= 1 => n,
+        _ => {
+            eprintln!("{RED}  올바른 번호를 입력하세요.{RESET}\n");
+            return;
+        }
+    };
+    let mut quotes = load_quotes();
+    if idx > quotes.len() {
+        eprintln!("{RED}  번호 {idx}번은 범위를 벗어났습니다 (총 {} 건).{RESET}\n", quotes.len());
+        return;
+    }
+    let removed = quotes.remove(idx - 1);
+    save_quotes(&quotes);
+    let source = removed["source"].as_str().unwrap_or("?");
+    let text = removed["text"].as_str().unwrap_or("");
+    let preview = if text.len() > 30 {
+        format!("{}…", &text[..text.char_indices().take(30).last().map(|(i, c)| i + c.len_utf8()).unwrap_or(30)])
+    } else {
+        text.to_string()
+    };
+    println!("{DIM}  인용문 삭제됨: {source} — \"{preview}\"{RESET}\n");
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -7854,5 +8075,71 @@ mod tests {
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("교열 결과"));
+    }
+
+    // ── /quote tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn quote_load_empty() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("quotes.json");
+        let quotes = load_quotes_from(&path);
+        assert!(quotes.is_empty());
+    }
+
+    #[test]
+    fn quote_save_and_load() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("quotes.json");
+        let quotes = vec![serde_json::json!({
+            "source": "홍길동",
+            "text": "반도체 수출이 증가했습니다",
+            "timestamp": "2026-03-20 09:30",
+        })];
+        save_quotes_to(&quotes, &path);
+        assert!(path.exists());
+        let loaded = load_quotes_from(&path);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0]["source"], "홍길동");
+        assert_eq!(loaded[0]["text"], "반도체 수출이 증가했습니다");
+        assert_eq!(loaded[0]["timestamp"], "2026-03-20 09:30");
+    }
+
+    #[test]
+    fn quote_save_multiple_and_remove() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("quotes.json");
+        let mut quotes = vec![
+            serde_json::json!({"source": "김기자", "text": "첫 번째 발언", "timestamp": "2026-03-20 10:00"}),
+            serde_json::json!({"source": "이기자", "text": "두 번째 발언", "timestamp": "2026-03-20 11:00"}),
+            serde_json::json!({"source": "김기자", "text": "세 번째 발언", "timestamp": "2026-03-20 12:00"}),
+        ];
+        save_quotes_to(&quotes, &path);
+        assert_eq!(load_quotes_from(&path).len(), 3);
+
+        // Remove second entry (index 1)
+        quotes.remove(1);
+        save_quotes_to(&quotes, &path);
+        let loaded = load_quotes_from(&path);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0]["source"], "김기자");
+        assert_eq!(loaded[1]["text"], "세 번째 발언");
+    }
+
+    #[test]
+    fn quote_source_org_lookup() {
+        // source_org_for reads from the global SOURCES_FILE, so when no sources exist
+        // it should return None.
+        let result = source_org_for("존재하지않는취재원");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn quote_save_creates_parent_directory() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("sub").join("dir").join("quotes.json");
+        let quotes = vec![serde_json::json!({"source": "테스트", "text": "발언", "timestamp": "2026-01-01 00:00"})];
+        save_quotes_to(&quotes, &path);
+        assert!(path.exists());
     }
 }

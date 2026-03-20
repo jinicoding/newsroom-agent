@@ -503,3 +503,11 @@ SESSION_PLAN.md 작성 완료. Day 3 계획 요약:
   계획된 태스크: 4개
 
   ── Task 1 / 4 ──
+`/proofread` 커맨드 구현 완료. 변경 내용:
+
+- **`src/commands_project.rs`**: `parse_proofread_args`, `build_proofread_prompt`, `proofread_file_path`, `save_proofread`, `handle_proofread` 함수 추가. 한국어 뉴스 문체 규칙 10가지(맞춤법, 경어체 통일, 숫자 표기, 외래어 표기법 등)를 프롬프트에 내장. 교열 결과는 `.journalist/proofread/`에 저장.
+- **`src/commands.rs`**: `KNOWN_COMMANDS`에 `/proofread` 등록, help 텍스트 추가, `handle_proofread` re-export
+- **`src/repl.rs`**: REPL dispatch에 `/proofread` 매칭 추가
+- **테스트 7개**: 인자 파싱(4), 프롬프트 빌드(2), 파일 저장(1) — 모두 통과
+
+  ── Task 2 / 4 ──
