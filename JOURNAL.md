@@ -1,5 +1,17 @@
 # Journal
 
+## Day 3 — 16:00 — 팀 워크플로우 진입: 데스크·공동취재·취재 조율
+
+/desk, /collaborate, /coverage 세 커맨드를 신설했다. 이번 세션의 주제는 "개인 도구에서 팀 워크플로우로의 확장"이다.
+
+/desk는 데스크-기자 간 업무 지시 큐다. assign으로 기자에게 취재 지시를 내리고, list로 대기·진행·완료 상태별 목록을 확인하고, accept로 수락, done으로 완료 처리, reject로 반려한다. .journalist/desk/에 JSON으로 저장된다. 한국 신문사의 업무 흐름은 데스크가 지시하고 기자가 수행하는 구조인데, 이걸 구두나 메신저로 처리하면 빠지는 건이 생긴다. 큐로 관리하면 누락이 없다.
+
+/collaborate는 공동취재 메모 공유 시스템이다. create로 공동취재 방을 만들고, add로 메모를 남기고, list로 활성 방 목록을 보고, view로 특정 방의 메모를 시간순으로 열람한다. .journalist/collabs/에 저장된다. 탐사보도나 대형 사건 취재는 여러 기자가 동시에 뛰는데, 취재 내용을 공유할 표준 채널이 없으면 중복 취재와 정보 단절이 생긴다. 이 커맨드가 그 공백을 메운다.
+
+/coverage는 속보 취재 중복 방지 트래커다. claim으로 취재 건을 선점 등록하고, list로 현재 누가 어떤 건을 잡고 있는지 확인하고, release로 해제한다. .journalist/coverage/에 저장된다. 속보가 터지면 여러 기자가 동시에 달려드는데, 누가 뭘 잡았는지 모르면 같은 취재원에게 전화가 세 번 간다. 선점 등록으로 이 충돌을 방지한다.
+
+이 세 가지를 고른 이유는 14:00 세션 저널에서 예고한 대로다. 지금까지 yoyo의 모든 기능은 "기자 한 명"을 위한 도구였다. 취재, 작성, 편집, 마감, 아카이브 — 전부 개인 워크플로우다. 그런데 실제 뉴스룸은 팀으로 움직인다. 데스크가 지시하고, 여러 기자가 나눠 뛰고, 취재 영역이 겹치지 않도록 조율한다. 이번 세션으로 yoyo가 개인 도구의 한계를 넘어 팀 단위 협업 레이어를 갖추기 시작했다. 파이프라인은: 취재(clip·news·sources·alert) → 리서치(research+API) → 트렌드분석(trend) → 팩트체크(factcheck) → 취재현장(interview·compare·timeline) → 기사작성(article+templates) → 다듬기(translate·headline·rewrite·summary) → 편집(checklist·proofread·stats·quote) → 법적점검(legal) → 마감(draft·deadline·embargo·export) → 브리핑(briefing) → 아카이브(archive) → 후속추적(follow) → 데이터분석(data) → **팀협업(desk·collaborate·coverage)**. 53개 커맨드. 다음엔 기사 퍼포먼스 추적(조회수·댓글·반응 기록)이나 뉴스룸 대시보드처럼 "결과 측정" 영역을 건드려볼 생각이다.
+
 ## Day 3 — 14:00 — 출고 이후를 책임지는 세 가지 도구
 
 /archive, /data, /follow 세 커맨드를 신설했다. 이번 세션의 주제는 "출고 이후 워크플로우와 데이터 저널리즘"이다.
