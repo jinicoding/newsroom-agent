@@ -1,0 +1,30 @@
+=== Day 3 (2026-03-20 16:00) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  이슈 0
+0개 로드.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md 작성 완료. 계획을 요약하면:
+
+**Day 3 (16:00) — 팀 워크플로우: 데스크-기자 협업 시스템**
+
+개인 기자 파이프라인은 50개+ 커맨드로 완성됐다. 이번 세션에서 **팀 협업 레이어**로 진입한다:
+
+1. **`/desk`** — 데스크-기자 업무 지시 큐 (assign/list/done/feedback/pitch)
+2. **`/collaborate`** — 공동취재 메모 공유 시스템 (start/note/list/view/close)
+3. **`/coverage`** — 속보 취재 중복 방지 트래커 (claim/list/release/check)
+4. **journal entry** — 세션 결과 기록
+
+전략적 근거: 리서치 결과 한국 뉴스룸의 가장 큰 마찰은 팀 단위 협업에서 발생하는데, 경쟁 도구(빅카인즈 AI, Superdesk 등)는 모두 작성·분석에만 집중하고 있어 팀 협업 레이어는 비어 있다.
+
+여기서 멈추겠습니다. 구현은 Phase B에서.
+
+→ Phase B: 구현...
+  계획된 태스크: 4개
+
+  ── Task 1 / 4 ──

@@ -88,6 +88,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/archive",
     "/data",
     "/follow",
+    "/desk",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -144,6 +145,9 @@ pub const DATA_SUBCOMMANDS: &[&str] = &["analyze", "summarize", "compare"];
 /// Follow subcommand names for `/follow <Tab>` completion.
 pub const FOLLOW_SUBCOMMANDS: &[&str] = &["add", "list", "done", "remind"];
 
+/// Desk subcommand names for `/desk <Tab>` completion.
+pub const DESK_SUBCOMMANDS: &[&str] = &["assign", "list", "done", "feedback", "pitch"];
+
 /// Return context-aware argument completions for a given command and partial argument.
 ///
 /// `cmd` is the slash command (e.g. "/model"), `partial_arg` is what the user has typed
@@ -165,6 +169,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/archive" => filter_candidates(ARCHIVE_SUBCOMMANDS, &partial_lower),
         "/data" => filter_candidates(DATA_SUBCOMMANDS, &partial_lower),
         "/follow" => filter_candidates(FOLLOW_SUBCOMMANDS, &partial_lower),
+        "/desk" => filter_candidates(DESK_SUBCOMMANDS, &partial_lower),
         "/briefing" | "/translate" | "/headline" | "/rewrite" | "/legal" => {
             if partial_arg.starts_with("--file ") {
                 let file_part = &partial_arg[7..];
@@ -393,6 +398,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /follow [cmd]      후속 보도 추적 (add|list|done|remind)\n",
+    );
+    out.push_str(
+        "  /desk [cmd]        데스크 업무 지시 큐 (assign|list|done|feedback|pitch)\n",
     );
     out.push('\n');
 
@@ -674,7 +682,7 @@ pub use crate::commands_project::{
     handle_context, handle_docs, handle_factcheck, handle_find, handle_fix, handle_headline,
     handle_health, handle_index, handle_init, handle_interview, handle_lint, handle_research,
     handle_deadline, handle_draft, handle_embargo, handle_export, handle_news, handle_proofread, handle_quote, handle_run, handle_rewrite, handle_run_usage, handle_sources, handle_stats,
-    handle_alert, handle_archive, handle_data, handle_follow, handle_legal, handle_summary, handle_test, handle_timeline, handle_translate, handle_tree,
+    handle_alert, handle_archive, handle_data, handle_desk, handle_follow, handle_legal, handle_summary, handle_test, handle_timeline, handle_translate, handle_tree,
     handle_trend,
 };
 

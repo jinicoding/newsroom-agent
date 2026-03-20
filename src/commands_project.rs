@@ -1,7 +1,7 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
 //! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck,
 //! /briefing, /clip, /news, /summary, /stats, /draft, /deadline, /embargo, /export, /quote,
-//! /trend, /archive, /data, /follow.
+//! /trend, /archive, /data, /follow, /desk.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -7676,6 +7676,398 @@ fn date_to_epoch_days(date: &str) -> Option<i64> {
     Some(days)
 }
 
+// ── /desk ────────────────────────────────────────────────────────────────
+
+const DESK_ASSIGNMENTS_FILE: &str = ".journalist/desk/assignments.json";
+
+/// Status of a desk assignment.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum DeskStatus {
+    Pending,
+    Done,
+}
+
+/// A single desk assignment (데스크 → 기자 업무 지시).
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+struct DeskAssignment {
+    reporter: String,
+    content: String,
+    deadline: Option<String>,
+    status: DeskStatus,
+    feedback: Vec<String>,
+    /// true if this was a reporter pitch rather than a desk assignment
+    #[serde(default)]
+    is_pitch: bool,
+    created_at: String,
+}
+
+fn desk_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(DESK_ASSIGNMENTS_FILE)
+}
+
+fn load_desk_from(path: &std::path::Path) -> Vec<DeskAssignment> {
+    match std::fs::read_to_string(path) {
+        Ok(s) if !s.trim().is_empty() => serde_json::from_str(&s).unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+fn save_desk_to(assignments: &[DeskAssignment], path: &std::path::Path) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let json = serde_json::to_string_pretty(assignments).unwrap_or_default();
+    let _ = std::fs::write(path, json);
+}
+
+/// Handle `/desk` command with subcommands: assign, list, done, feedback, pitch.
+pub fn handle_desk(input: &str) {
+    let args = input.strip_prefix("/desk").unwrap_or("").trim();
+
+    if args.is_empty() {
+        handle_desk_list("");
+        return;
+    }
+
+    let (sub, rest) = match args.split_once(char::is_whitespace) {
+        Some((s, r)) => (s, r.trim()),
+        None => (args, ""),
+    };
+
+    match sub {
+        "assign" => handle_desk_assign(rest),
+        "list" => handle_desk_list(rest),
+        "done" => handle_desk_done(rest),
+        "feedback" => handle_desk_feedback(rest),
+        "pitch" => handle_desk_pitch(rest),
+        _ => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {sub}{RESET}");
+            print_desk_usage();
+        }
+    }
+}
+
+fn print_desk_usage() {
+    println!("{DIM}  사용법:");
+    println!("    /desk assign <기자> <내용> [--deadline HH:MM]  업무 지시");
+    println!("    /desk list [--reporter 기자명]                 업무 목록 (마감순)");
+    println!("    /desk done <번호>                              완료 처리");
+    println!("    /desk feedback <번호> <내용>                   피드백 추가");
+    println!("    /desk pitch <제목> <내용>                      기사 아이디어 제안");
+    println!("    /desk                                          (list와 동일){RESET}\n");
+}
+
+/// Parse reporter, content, and optional --deadline from assign args.
+fn parse_desk_assign_args(args: &str) -> Option<(String, String, Option<String>)> {
+    // First token is reporter name
+    let (reporter, rest) = match args.split_once(char::is_whitespace) {
+        Some((r, rest)) => (r.trim().to_string(), rest.trim()),
+        None => return None, // need at least reporter + content
+    };
+
+    if rest.is_empty() {
+        return None;
+    }
+
+    // Check for --deadline flag
+    if let Some(dl_pos) = rest.find("--deadline") {
+        let content = rest[..dl_pos].trim().to_string();
+        let deadline_str = rest[dl_pos + 10..].trim().to_string();
+        let deadline = if deadline_str.is_empty() {
+            None
+        } else {
+            Some(deadline_str)
+        };
+        if content.is_empty() {
+            return None;
+        }
+        Some((reporter, content, deadline))
+    } else {
+        Some((reporter, rest.to_string(), None))
+    }
+}
+
+fn handle_desk_assign(args: &str) {
+    if args.is_empty() {
+        eprintln!("{RED}  사용법: /desk assign <기자> <내용> [--deadline HH:MM]{RESET}\n");
+        return;
+    }
+
+    let (reporter, content, deadline) = match parse_desk_assign_args(args) {
+        Some(v) => v,
+        None => {
+            eprintln!("{RED}  사용법: /desk assign <기자> <내용> [--deadline HH:MM]{RESET}\n");
+            return;
+        }
+    };
+
+    // Validate deadline format (HH:MM) if provided
+    if let Some(ref dl) = deadline {
+        if !is_valid_time(dl) {
+            eprintln!("{RED}  시간 형식이 올바르지 않습니다: {dl}{RESET}");
+            eprintln!("{DIM}  예: 15:30{RESET}\n");
+            return;
+        }
+    }
+
+    let now = {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let date = format_unix_timestamp(secs);
+        date.replace(' ', "T") + ":00"
+    };
+
+    let path = desk_path();
+    let mut assignments = load_desk_from(&path);
+
+    assignments.push(DeskAssignment {
+        reporter: reporter.clone(),
+        content: content.clone(),
+        deadline: deadline.clone(),
+        status: DeskStatus::Pending,
+        feedback: Vec::new(),
+        is_pitch: false,
+        created_at: now,
+    });
+
+    save_desk_to(&assignments, &path);
+
+    let dl_text = deadline
+        .as_deref()
+        .map(|d| format!(" (마감: {d})"))
+        .unwrap_or_default();
+    println!("{GREEN}  📋 업무 지시: {reporter} ← {content}{dl_text}{RESET}\n");
+}
+
+fn handle_desk_list(args: &str) {
+    // Parse --reporter filter
+    let reporter_filter = if let Some(pos) = args.find("--reporter") {
+        let after = args[pos + 10..].trim();
+        if after.is_empty() {
+            None
+        } else {
+            Some(after.split_whitespace().next().unwrap_or("").to_string())
+        }
+    } else {
+        None
+    };
+
+    let path = desk_path();
+    let assignments = load_desk_from(&path);
+
+    let active: Vec<(usize, &DeskAssignment)> = assignments
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| a.status == DeskStatus::Pending)
+        .filter(|(_, a)| {
+            reporter_filter
+                .as_ref()
+                .map_or(true, |r| a.reporter == *r)
+        })
+        .collect();
+
+    if active.is_empty() {
+        if let Some(ref r) = reporter_filter {
+            println!("{DIM}  {r} 기자의 대기 중인 업무가 없습니다.{RESET}\n");
+        } else {
+            println!("{DIM}  대기 중인 업무가 없습니다.{RESET}\n");
+        }
+        return;
+    }
+
+    // Sort by deadline (entries with deadline first, then ascending; no-deadline last)
+    let mut sorted = active;
+    sorted.sort_by(|(_, a), (_, b)| match (&a.deadline, &b.deadline) {
+        (Some(da), Some(db)) => da.cmp(db),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.created_at.cmp(&b.created_at),
+    });
+
+    println!("{BOLD}  📋 데스크 업무 목록{RESET}");
+    println!("{DIM}  ──────────────────────────────{RESET}");
+
+    for (idx, assignment) in &sorted {
+        let num = idx + 1;
+        let dl_text = assignment
+            .deadline
+            .as_deref()
+            .map(|d| format!(" [마감: {d}]"))
+            .unwrap_or_default();
+
+        let kind = if assignment.is_pitch {
+            "💡"
+        } else {
+            "📝"
+        };
+
+        let fb_count = assignment.feedback.len();
+        let fb_text = if fb_count > 0 {
+            format!(" ({fb_count}건 피드백)")
+        } else {
+            String::new()
+        };
+
+        // Color based on deadline urgency
+        if assignment.deadline.is_some() {
+            println!(
+                "  {YELLOW}{kind} #{num} [{reporter}] {content}{dl_text}{fb_text}{RESET}",
+                reporter = assignment.reporter,
+                content = assignment.content
+            );
+        } else {
+            println!(
+                "  {GREEN}{kind} #{num} [{reporter}] {content}{dl_text}{fb_text}{RESET}",
+                reporter = assignment.reporter,
+                content = assignment.content
+            );
+        }
+    }
+    println!();
+}
+
+fn handle_desk_done(num_str: &str) {
+    if num_str.is_empty() {
+        eprintln!("{RED}  번호를 지정하세요: /desk done <번호>{RESET}\n");
+        return;
+    }
+
+    let num: usize = match num_str.trim().parse() {
+        Ok(n) if n >= 1 => n,
+        _ => {
+            eprintln!("{RED}  유효한 번호를 입력하세요: {num_str}{RESET}\n");
+            return;
+        }
+    };
+
+    let path = desk_path();
+    let mut assignments = load_desk_from(&path);
+    let idx = num - 1;
+
+    if idx >= assignments.len() {
+        eprintln!("{RED}  #{num}번 업무를 찾을 수 없습니다.{RESET}\n");
+        return;
+    }
+
+    if assignments[idx].status == DeskStatus::Done {
+        println!("{DIM}  #{num}번은 이미 완료 처리되었습니다.{RESET}\n");
+        return;
+    }
+
+    assignments[idx].status = DeskStatus::Done;
+    let content = assignments[idx].content.clone();
+    let reporter = assignments[idx].reporter.clone();
+    save_desk_to(&assignments, &path);
+    println!("{GREEN}  ✅ 업무 완료: #{num} [{reporter}] {content}{RESET}\n");
+}
+
+fn handle_desk_feedback(args: &str) {
+    if args.is_empty() {
+        eprintln!("{RED}  사용법: /desk feedback <번호> <내용>{RESET}\n");
+        return;
+    }
+
+    let (num_str, feedback) = match args.split_once(char::is_whitespace) {
+        Some((n, f)) => (n.trim(), f.trim()),
+        None => {
+            eprintln!("{RED}  사용법: /desk feedback <번호> <내용>{RESET}\n");
+            return;
+        }
+    };
+
+    if feedback.is_empty() {
+        eprintln!("{RED}  피드백 내용을 입력하세요: /desk feedback <번호> <내용>{RESET}\n");
+        return;
+    }
+
+    let num: usize = match num_str.parse() {
+        Ok(n) if n >= 1 => n,
+        _ => {
+            eprintln!("{RED}  유효한 번호를 입력하세요: {num_str}{RESET}\n");
+            return;
+        }
+    };
+
+    let path = desk_path();
+    let mut assignments = load_desk_from(&path);
+    let idx = num - 1;
+
+    if idx >= assignments.len() {
+        eprintln!("{RED}  #{num}번 업무를 찾을 수 없습니다.{RESET}\n");
+        return;
+    }
+
+    assignments[idx].feedback.push(feedback.to_string());
+    let content = assignments[idx].content.clone();
+    save_desk_to(&assignments, &path);
+    println!("{GREEN}  💬 피드백 추가: #{num} {content}{RESET}");
+    println!("{DIM}  → {feedback}{RESET}\n");
+}
+
+fn handle_desk_pitch(args: &str) {
+    if args.is_empty() {
+        eprintln!("{RED}  사용법: /desk pitch <제목> <내용>{RESET}\n");
+        return;
+    }
+
+    let (title, description) = match args.split_once(char::is_whitespace) {
+        Some((t, d)) => (t.trim().to_string(), d.trim().to_string()),
+        None => {
+            eprintln!("{RED}  사용법: /desk pitch <제목> <내용>{RESET}\n");
+            return;
+        }
+    };
+
+    if description.is_empty() {
+        eprintln!("{RED}  내용을 입력하세요: /desk pitch <제목> <내용>{RESET}\n");
+        return;
+    }
+
+    let now = {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let date = format_unix_timestamp(secs);
+        date.replace(' ', "T") + ":00"
+    };
+
+    let path = desk_path();
+    let mut assignments = load_desk_from(&path);
+
+    assignments.push(DeskAssignment {
+        reporter: "제안".to_string(),
+        content: format!("[{title}] {description}"),
+        deadline: None,
+        status: DeskStatus::Pending,
+        feedback: Vec::new(),
+        is_pitch: true,
+        created_at: now,
+    });
+
+    save_desk_to(&assignments, &path);
+    println!("{GREEN}  💡 기사 아이디어 제안: {title}{RESET}");
+    println!("{DIM}  → {description}{RESET}\n");
+}
+
+/// Validate HH:MM time format.
+fn is_valid_time(s: &str) -> bool {
+    if s.len() != 5 {
+        return false;
+    }
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 2 {
+        return false;
+    }
+    parts[0].len() == 2
+        && parts[1].len() == 2
+        && parts[0].parse::<u32>().map_or(false, |h| h < 24)
+        && parts[1].parse::<u32>().map_or(false, |m| m < 60)
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -10591,5 +10983,167 @@ mod tests {
         let path = std::path::PathBuf::from("/tmp/nonexistent_followups_test_xyz.json");
         let loaded = load_followups_from(&path);
         assert!(loaded.is_empty());
+    }
+
+    // ── /desk tests ─────────────────────────────────────────────────────
+
+    fn temp_desk_path() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("desk").join("assignments.json");
+        (dir, path)
+    }
+
+    #[test]
+    fn desk_roundtrip_save_load() {
+        let (_dir, path) = temp_desk_path();
+
+        let items = vec![
+            DeskAssignment {
+                reporter: "김기자".to_string(),
+                content: "국회 예산안 취재".to_string(),
+                deadline: Some("15:00".to_string()),
+                status: DeskStatus::Pending,
+                feedback: Vec::new(),
+                is_pitch: false,
+                created_at: "2026-03-20T14:00:00".to_string(),
+            },
+            DeskAssignment {
+                reporter: "이기자".to_string(),
+                content: "인사 청문회 정리".to_string(),
+                deadline: None,
+                status: DeskStatus::Done,
+                feedback: vec!["좋은 기사".to_string()],
+                is_pitch: false,
+                created_at: "2026-03-20T10:00:00".to_string(),
+            },
+        ];
+
+        save_desk_to(&items, &path);
+        let loaded = load_desk_from(&path);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].reporter, "김기자");
+        assert_eq!(loaded[0].content, "국회 예산안 취재");
+        assert_eq!(loaded[0].deadline, Some("15:00".to_string()));
+        assert_eq!(loaded[0].status, DeskStatus::Pending);
+        assert!(loaded[0].feedback.is_empty());
+        assert_eq!(loaded[1].status, DeskStatus::Done);
+        assert_eq!(loaded[1].feedback.len(), 1);
+    }
+
+    #[test]
+    fn desk_load_missing_file() {
+        let path = std::path::PathBuf::from("/tmp/nonexistent_desk_test_xyz.json");
+        let loaded = load_desk_from(&path);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn desk_assign_and_done() {
+        let (_dir, path) = temp_desk_path();
+
+        // Assign a task
+        let assignment = DeskAssignment {
+            reporter: "박기자".to_string(),
+            content: "반도체 실적 취재".to_string(),
+            deadline: Some("17:00".to_string()),
+            status: DeskStatus::Pending,
+            feedback: Vec::new(),
+            is_pitch: false,
+            created_at: "2026-03-20T14:00:00".to_string(),
+        };
+        save_desk_to(&[assignment], &path);
+
+        // Mark as done
+        let mut loaded = load_desk_from(&path);
+        assert_eq!(loaded[0].status, DeskStatus::Pending);
+        loaded[0].status = DeskStatus::Done;
+        save_desk_to(&loaded, &path);
+
+        let reloaded = load_desk_from(&path);
+        assert_eq!(reloaded[0].status, DeskStatus::Done);
+    }
+
+    #[test]
+    fn desk_feedback_appends() {
+        let (_dir, path) = temp_desk_path();
+
+        let assignment = DeskAssignment {
+            reporter: "최기자".to_string(),
+            content: "환율 동향 분석".to_string(),
+            deadline: None,
+            status: DeskStatus::Pending,
+            feedback: Vec::new(),
+            is_pitch: false,
+            created_at: "2026-03-20T10:00:00".to_string(),
+        };
+        save_desk_to(&[assignment], &path);
+
+        let mut loaded = load_desk_from(&path);
+        loaded[0].feedback.push("수치 확인 필요".to_string());
+        loaded[0].feedback.push("그래프 추가".to_string());
+        save_desk_to(&loaded, &path);
+
+        let reloaded = load_desk_from(&path);
+        assert_eq!(reloaded[0].feedback.len(), 2);
+        assert_eq!(reloaded[0].feedback[0], "수치 확인 필요");
+        assert_eq!(reloaded[0].feedback[1], "그래프 추가");
+    }
+
+    #[test]
+    fn desk_pitch_flag() {
+        let (_dir, path) = temp_desk_path();
+
+        let pitch = DeskAssignment {
+            reporter: "제안".to_string(),
+            content: "[AI 규제] 미국 AI 규제 법안 분석".to_string(),
+            deadline: None,
+            status: DeskStatus::Pending,
+            feedback: Vec::new(),
+            is_pitch: true,
+            created_at: "2026-03-20T11:00:00".to_string(),
+        };
+        save_desk_to(&[pitch], &path);
+
+        let loaded = load_desk_from(&path);
+        assert!(loaded[0].is_pitch);
+        assert_eq!(loaded[0].reporter, "제안");
+    }
+
+    #[test]
+    fn desk_parse_assign_args_basic() {
+        let result = parse_desk_assign_args("김기자 국회 취재");
+        assert!(result.is_some());
+        let (reporter, content, deadline) = result.unwrap();
+        assert_eq!(reporter, "김기자");
+        assert_eq!(content, "국회 취재");
+        assert!(deadline.is_none());
+    }
+
+    #[test]
+    fn desk_parse_assign_args_with_deadline() {
+        let result = parse_desk_assign_args("이기자 반도체 취재 --deadline 15:30");
+        assert!(result.is_some());
+        let (reporter, content, deadline) = result.unwrap();
+        assert_eq!(reporter, "이기자");
+        assert_eq!(content, "반도체 취재");
+        assert_eq!(deadline, Some("15:30".to_string()));
+    }
+
+    #[test]
+    fn desk_parse_assign_args_missing_content() {
+        let result = parse_desk_assign_args("김기자");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn is_valid_time_checks() {
+        assert!(is_valid_time("00:00"));
+        assert!(is_valid_time("23:59"));
+        assert!(is_valid_time("15:30"));
+        assert!(!is_valid_time("24:00"));
+        assert!(!is_valid_time("12:60"));
+        assert!(!is_valid_time("1:30"));
+        assert!(!is_valid_time("abc"));
+        assert!(!is_valid_time("12345"));
     }
 }

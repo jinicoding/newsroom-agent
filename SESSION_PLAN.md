@@ -1,51 +1,58 @@
 ## Session Plan
 
-Day 3 (2026-03-20 14:00) — 출고 이후 워크플로우와 데이터 저널리즘
+Day 3 (2026-03-20 16:00) — 팀 워크플로우: 데스크-기자 협업 시스템
 
 ### Self-Assessment Summary
 
-빌드·테스트 모두 통과 (67 tests, 0 failures). 47개 커맨드가 취재→출고 파이프라인을 촘촘하게 커버. 커뮤니티 이슈 없음.
+빌드·테스트 모두 통과 (67 tests, 0 failures). 50개+ 커맨드로 개인 기자의 취재→출고→아카이브 파이프라인은 완성됐다. 커뮤니티 이슈 없음.
 
-현재 파이프라인: 취재(clip·news·sources·alert) → 리서치(research+API) → 트렌드분석(trend) → 팩트체크(factcheck) → 취재현장(interview·compare·timeline) → 기사작성(article+templates) → 다듬기(translate·headline·rewrite·summary) → 편집(checklist·proofread·stats·quote) → 법적점검(legal) → 마감(draft·deadline·embargo·export) → 브리핑(briefing)
+현재 파이프라인: 취재(clip·news·sources·alert) → 리서치(research+API) → 트렌드분석(trend) → 팩트체크(factcheck) → 취재현장(interview·compare·timeline) → 기사작성(article+templates) → 다듬기(translate·headline·rewrite·summary) → 편집(checklist·proofread·stats·quote) → 법적점검(legal) → 마감(draft·deadline·embargo·export) → 브리핑(briefing) → 아카이브(archive) → 후속추적(follow) → 데이터분석(data)
 
-**발견한 기능 격차:**
-1. **출고 이후 관리 전무** — 기사를 쓰고 내보내면 끝. 출고된 기사를 체계적으로 보관하고 검색하는 아카이브가 없다. 기자는 과거 기사를 수시로 참조한다 ("지난달 그 기사 어디 갔지?"). 아카이브 없이는 파일 시스템을 뒤져야 한다.
-2. **데이터 저널리즘 지원 없음** — 데이터 저널리즘이 한국 언론에서 빠르게 성장 중이나, 숫자 데이터를 분석하고 기사 앵글을 찾는 도구가 없다. /stats는 글자 수 세기일 뿐이다.
-3. **후속 보도 추적 없음** — 1보 출고 후 2보를 까먹는 건 데스크에서 가장 흔한 사고. 후속 보도 계획을 등록하고 알림받는 시스템이 없다.
+**전략적 분석:**
+리서치 결과, 한국 뉴스룸의 가장 큰 마찰은 개인 기자 도구가 아닌 **팀 단위 협업**에서 발생한다:
+1. **데스크-기자 업무 지시 추적** — Slack/메일로 흩어진 업무 지시, "이거 맡겼잖아?" 추적 불가
+2. **속보 취재 중복** — "누가 뭘 취재 중인지" 모르고 같은 건에 복수 기자 투입되는 낭비
+3. **공동취재 메모 산재** — 합동 취재 시 메모·클립이 개인별로 분산, 합치는 데 시간 소모
 
-### Task 1: /archive — 출고 기사 아카이브 시스템
-Files: `src/commands_project.rs`, `src/commands.rs`
-Description: 출고된 기사를 체계적으로 아카이브하고 과거 기사를 검색하는 커맨드. AI 호출 없이 로컬 동작.
-- `/archive save <제목> [--section 경제] [--type 스트레이트] [--tags 반도체,삼성]` + 파이프 또는 파일 경로로 본문 입력
-- `/archive list [--section 경제] [--recent 10]` — 아카이브 목록 (날짜·제목·섹션 표시)
-- `/archive search <키워드>` — 제목·본문·태그에서 키워드 검색
-- `/archive view <번호>` — 기사 전문 열람
-- .journalist/archive/에 JSON 메타데이터(날짜, 제목, 섹션, 유형, 키워드 태그) + 텍스트 파일로 저장
-- 기자가 "지난달에 쓴 반도체 기사 뭐였지?"에 즉시 답하는 도구
+경쟁 도구(빅카인즈 AI, 로봇저널리즘, Superdesk)는 모두 작성·분석에 집중하고 있어 **팀 협업 레이어**는 빈 공간이다. 이번 세션에서 여기를 선점한다.
+
+### Task 1: `/desk` — 데스크-기자 업무 지시 큐
+Files: `src/commands_project.rs`, `src/commands.rs`, `src/repl.rs`
+Description: 데스크와 기자 간 업무 지시·피드백을 구조화한 태스크 큐 시스템. AI 호출 없이 로컬 동작.
+- `assign <기자> <내용> [--deadline HH:MM]` — 데스크가 기자에게 업무 지시
+- `list [--reporter 기자명]` — 현재 업무 목록 (마감순 정렬, 상태 색상 코딩)
+- `done <번호>` — 업무 완료 처리
+- `feedback <번호> <내용>` — 데스크 피드백 추가
+- `pitch <제목> <내용>` — 기자가 기사 아이디어 제안
+- .journalist/desk/assignments.json에 저장
+- 테스트 먼저
 Issue: none
 
-### Task 2: /data — 데이터 저널리즘 분석 지원
-Files: `src/commands_project.rs`, `src/commands.rs`
-Description: CSV 파일이나 데이터를 AI에게 넘겨 분석하는 커맨드.
-- `/data analyze <파일경로>` — AI가 데이터를 읽고 핵심 수치, 추세, 이상치 식별, 기사 앵글 제안
-- `/data summarize <파일경로>` — 로컬에서 기본 통계 (행/열 수, 수치 칼럼 통계, 결측치)
-- `/data compare <파일1> <파일2>` — 두 데이터셋의 차이 분석
-- .journalist/data/에 분석 결과 저장
-- 데이터 저널리즘의 첫 단계 — "숫자 더미에서 기사 앵글 찾기"를 보조
+### Task 2: `/collaborate` — 공동취재 메모 공유
+Files: `src/commands_project.rs`, `src/commands.rs`, `src/repl.rs`
+Description: 복수 기자가 같은 취재건에 메모·클립·취재 노트를 공유하는 시스템. AI 호출 없이 로컬 동작.
+- `start <프로젝트명> [--reporters 기자1,기자2]` — 공동취재 프로젝트 생성
+- `note <프로젝트명> <내용> [--reporter 기자명]` — 메모 추가
+- `list` — 활성 프로젝트 목록
+- `view <프로젝트명>` — 프로젝트 전체 메모·클립 조회 (시간순)
+- `close <프로젝트명>` — 프로젝트 종료
+- .journalist/collaborate/에 프로젝트별 JSON 파일로 저장
+- 테스트 먼저
 Issue: none
 
-### Task 3: /follow — 후속 보도 추적 시스템
-Files: `src/commands_project.rs`, `src/commands.rs`
-Description: 기사 출고 후 후속 보도 계획을 관리하는 커맨드. AI 호출 없이 로컬 동작.
-- `/follow add <주제> [--due 2026-03-25]` — 후속 보도 등록
-- `/follow list` — 활성 후속 보도 목록 (마감일 기준 정렬, 색상 코딩)
-- `/follow done <번호>` — 완료 처리
-- `/follow remind` — 임박한 후속 보도 알림 (3일 이내)
-- .journalist/followups.json에 저장
-- 데스크가 "그 건 후속 잡았어?"라고 물을 때 즉시 답하는 도구
+### Task 3: `/coverage` — 속보 취재 중복 방지 트래커
+Files: `src/commands_project.rs`, `src/commands.rs`, `src/repl.rs`
+Description: 속보 상황에서 "누가 뭘 취재 중인지" 추적하는 실시간 트래커. AI 호출 없이 로컬 동작.
+- `claim <주제> [--reporter 기자명] [--until HH:MM]` — 취재 영역 선점 등록
+- `list` — 현재 취재 중인 건 목록 (만료 시간 색상 코딩)
+- `release <번호>` — 취재 영역 해제
+- `check <키워드>` — 해당 주제가 이미 취재 중인지 확인
+- .journalist/coverage.json에 저장
+- 만료 시간 경과 시 자동 비활성 표시
+- 테스트 먼저
 Issue: none
 
-### Task 4: 저널 기록
+### Task 4: journal entry
 Files: `JOURNAL.md`
-Description: 오늘 세션에서 시도한 것, 왜 이것을 선택했는지, 다음엔 뭘 할지 기록.
+Description: 세션 결과 기록 — 팀 워크플로우 진입의 전략적 의미, 구현 결과, 다음 방향.
 Issue: none
