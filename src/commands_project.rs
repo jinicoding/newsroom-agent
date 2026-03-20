@@ -1,7 +1,7 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
 //! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck,
 //! /briefing, /clip, /news, /summary, /stats, /draft, /deadline, /embargo, /export, /quote,
-//! /trend, /archive.
+//! /trend, /archive, /data.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -7056,6 +7056,300 @@ fn save_archive_index_to(index: &[serde_json::Value], path: &std::path::Path) {
     }
 }
 
+// ── /data — 데이터 저널리즘 분석 지원 ─────────────────────────────────
+
+const DATA_DIR: &str = ".journalist/data";
+
+/// Handle the /data command: data journalism analysis support.
+pub async fn handle_data(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/data").unwrap_or("").trim();
+
+    match args.split_whitespace().next().unwrap_or("help") {
+        "analyze" => {
+            let rest = args.strip_prefix("analyze").unwrap_or("").trim();
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /data analyze <파일경로>     CSV/데이터 파일 AI 분석{RESET}");
+                println!("{DIM}  예시:   /data analyze sales_2025.csv{RESET}");
+                println!("{DIM}  결과:   핵심 수치, 추세, 이상치, 기사 앵글 제안{RESET}\n");
+            } else {
+                data_analyze(agent, rest, session_total, model).await;
+            }
+        }
+        "summarize" => {
+            let rest = args.strip_prefix("summarize").unwrap_or("").trim();
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /data summarize <파일경로>   기본 통계 요약 (로컬){RESET}");
+                println!("{DIM}  예시:   /data summarize data.csv{RESET}");
+                println!("{DIM}  결과:   행/열 수, 수치 칼럼 통계, 결측치 현황{RESET}\n");
+            } else {
+                data_summarize(rest);
+            }
+        }
+        "compare" => {
+            let rest = args.strip_prefix("compare").unwrap_or("").trim();
+            let files: Vec<&str> = rest.split_whitespace().collect();
+            if files.len() < 2 {
+                println!("{DIM}  사용법: /data compare <파일1> <파일2>   두 데이터셋 비교 분석{RESET}");
+                println!("{DIM}  예시:   /data compare 2024.csv 2025.csv{RESET}\n");
+            } else {
+                data_compare(agent, files[0], files[1], session_total, model).await;
+            }
+        }
+        "help" | _ if args.is_empty() || args == "help" => {
+            println!("{DIM}  /data — 데이터 저널리즘 분석 지원{RESET}");
+            println!("{DIM}  하위 커맨드:{RESET}");
+            println!("{DIM}    analyze  <파일>          AI 분석 (핵심 수치, 추세, 이상치, 기사 앵글){RESET}");
+            println!("{DIM}    summarize <파일>         로컬 기본 통계 (행/열, 수치 통계, 결측치){RESET}");
+            println!("{DIM}    compare  <파일1> <파일2> 두 데이터셋 차이 분석{RESET}\n");
+        }
+        other => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {other}{RESET}");
+            println!("{DIM}  사용법: /data [analyze|summarize|compare]{RESET}\n");
+        }
+    }
+}
+
+/// Parse CSV content into headers and rows. Returns (headers, rows).
+pub fn parse_csv(content: &str) -> (Vec<String>, Vec<Vec<String>>) {
+    let mut lines = content.lines();
+    let headers: Vec<String> = match lines.next() {
+        Some(line) => line.split(',').map(|s| s.trim().to_string()).collect(),
+        None => return (vec![], vec![]),
+    };
+
+    let rows: Vec<Vec<String>> = lines
+        .filter(|l| !l.trim().is_empty())
+        .map(|line| line.split(',').map(|s| s.trim().to_string()).collect())
+        .collect();
+
+    (headers, rows)
+}
+
+/// Compute basic stats for a numeric column: count, min, max, mean.
+pub fn compute_column_stats(values: &[f64]) -> (usize, f64, f64, f64) {
+    let count = values.len();
+    if count == 0 {
+        return (0, 0.0, 0.0, 0.0);
+    }
+    let min = values.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let mean = values.iter().sum::<f64>() / count as f64;
+    (count, min, max, mean)
+}
+
+/// Build a summary report from CSV content (local computation, no AI).
+pub fn build_csv_summary(content: &str) -> String {
+    let (headers, rows) = parse_csv(content);
+    let num_rows = rows.len();
+    let num_cols = headers.len();
+
+    let mut report = format!("## 데이터 요약\n\n- 행 수: {num_rows}\n- 열 수: {num_cols}\n- 칼럼: {}\n\n", headers.join(", "));
+
+    // Identify numeric columns and compute stats
+    let mut numeric_stats: Vec<(String, usize, f64, f64, f64, usize)> = Vec::new();
+
+    for (col_idx, header) in headers.iter().enumerate() {
+        let mut values: Vec<f64> = Vec::new();
+        let mut missing = 0usize;
+
+        for row in &rows {
+            if col_idx < row.len() {
+                let cell = row[col_idx].trim();
+                if cell.is_empty() || cell == "NA" || cell == "N/A" || cell == "-" {
+                    missing += 1;
+                } else if let Ok(v) = cell.replace(['_', ' '], "").parse::<f64>() {
+                    values.push(v);
+                }
+            } else {
+                missing += 1;
+            }
+        }
+
+        if !values.is_empty() {
+            let (count, min, max, mean) = compute_column_stats(&values);
+            numeric_stats.push((header.clone(), count, min, max, mean, missing));
+        } else if missing > 0 {
+            // Non-numeric column with missing values
+            report.push_str(&format!("### {header}\n- 결측치: {missing}건\n\n"));
+        }
+    }
+
+    if !numeric_stats.is_empty() {
+        report.push_str("## 수치 칼럼 통계\n\n");
+        report.push_str("| 칼럼 | 유효값 | 최솟값 | 최댓값 | 평균 | 결측치 |\n");
+        report.push_str("|------|--------|--------|--------|------|--------|\n");
+        for (name, count, min, max, mean, missing) in &numeric_stats {
+            report.push_str(&format!(
+                "| {name} | {count} | {min:.2} | {max:.2} | {mean:.2} | {missing} |\n"
+            ));
+        }
+        report.push('\n');
+    }
+
+    report
+}
+
+/// Local summarize: read CSV and display basic stats.
+fn data_summarize(file_path: &str) {
+    let content = match std::fs::read_to_string(file_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{RED}  파일 읽기 실패: {e}{RESET}\n");
+            return;
+        }
+    };
+
+    let summary = build_csv_summary(&content);
+    println!("\n{summary}");
+
+    // Save result
+    let save_path = std::path::Path::new(DATA_DIR).join("last_summary.md");
+    ensure_sources_dir_at(&save_path);
+    match std::fs::write(&save_path, &summary) {
+        Ok(_) => println!("{GREEN}  ✓ 요약 저장: {}{RESET}\n", save_path.display()),
+        Err(e) => eprintln!("{RED}  저장 실패: {e}{RESET}\n"),
+    }
+}
+
+/// Build AI prompt for data analysis.
+pub fn build_data_analyze_prompt(file_path: &str, content: &str) -> String {
+    let summary = build_csv_summary(content);
+    format!(
+        "데이터 파일 '{file_path}'을(를) 분석해주세요.\n\n\
+         === 기본 통계 ===\n{summary}\n\
+         === 원본 데이터 (앞부분) ===\n{data}\n\n\
+         다음 항목을 포함해 분석해주세요:\n\n\
+         ## 1. 핵심 수치\n\
+         가장 눈에 띄는 수치와 그 의미를 설명하세요.\n\n\
+         ## 2. 추세 분석\n\
+         시계열적 변화나 패턴이 있다면 식별하세요.\n\n\
+         ## 3. 이상치 식별\n\
+         평균에서 크게 벗어나는 값이나 눈에 띄는 특이점을 찾으세요.\n\n\
+         ## 4. 기사 앵글 제안\n\
+         이 데이터에서 뽑을 수 있는 기사 앵글을 3~5개 제안하세요. \
+         각 앵글의 독자 관심도와 뉴스 가치를 한 줄로 설명하세요.\n\n\
+         ## 5. 추가 취재 포인트\n\
+         이 데이터만으로는 부족한 점, 추가로 확인해야 할 사항을 제시하세요.",
+        data = content.lines().take(50).collect::<Vec<_>>().join("\n")
+    )
+}
+
+/// Build AI prompt for comparing two datasets.
+pub fn build_data_compare_prompt(
+    file1: &str,
+    content1: &str,
+    file2: &str,
+    content2: &str,
+) -> String {
+    let summary1 = build_csv_summary(content1);
+    let summary2 = build_csv_summary(content2);
+    format!(
+        "두 데이터셋을 비교 분석해주세요.\n\n\
+         === 데이터셋 1: '{file1}' ===\n{summary1}\n\
+         원본 (앞부분):\n{data1}\n\n\
+         === 데이터셋 2: '{file2}' ===\n{summary2}\n\
+         원본 (앞부분):\n{data2}\n\n\
+         다음 항목을 포함해 분석해주세요:\n\n\
+         ## 1. 구조 비교\n\
+         두 데이터셋의 칼럼 구성, 행 수, 데이터 형태 차이를 비교하세요.\n\n\
+         ## 2. 수치 변화\n\
+         공통 칼럼의 주요 수치(합계, 평균 등) 변화를 분석하세요.\n\n\
+         ## 3. 주목할 변화\n\
+         가장 큰 증감이나 역전 현상을 식별하세요.\n\n\
+         ## 4. 기사 앵글 제안\n\
+         두 데이터셋의 비교에서 뽑을 수 있는 기사 앵글을 3~5개 제안하세요.\n\n\
+         ## 5. 주의사항\n\
+         비교 시 주의할 점(단위 차이, 기간 차이 등)을 제시하세요.",
+        data1 = content1.lines().take(30).collect::<Vec<_>>().join("\n"),
+        data2 = content2.lines().take(30).collect::<Vec<_>>().join("\n"),
+    )
+}
+
+/// AI-powered data analysis.
+async fn data_analyze(
+    agent: &mut Agent,
+    file_path: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let content = match std::fs::read_to_string(file_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{RED}  파일 읽기 실패: {e}{RESET}\n");
+            return;
+        }
+    };
+
+    println!("{DIM}  '{file_path}' 데이터 분석 중...{RESET}");
+
+    let prompt = build_data_analyze_prompt(file_path, &content);
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    if !response.trim().is_empty() {
+        let save_path = std::path::Path::new(DATA_DIR).join("last_analysis.md");
+        ensure_sources_dir_at(&save_path);
+        match std::fs::write(&save_path, &response) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 분석 결과 저장: {}{RESET}\n",
+                    save_path.display()
+                );
+            }
+            Err(e) => eprintln!("{RED}  저장 실패: {e}{RESET}\n"),
+        }
+    }
+}
+
+/// AI-powered comparison of two datasets.
+async fn data_compare(
+    agent: &mut Agent,
+    file1: &str,
+    file2: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let content1 = match std::fs::read_to_string(file1) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{RED}  파일 1 읽기 실패 ({file1}): {e}{RESET}\n");
+            return;
+        }
+    };
+    let content2 = match std::fs::read_to_string(file2) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{RED}  파일 2 읽기 실패 ({file2}): {e}{RESET}\n");
+            return;
+        }
+    };
+
+    println!("{DIM}  '{file1}' vs '{file2}' 비교 분석 중...{RESET}");
+
+    let prompt = build_data_compare_prompt(file1, &content1, file2, &content2);
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    if !response.trim().is_empty() {
+        let save_path = std::path::Path::new(DATA_DIR).join("last_compare.md");
+        ensure_sources_dir_at(&save_path);
+        match std::fs::write(&save_path, &response) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 비교 분석 저장: {}{RESET}\n",
+                    save_path.display()
+                );
+            }
+            Err(e) => eprintln!("{RED}  저장 실패: {e}{RESET}\n"),
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -9827,5 +10121,72 @@ mod tests {
         let (_dir, index_path, _archive_dir) = temp_archive_paths();
         let index = load_archive_index_from(&index_path);
         assert!(index.is_empty());
+    }
+
+    // ── /data tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn data_parse_csv_basic() {
+        let csv = "이름, 나이, 점수\n김철수, 30, 85\n이영희, 25, 92\n";
+        let (headers, rows) = parse_csv(csv);
+        assert_eq!(headers, vec!["이름", "나이", "점수"]);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], vec!["김철수", "30", "85"]);
+    }
+
+    #[test]
+    fn data_parse_csv_empty() {
+        let (headers, rows) = parse_csv("");
+        assert!(headers.is_empty());
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn data_compute_stats_basic() {
+        let values = vec![10.0, 20.0, 30.0, 40.0, 50.0];
+        let (count, min, max, mean) = compute_column_stats(&values);
+        assert_eq!(count, 5);
+        assert!((min - 10.0).abs() < f64::EPSILON);
+        assert!((max - 50.0).abs() < f64::EPSILON);
+        assert!((mean - 30.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn data_compute_stats_empty() {
+        let (count, _, _, _) = compute_column_stats(&[]);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn data_build_csv_summary_has_stats() {
+        let csv = "지역, 인구, 면적\n서울, 9700000, 605\n부산, 3400000, 770\n";
+        let summary = build_csv_summary(csv);
+        assert!(summary.contains("행 수: 2"));
+        assert!(summary.contains("열 수: 3"));
+        assert!(summary.contains("인구"));
+        assert!(summary.contains("면적"));
+    }
+
+    #[test]
+    fn data_build_csv_summary_missing_values() {
+        let csv = "항목, 값\nA, 100\nB, NA\nC, 200\n";
+        let summary = build_csv_summary(csv);
+        assert!(summary.contains("결측치"));
+    }
+
+    #[test]
+    fn data_analyze_prompt_contains_angles() {
+        let prompt = build_data_analyze_prompt("test.csv", "a,b\n1,2\n");
+        assert!(prompt.contains("기사 앵글"));
+        assert!(prompt.contains("이상치"));
+        assert!(prompt.contains("추세"));
+    }
+
+    #[test]
+    fn data_compare_prompt_contains_both_files() {
+        let prompt = build_data_compare_prompt("a.csv", "x,y\n1,2\n", "b.csv", "x,y\n3,4\n");
+        assert!(prompt.contains("a.csv"));
+        assert!(prompt.contains("b.csv"));
+        assert!(prompt.contains("구조 비교"));
     }
 }

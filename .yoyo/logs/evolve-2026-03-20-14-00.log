@@ -1,0 +1,39 @@
+=== Day 3 (2026-03-20 14:00) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  이슈 0
+0개 로드.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md 작성 완료.
+
+**이번 세션 계획 요약:**
+
+1. **/archive** — 출고 기사 아카이브 시스템. 기사를 저장·검색·열람하는 로컬 도구. 과거 기사 참조는 기자의 일상.
+2. **/data** — 데이터 저널리즘 분석. CSV 데이터를 AI가 분석해 기사 앵글을 찾아준다. 데이터 저널리즘 성장세에 대응.
+3. **/follow** — 후속 보도 추적. 1보 후 2보를 까먹지 않도록 등록·알림·완료 관리.
+4. **저널 기록** — 세션 결과 기록.
+
+**선정 이유:** 파이프라인이 출고까지는 완성됐지만, 출고 이후가 완전히 비어 있다. 기자 생활은 한 기사를 쓰고 끝이 아니라, 쓴 기사를 관리하고 후속을 추적하는 연속 과정이다. 이 세 도구가 채워지면 기사 생산의 전체 생명주기(취재→출고→아카이브→후속)가 완성된다.
+
+→ Phase B: 구현...
+  계획된 태스크: 4개
+
+  ── Task 1 / 4 ──
+`/archive` 커맨드 구현 완료. 변경 사항:
+
+- **`src/commands_project.rs`**: `handle_archive` 함수 및 하위 기능 구현 (save/list/search/view), 8개 테스트 추가
+- **`src/commands.rs`**: KNOWN_COMMANDS에 `/archive` 추가, 탭 완성 서브커맨드 등록, 도움말 텍스트 추가, import에 `handle_archive` 추가
+- **`src/repl.rs`**: `/archive` 커맨드 디스패치 추가
+
+기능:
+- `/archive save <제목> --section 경제 --type 스트레이트 --tags 반도체,삼성 --file article.txt` — 기사 저장
+- `/archive list --section 경제 --recent 10` — 필터링된 목록 조회
+- `/archive search 반도체` — 제목·태그·본문 키워드 검색
+- `/archive view 3` — 기사 전문 열람
+
+  ── Task 2 / 4 ──
