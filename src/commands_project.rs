@@ -6099,6 +6099,219 @@ fn alert_remove(idx_str: &str) {
     println!("{DIM}  키워드 삭제됨: \"{keyword}\"{RESET}\n");
 }
 
+// ── /legal ───────────────────────────────────────────────────────────────
+
+const LEGAL_DIR: &str = ".journalist/legal";
+
+/// Parse `/legal` input to extract `--file <path>` and inline text.
+/// Returns `(Option<file_path>, remaining_text)`.
+pub fn parse_legal_args(args: &str) -> (Option<String>, String) {
+    let args = args.trim();
+    if let Some(rest) = args.strip_prefix("--file") {
+        let rest = rest.trim_start();
+        if rest.is_empty() {
+            return (None, String::new());
+        }
+        let mut path_end = rest.len();
+        for (i, ch) in rest.char_indices() {
+            if ch.is_whitespace() {
+                path_end = i;
+                break;
+            }
+        }
+        let file_path = rest[..path_end].to_string();
+        let remaining = rest[path_end..].trim().to_string();
+        (Some(file_path), remaining)
+    } else {
+        (None, args.to_string())
+    }
+}
+
+/// Build the prompt for the `/legal` command (pre-publication legal risk check).
+pub fn build_legal_prompt(article: &str) -> Option<String> {
+    if article.trim().is_empty() {
+        return None;
+    }
+    Some(format!(
+        "아래 기사 텍스트에 대해 출고 전 법적 리스크를 점검해주세요.\n\n\
+         기사 텍스트:\n\"\"\"\n{article}\n\"\"\"\n\n\
+         다음 항목을 순서대로 점검하고, 각 항목마다 리스크 등급을 표시하세요:\n\n\
+         ## 1. 명예훼손 위험 요소\n\
+         - 미확인 사실을 단정적으로 주장하고 있는지\n\
+         - 출처 없이 특정인/단체를 비난하고 있는지\n\
+         - 사생활 침해 요소가 있는지 (주거지, 가족관계, 건강정보 등)\n\
+         - **형사상 명예훼손**: 사실 적시라도 공익 목적 없이 명예를 훼손하면 처벌 대상\n\n\
+         ## 2. 초상권·프라이버시 침해\n\
+         - 본인 동의 없는 사진/영상 사용 여부\n\
+         - 사적 공간에서의 촬영물 포함 여부\n\
+         - 개인정보(전화번호, 주소, 주민번호 등) 노출 여부\n\n\
+         ## 3. 일방적 보도 여부 (반론권)\n\
+         - 비판 대상의 반론/해명이 포함되어 있는지\n\
+         - 반론 요청 시도 여부가 기재되어 있는지\n\
+         - 언론중재법상 반론보도청구권 리스크\n\n\
+         ## 4. 공인/사인 구분 기준 적용\n\
+         - 기사 대상이 공인인지 사인인지 판단\n\
+         - 공인: 공적 활동에 대한 비판은 허용 범위가 넓음\n\
+         - 사인: 보도 기준이 엄격, 공익성 입증 필요\n\
+         - 적용된 기준이 적절한지 판단\n\n\
+         ## 5. 기타 법적 리스크\n\
+         - 저작권 침해 (타 매체 기사/사진 무단 인용)\n\
+         - 재판 계류 중 사건의 무죄추정 원칙 준수 여부\n\
+         - 소년법/성폭력처벌법 등 보도 제한 규정 위반 여부\n\n\
+         ## 종합 판정\n\
+         각 항목별로 다음 등급을 부여하세요:\n\
+         - ✅ 안전: 법적 리스크 없음\n\
+         - ⚠️ 주의: 수정을 권고하는 부분 있음\n\
+         - 🚨 위험: 반드시 수정 또는 삭제 필요\n\n\
+         **종합 리스크 등급**과 함께, ⚠️ 이상 항목에 대해 **구체적인 수정 제안**을 제시하세요.\n\
+         법적 근거(조항)를 가능한 한 명시하세요."
+    ))
+}
+
+/// Build the legal check file path with an explicit date string (for testing).
+pub fn legal_file_path_with_date(slug_source: &str, date: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(slug_source, 50);
+    let filename = if slug.is_empty() {
+        format!("{date}_legal.md")
+    } else {
+        format!("{date}_{slug}.md")
+    };
+    std::path::PathBuf::from(LEGAL_DIR).join(filename)
+}
+
+/// Build legal check file path with today's date.
+pub fn legal_file_path(slug_source: &str) -> std::path::PathBuf {
+    legal_file_path_with_date(slug_source, &today_str())
+}
+
+/// Save legal check result to file. Creates the legal directory if needed.
+fn save_legal(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
+/// List existing legal check files in the legal directory.
+fn legal_list() {
+    let dir = std::path::Path::new(LEGAL_DIR);
+    if !dir.exists() {
+        println!("{DIM}  저장된 법적 점검 기록이 없습니다.{RESET}\n");
+        return;
+    }
+    let mut entries: Vec<_> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+            .collect(),
+        Err(_) => {
+            println!("{DIM}  법적 점검 디렉토리를 읽을 수 없습니다.{RESET}\n");
+            return;
+        }
+    };
+    if entries.is_empty() {
+        println!("{DIM}  저장된 법적 점검 기록이 없습니다.{RESET}\n");
+        return;
+    }
+    entries.sort_by_key(|e| e.file_name());
+    println!("{DIM}  저장된 법적 점검 목록:{RESET}");
+    for (i, entry) in entries.iter().enumerate() {
+        let name = entry.file_name();
+        println!(
+            "{DIM}  {idx}. {name}{RESET}",
+            idx = i + 1,
+            name = name.to_string_lossy()
+        );
+    }
+    println!();
+}
+
+/// Handle the `/legal` command: pre-publication legal risk check.
+pub async fn handle_legal(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/legal").unwrap_or("").trim();
+
+    if args == "list" {
+        legal_list();
+        return;
+    }
+
+    let (file_path, inline_text) = parse_legal_args(args);
+
+    // Read article content from file or inline
+    let article = if let Some(ref path) = file_path {
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                println!(
+                    "{DIM}  파일 읽기: {path} ({} bytes){RESET}",
+                    content.len()
+                );
+                if inline_text.is_empty() {
+                    content
+                } else {
+                    format!("{content}\n\n{inline_text}")
+                }
+            }
+            Err(e) => {
+                eprintln!("{RED}  파일 읽기 실패: {path} — {e}{RESET}\n");
+                return;
+            }
+        }
+    } else {
+        inline_text
+    };
+
+    let prompt = match build_legal_prompt(&article) {
+        Some(p) => p,
+        None => {
+            println!("{DIM}  사용법: /legal <기사 텍스트>{RESET}");
+            println!("{DIM}  또는:   /legal --file <경로>{RESET}");
+            println!("{DIM}  또는:   /legal list — 저장된 법적 점검 목록{RESET}");
+            println!("{DIM}  예시:   /legal --file draft.md{RESET}");
+            println!(
+                "{DIM}  기사의 명예훼손, 초상권, 반론권, 공인/사인 구분 등 법적 리스크를 점검합니다.{RESET}\n"
+            );
+            return;
+        }
+    };
+
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    // Save legal check result to .journalist/legal/
+    if !response.trim().is_empty() {
+        let slug_source = if let Some(ref path) = file_path {
+            std::path::Path::new(path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "legal".to_string())
+        } else {
+            let preview: String = article.chars().take(30).collect();
+            if preview.is_empty() {
+                "legal".to_string()
+            } else {
+                preview
+            }
+        };
+        let path = legal_file_path(&slug_source);
+        match save_legal(&path, &response) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 법적 점검 저장: {}{RESET}\n",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  법적 점검 저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -8433,5 +8646,74 @@ mod tests {
         let loaded = load_alerts_from(&path);
         let exists = loaded.iter().any(|a| a["keyword"].as_str() == Some("반도체"));
         assert!(exists);
+    }
+
+    // --- legal command tests ---
+
+    #[test]
+    fn legal_prompt_with_text() {
+        let prompt = build_legal_prompt("김 의원이 뇌물을 받았다는 소문이 있다.");
+        assert!(prompt.is_some());
+        let prompt = prompt.unwrap();
+        assert!(prompt.contains("명예훼손"));
+        assert!(prompt.contains("초상권"));
+        assert!(prompt.contains("반론권"));
+        assert!(prompt.contains("공인/사인"));
+        assert!(prompt.contains("김 의원이 뇌물을 받았다는 소문이 있다."));
+    }
+
+    #[test]
+    fn legal_prompt_empty_returns_none() {
+        assert!(build_legal_prompt("").is_none());
+        assert!(build_legal_prompt("   ").is_none());
+    }
+
+    #[test]
+    fn parse_legal_args_inline() {
+        let (file, text) = parse_legal_args("기사 텍스트 내용");
+        assert!(file.is_none());
+        assert_eq!(text, "기사 텍스트 내용");
+    }
+
+    #[test]
+    fn parse_legal_args_file_flag() {
+        let (file, text) = parse_legal_args("--file draft.md");
+        assert_eq!(file.as_deref(), Some("draft.md"));
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn parse_legal_args_file_with_extra() {
+        let (file, text) = parse_legal_args("--file draft.md 추가 메모");
+        assert_eq!(file.as_deref(), Some("draft.md"));
+        assert_eq!(text, "추가 메모");
+    }
+
+    #[test]
+    fn legal_file_path_with_slug() {
+        let path = legal_file_path_with_date("김 의원 뇌물 의혹", "2026-03-20");
+        let path_str = path.to_string_lossy();
+        assert!(path_str.starts_with(".journalist/legal/"));
+        assert!(path_str.contains("2026-03-20"));
+        assert!(path_str.contains("김-의원-뇌물-의혹"));
+        assert!(path_str.ends_with(".md"));
+    }
+
+    #[test]
+    fn legal_file_path_empty_slug() {
+        let path = legal_file_path_with_date("", "2026-03-20");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/legal/2026-03-20_legal.md"
+        );
+    }
+
+    #[test]
+    fn save_legal_creates_dirs_and_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("legal").join("test.md");
+        save_legal(&path, "# 법적 점검 결과\n내용").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "# 법적 점검 결과\n내용");
     }
 }
