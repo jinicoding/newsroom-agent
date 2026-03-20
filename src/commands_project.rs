@@ -5877,6 +5877,228 @@ fn quote_remove(args: &str) {
     println!("{DIM}  인용문 삭제됨: {source} — \"{preview}\"{RESET}\n");
 }
 
+// ── /alert — 키워드 뉴스 모니터링 ──────────────────────────────────────
+
+const ALERTS_FILE: &str = ".journalist/alerts.json";
+
+/// Handle the /alert command: keyword news monitoring.
+pub fn handle_alert(input: &str) {
+    let args = input.strip_prefix("/alert").unwrap_or("").trim();
+
+    match args.split_whitespace().next().unwrap_or("list") {
+        "add" => {
+            let rest = args.strip_prefix("add").unwrap_or("").trim();
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /alert add <키워드>{RESET}");
+                println!("{DIM}  예시: /alert add 반도체{RESET}\n");
+            } else {
+                alert_add(rest);
+            }
+        }
+        "list" => {
+            alert_list();
+        }
+        "check" => {
+            alert_check();
+        }
+        "remove" => {
+            let rest = args.strip_prefix("remove").unwrap_or("").trim();
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /alert remove <번호>{RESET}");
+                println!("{DIM}  예시: /alert remove 2{RESET}\n");
+            } else {
+                alert_remove(rest);
+            }
+        }
+        other => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {other}{RESET}");
+            println!("{DIM}  사용법: /alert [add|list|check|remove]{RESET}\n");
+        }
+    }
+}
+
+fn load_alerts() -> Vec<serde_json::Value> {
+    load_alerts_from(std::path::Path::new(ALERTS_FILE))
+}
+
+fn load_alerts_from(path: &std::path::Path) -> Vec<serde_json::Value> {
+    if !path.exists() {
+        return Vec::new();
+    }
+    match std::fs::read_to_string(path) {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn save_alerts(alerts: &[serde_json::Value]) {
+    save_alerts_to(alerts, std::path::Path::new(ALERTS_FILE));
+}
+
+fn save_alerts_to(alerts: &[serde_json::Value], path: &std::path::Path) {
+    ensure_sources_dir_at(path);
+    if let Ok(json) = serde_json::to_string_pretty(alerts) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
+fn alert_add(keyword: &str) {
+    let keyword = keyword.trim();
+    let mut alerts = load_alerts();
+
+    // Check for duplicates
+    if alerts
+        .iter()
+        .any(|a| a["keyword"].as_str() == Some(keyword))
+    {
+        println!("{DIM}  '{keyword}' 키워드는 이미 등록되어 있습니다.{RESET}\n");
+        return;
+    }
+
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let timestamp = format_unix_timestamp(secs);
+
+    let entry = serde_json::json!({
+        "keyword": keyword,
+        "created": timestamp,
+    });
+    alerts.push(entry);
+    save_alerts(&alerts);
+
+    println!("{DIM}  키워드 등록됨: \"{keyword}\" [{timestamp}]{RESET}\n");
+}
+
+fn alert_list() {
+    let alerts = load_alerts();
+    if alerts.is_empty() {
+        println!("{DIM}  등록된 모니터링 키워드가 없습니다.");
+        println!("  /alert add <키워드> 로 추가하세요.{RESET}\n");
+        return;
+    }
+
+    println!("{BOLD}  모니터링 키워드 ({} 건){RESET}", alerts.len());
+    println!("{DIM}  ─────────────────────────────{RESET}");
+    for (i, alert) in alerts.iter().enumerate() {
+        let keyword = alert["keyword"].as_str().unwrap_or("?");
+        let created = alert["created"].as_str().unwrap_or("");
+        println!("{DIM}  {}. {keyword}  (등록: {created}){RESET}", i + 1);
+    }
+    println!();
+}
+
+fn alert_check() {
+    let alerts = load_alerts();
+    if alerts.is_empty() {
+        println!("{DIM}  등록된 모니터링 키워드가 없습니다.");
+        println!("  /alert add <키워드> 로 추가하세요.{RESET}\n");
+        return;
+    }
+
+    println!(
+        "{BOLD}  뉴스 모니터링 — {} 개 키워드 확인 중...{RESET}\n",
+        alerts.len()
+    );
+
+    for alert in &alerts {
+        let keyword = alert["keyword"].as_str().unwrap_or("?");
+        println!("{BOLD}  ▶ \"{keyword}\"{RESET}");
+
+        // URL-encode keyword for Naver news search
+        let encoded = keyword
+            .as_bytes()
+            .iter()
+            .map(|&b| {
+                if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~' {
+                    format!("{}", b as char)
+                } else {
+                    format!("%{:02X}", b)
+                }
+            })
+            .collect::<String>();
+
+        let url = format!(
+            "https://search.naver.com/search.naver?where=news&query={encoded}&sort=1&sm=tab_smr"
+        );
+
+        // Use curl to fetch news results
+        let output = std::process::Command::new("curl")
+            .args(["-sL", "--max-time", "10", &url])
+            .output();
+
+        match output {
+            Ok(result) => {
+                let body = String::from_utf8_lossy(&result.stdout);
+                let headlines = extract_naver_news_headlines(&body, 5);
+                if headlines.is_empty() {
+                    println!("{DIM}    검색 결과 없음{RESET}");
+                } else {
+                    for (i, headline) in headlines.iter().enumerate() {
+                        println!("{DIM}    {}. {headline}{RESET}", i + 1);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("{RED}    뉴스 조회 실패: {e}{RESET}");
+            }
+        }
+        println!();
+    }
+}
+
+/// Extract news headlines from Naver search HTML.
+fn extract_naver_news_headlines(html: &str, max: usize) -> Vec<String> {
+    let mut headlines = Vec::new();
+    // Naver news titles appear in <a class="news_tit" ... title="...">
+    for chunk in html.split("class=\"news_tit\"") {
+        if headlines.len() >= max {
+            break;
+        }
+        // Look for title="..." attribute
+        if let Some(title_start) = chunk.find("title=\"") {
+            let after = &chunk[title_start + 7..];
+            if let Some(end) = after.find('"') {
+                let title = &after[..end];
+                if !title.is_empty() {
+                    // Decode HTML entities
+                    let decoded = title
+                        .replace("&amp;", "&")
+                        .replace("&lt;", "<")
+                        .replace("&gt;", ">")
+                        .replace("&quot;", "\"")
+                        .replace("&#39;", "'");
+                    headlines.push(decoded);
+                }
+            }
+        }
+    }
+    headlines
+}
+
+fn alert_remove(idx_str: &str) {
+    let idx: usize = match idx_str.parse() {
+        Ok(n) if n >= 1 => n,
+        _ => {
+            eprintln!("{RED}  유효한 번호를 입력하세요: {idx_str}{RESET}\n");
+            return;
+        }
+    };
+    let mut alerts = load_alerts();
+    if idx > alerts.len() {
+        eprintln!(
+            "{RED}  번호 {idx}번은 범위를 벗어났습니다 (총 {} 건).{RESET}\n",
+            alerts.len()
+        );
+        return;
+    }
+    let removed = alerts.remove(idx - 1);
+    save_alerts(&alerts);
+    let keyword = removed["keyword"].as_str().unwrap_or("?");
+    println!("{DIM}  키워드 삭제됨: \"{keyword}\"{RESET}\n");
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -8141,5 +8363,75 @@ mod tests {
         let quotes = vec![serde_json::json!({"source": "테스트", "text": "발언", "timestamp": "2026-01-01 00:00"})];
         save_quotes_to(&quotes, &path);
         assert!(path.exists());
+    }
+
+    // ── /alert tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn alert_save_and_load() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("alerts.json");
+        let alerts = vec![
+            serde_json::json!({"keyword": "반도체", "created": "2026-03-20 09:00"}),
+            serde_json::json!({"keyword": "삼성전자", "created": "2026-03-20 09:01"}),
+        ];
+        save_alerts_to(&alerts, &path);
+        assert!(path.exists());
+        let loaded = load_alerts_from(&path);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0]["keyword"], "반도체");
+        assert_eq!(loaded[1]["keyword"], "삼성전자");
+    }
+
+    #[test]
+    fn alert_load_empty_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("alerts.json");
+        let loaded = load_alerts_from(&path);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn alert_save_creates_parent_directory() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("sub").join("dir").join("alerts.json");
+        let alerts = vec![serde_json::json!({"keyword": "테스트", "created": "2026-01-01 00:00"})];
+        save_alerts_to(&alerts, &path);
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn alert_remove_by_index() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("alerts.json");
+        let mut alerts = vec![
+            serde_json::json!({"keyword": "반도체", "created": "2026-03-20 09:00"}),
+            serde_json::json!({"keyword": "삼성전자", "created": "2026-03-20 09:01"}),
+            serde_json::json!({"keyword": "LG", "created": "2026-03-20 09:02"}),
+        ];
+        save_alerts_to(&alerts, &path);
+
+        // Remove second entry (1-based index 2 → vec index 1)
+        alerts.remove(1);
+        save_alerts_to(&alerts, &path);
+        let loaded = load_alerts_from(&path);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0]["keyword"], "반도체");
+        assert_eq!(loaded[1]["keyword"], "LG");
+    }
+
+    #[test]
+    fn alert_no_duplicate_keywords() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("alerts.json");
+        let alerts = vec![
+            serde_json::json!({"keyword": "반도체", "created": "2026-03-20 09:00"}),
+        ];
+        save_alerts_to(&alerts, &path);
+
+        // Check that the keyword already exists
+        let loaded = load_alerts_from(&path);
+        let exists = loaded.iter().any(|a| a["keyword"].as_str() == Some("반도체"));
+        assert!(exists);
     }
 }

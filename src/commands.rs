@@ -81,6 +81,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/export",
     "/proofread",
     "/quote",
+    "/alert",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -122,6 +123,9 @@ pub const DEADLINE_SUBCOMMANDS: &[&str] = &["set", "list", "clear"];
 /// Quote subcommand names for `/quote <Tab>` completion.
 pub const QUOTE_SUBCOMMANDS: &[&str] = &["add", "list", "search", "remove"];
 
+/// Alert subcommand names for `/alert <Tab>` completion.
+pub const ALERT_SUBCOMMANDS: &[&str] = &["add", "list", "check", "remove"];
+
 /// Return context-aware argument completions for a given command and partial argument.
 ///
 /// `cmd` is the slash command (e.g. "/model"), `partial_arg` is what the user has typed
@@ -138,6 +142,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/draft" => filter_candidates(DRAFT_SUBCOMMANDS, &partial_lower),
         "/deadline" => filter_candidates(DEADLINE_SUBCOMMANDS, &partial_lower),
         "/quote" => filter_candidates(QUOTE_SUBCOMMANDS, &partial_lower),
+        "/alert" => filter_candidates(ALERT_SUBCOMMANDS, &partial_lower),
         "/briefing" | "/translate" | "/headline" | "/rewrite" => {
             if partial_arg.starts_with("--file ") {
                 let file_part = &partial_arg[7..];
@@ -348,6 +353,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /quote [cmd]       인용문 관리 (add|list|search|remove)\n",
+    );
+    out.push_str(
+        "  /alert [cmd]       키워드 뉴스 모니터링 (add|list|check|remove)\n",
     );
     out.push('\n');
 
@@ -629,7 +637,7 @@ pub use crate::commands_project::{
     handle_context, handle_docs, handle_factcheck, handle_find, handle_fix, handle_headline,
     handle_health, handle_index, handle_init, handle_interview, handle_lint, handle_research,
     handle_deadline, handle_draft, handle_export, handle_news, handle_proofread, handle_quote, handle_run, handle_rewrite, handle_run_usage, handle_sources, handle_stats,
-    handle_summary, handle_test, handle_timeline, handle_translate, handle_tree,
+    handle_alert, handle_summary, handle_test, handle_timeline, handle_translate, handle_tree,
 };
 
 // Session-related handlers
