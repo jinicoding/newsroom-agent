@@ -83,6 +83,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/quote",
     "/alert",
     "/legal",
+    "/embargo",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -121,6 +122,9 @@ pub const DRAFT_SUBCOMMANDS: &[&str] = &["save", "list", "load", "diff"];
 /// Deadline subcommand names for `/deadline <Tab>` completion.
 pub const DEADLINE_SUBCOMMANDS: &[&str] = &["set", "list", "clear"];
 
+/// Embargo subcommand names for `/embargo <Tab>` completion.
+pub const EMBARGO_SUBCOMMANDS: &[&str] = &["set", "list", "clear"];
+
 /// Quote subcommand names for `/quote <Tab>` completion.
 pub const QUOTE_SUBCOMMANDS: &[&str] = &["add", "list", "search", "remove"];
 
@@ -142,6 +146,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/sources" => filter_candidates(SOURCES_SUBCOMMANDS, &partial_lower),
         "/draft" => filter_candidates(DRAFT_SUBCOMMANDS, &partial_lower),
         "/deadline" => filter_candidates(DEADLINE_SUBCOMMANDS, &partial_lower),
+        "/embargo" => filter_candidates(EMBARGO_SUBCOMMANDS, &partial_lower),
         "/quote" => filter_candidates(QUOTE_SUBCOMMANDS, &partial_lower),
         "/alert" => filter_candidates(ALERT_SUBCOMMANDS, &partial_lower),
         "/briefing" | "/translate" | "/headline" | "/rewrite" | "/legal" => {
@@ -345,6 +350,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /deadline <sub>        마감 카운트다운 (set|list|clear)\n",
+    );
+    out.push_str(
+        "  /embargo <sub>         엠바고 시간 관리 (set|list|clear)\n",
     );
     out.push_str(
         "  /export <파일> [--html] 기사 내보내기 (텍스트/HTML)\n",
@@ -640,7 +648,7 @@ pub use crate::commands_project::{
     handle_article, handle_briefing, handle_checklist, handle_clip, handle_compare,
     handle_context, handle_docs, handle_factcheck, handle_find, handle_fix, handle_headline,
     handle_health, handle_index, handle_init, handle_interview, handle_lint, handle_research,
-    handle_deadline, handle_draft, handle_export, handle_news, handle_proofread, handle_quote, handle_run, handle_rewrite, handle_run_usage, handle_sources, handle_stats,
+    handle_deadline, handle_draft, handle_embargo, handle_export, handle_news, handle_proofread, handle_quote, handle_run, handle_rewrite, handle_run_usage, handle_sources, handle_stats,
     handle_alert, handle_legal, handle_summary, handle_test, handle_timeline, handle_translate, handle_tree,
 };
 

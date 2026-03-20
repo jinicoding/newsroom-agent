@@ -1,53 +1,58 @@
 ## Session Plan
 
-Day 3 (2026-03-20 09:30) — 기사 품질과 취재 현장의 마지막 퍼즐
+Day 3 (2026-03-20 11:00) — 출고 전 법적 안전장치와 취재 관리 도구
 
 ### Self-Assessment Summary
 
-빌드와 839개 테스트(유닛 772 + 통합 67) 모두 통과. 기자 워크플로우 커맨드 22개 정상 작동. 커뮤니티 이슈 없음.
+빌드·테스트 모두 통과 (67 tests, 0 failures). 47개 커맨드가 취재→리서치→작성→편집→내보내기 파이프라인을 커버. 커뮤니티 이슈 없음.
 
-현재 파이프라인: 취재(clip·news·sources) → 리서치(research+API) → 팩트체크(factcheck) → 기사작성(article+templates) → 다듬기(translate·headline·rewrite·summary) → 편집(checklist·stats) → 취재현장(interview·compare·timeline) → 마감(draft·deadline·export) → 브리핑(briefing)
+현재 파이프라인: 취재(clip·news·sources·alert) → 리서치(research+API) → 팩트체크(factcheck) → 취재현장(interview·compare·timeline) → 기사작성(article+templates) → 다듬기(translate·headline·rewrite·summary) → 편집(checklist·proofread·stats·quote) → 마감(draft·deadline·export) → 브리핑(briefing)
 
-**발견한 기능 격차:**
-1. **교열 기능 없음** — 맞춤법·문법·뉴스 문체 교정은 기자가 출고 전 반드시 거치는 단계인데, 현재 파이프라인에서 완전히 빠져 있음. /checklist가 구조 점검은 하지만 문장 수준 교열은 못 함
-2. **인용문 관리 없음** — /interview로 인터뷰 준비·정리는 되지만, 개별 발언을 저장하고 기사에 삽입하고 직접/간접 인용을 전환하는 기능이 없음. 취재원이 많은 기사에서 발언 추적이 안 됨
-3. **속보 모니터링 없음** — /news로 검색은 되지만, 관심 키워드를 등록해두고 일괄 확인하는 기능이 없음. 매일 아침 같은 키워드 10개를 일일이 /news로 검색해야 하는 상태
+**발견한 기능 격차 (리서치 기반):**
+1. **법적 리스크 점검 없음** — 한국 명예훼손법은 형사 최대 7년, 민사 손해배상. 기자가 출고 전 법적 리스크를 자동 점검할 수 있는 도구가 전무. /checklist는 구조 점검, /proofread는 문체 교정이지만 법적 리스크 분석은 못 함
+2. **엠바고 관리 없음** — 정부 보도자료 엠바고를 수작업으로 관리. /deadline은 일반 마감용이지 엠바고 전용이 아님. 엠바고 놓치면 기사가 죽음
+3. **트렌드 분석 없음** — /news로 검색은 되지만 "이 키워드가 지금 과열인지, 아직 안 다뤄진 각도가 있는지" 분석하는 기능이 없음. BIG KINDS(82M+ 기사)가 있지만 CLI 접근 불가
 
-### Task 1: /proofread — 한국어 기사 교열 커맨드 신설
+### Task 1: /legal — 기사 법적 리스크 사전 점검
 Files: `src/commands_project.rs`, `src/commands.rs`, `src/repl.rs`
-Description: 한국어 기사의 맞춤법, 문법, 뉴스 문체를 교정하는 커맨드.
-- `/proofread <텍스트>` — 직접 입력한 기사 교열
-- `/proofread --file <경로>` — 파일에서 읽어 교열
-- AI가 원문 대비 수정 사항 목록(위치, 원문, 교정, 근거)을 출력
-- 교정 결과를 .journalist/proofread/에 저장
-- 한국어 뉴스 문체 규칙(경어체 통일, 숫자 표기, 외래어 표기법 등) 프롬프트에 내장
-기자가 출고 직전 반드시 거치는 교열 단계를 자동화. 테스트 먼저 작성.
+Description: AI 기반 출고 전 법적 리스크 체크 커맨드. 기사 텍스트(또는 파일)를 입력하면:
+- 명예훼손 위험 요소 (미확인 사실 주장, 출처 없는 비난, 사생활 침해)
+- 초상권·프라이버시 침해 가능성
+- 일방적 보도 여부 (반론권 미확보 점검)
+- 공인/사인 구분에 따른 보도 기준 적용
+- 리스크 등급 (✅ 안전 / ⚠️ 주의 / 🚨 위험)과 구체적 수정 제안
+- `/legal <텍스트>` 또는 `/legal --file <경로>`
+- 결과를 .journalist/legal/에 저장해 감사 추적
+
+한국 기자에게 **가장 실질적인 보호장치**. 명예훼손 소송 하나가 기자 생활을 끝낼 수 있다. 테스트 먼저 작성.
 Issue: none
 
-### Task 2: /quote — 인용문 관리 커맨드 신설
+### Task 2: /embargo — 엠바고 시간 관리
 Files: `src/commands_project.rs`, `src/commands.rs`, `src/repl.rs`
-Description: 취재원 발언을 저장·검색·관리하는 커맨드.
-- `/quote add <취재원> <발언>` — 발언 기록 (타임스탬프 자동)
-- `/quote list [취재원]` — 전체 또는 취재원별 발언 목록
-- `/quote search <키워드>` — 발언 내용 검색
-- `/quote remove <번호>` — 삭제
-- 데이터는 .journalist/quotes.json에 저장
-- /sources와 연동: 등록된 취재원이면 소속 자동 표시
-AI 호출 없이 로컬 동작. 인터뷰 취재 후 발언 정리에 핵심. 테스트 먼저 작성.
+Description: 엠바고 시각 등록·조회·해제 관리. AI 호출 없이 로컬 동작:
+- `/embargo set "보건복지부 의료개혁안" 2026-03-21 09:00` — 엠바고 등록
+- `/embargo list` — 활성 엠바고 목록 (남은 시간 표시, 색상 코딩)
+- `/embargo clear <번호>` — 엠바고 해제/삭제
+- 시각적 상태: 🔴 엠바고 중 (남은 시간) / 🟡 1시간 이내 해제 / 🟢 해제됨
+- .journalist/embargoes.json에 저장
+
+/deadline과 구조 유사하나 복수 엠바고 동시 관리, 해제 시각 기반 정렬이 차이점. 테스트 먼저 작성.
 Issue: none
 
-### Task 3: /alert — 키워드 뉴스 모니터링
+### Task 3: /trend — 키워드 뉴스 트렌드 분석
 Files: `src/commands_project.rs`, `src/commands.rs`, `src/repl.rs`
-Description: 관심 키워드를 등록해두고 일괄 확인하는 속보 모니터링 커맨드.
-- `/alert add <키워드>` — 모니터링 키워드 등록
-- `/alert list` — 등록된 키워드 목록
-- `/alert check` — 모든 키워드에 대해 네이버 뉴스 API/스크래핑으로 최신 뉴스 일괄 확인
-- `/alert remove <번호>` — 키워드 삭제
-- 데이터는 .journalist/alerts.json에 저장
-기자가 아침에 `/alert check` 한 번으로 모든 출입처 키워드의 최신 동향 파악. 테스트 먼저 작성.
+Description: 키워드의 뉴스 트렌드를 분석. 네이버 뉴스 API(있으면)로 최근 기사를 수집하고 AI 분석:
+- `/trend <키워드>` — 트렌드 분석 실행
+- 최근 보도량 추이 (과열/보통/미개척)
+- 주요 프레임·논조 분석
+- 아직 안 다뤄진 각도(angle) 제안
+- 취재 타이밍 판단 ("지금 쓸 만한가?")
+- 결과를 .journalist/trends/에 저장
+
+/news가 "검색"이라면 /trend는 "분석". 기존 fetch_news_results()를 재활용. 테스트 먼저 작성.
 Issue: none
 
 ### Task 4: 저널 기록
 Files: `JOURNAL.md`
-Description: 오늘 세션에서 시도한 것, 성공/실패, 배운 것을 기록한다.
+Description: 오늘 세션에서 시도한 것, 왜 이것을 선택했는지, 다음엔 뭘 할지 기록.
 Issue: none

@@ -1,6 +1,6 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
 //! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck,
-//! /briefing, /clip, /news, /summary, /stats, /draft, /deadline, /export, /quote.
+//! /briefing, /clip, /news, /summary, /stats, /draft, /deadline, /embargo, /export, /quote.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -5067,6 +5067,228 @@ fn handle_deadline_clear(title: &str) {
     println!("{GREEN}  ✅ 마감 해제: {title}{RESET}\n");
 }
 
+// ── /embargo ────────────────────────────────────────────────────────────
+
+const EMBARGOES_FILE: &str = ".journalist/embargoes.json";
+
+/// A single embargo entry.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+struct Embargo {
+    title: String,
+    /// ISO 8601 datetime string for embargo release (e.g. "2026-03-21T09:00:00")
+    release_at: String,
+}
+
+fn embargoes_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(EMBARGOES_FILE)
+}
+
+fn load_embargoes_from(path: &std::path::Path) -> Vec<Embargo> {
+    match std::fs::read_to_string(path) {
+        Ok(s) if !s.trim().is_empty() => serde_json::from_str(&s).unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+fn save_embargoes_to(embargoes: &[Embargo], path: &std::path::Path) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let json = serde_json::to_string_pretty(embargoes).unwrap_or_default();
+    let _ = std::fs::write(path, json);
+}
+
+/// Handle `/embargo` command with subcommands: set, list, clear.
+pub fn handle_embargo(input: &str) {
+    let args = input.strip_prefix("/embargo").unwrap_or("").trim();
+
+    if args.is_empty() {
+        handle_embargo_list();
+        return;
+    }
+
+    let (sub, rest) = match args.split_once(char::is_whitespace) {
+        Some((s, r)) => (s, r.trim()),
+        None => (args, ""),
+    };
+
+    match sub {
+        "set" => handle_embargo_set(rest),
+        "list" => handle_embargo_list(),
+        "clear" => handle_embargo_clear(rest),
+        _ => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {sub}{RESET}");
+            print_embargo_usage();
+        }
+    }
+}
+
+fn print_embargo_usage() {
+    println!("{DIM}  사용법:");
+    println!("    /embargo set <제목> <해제시각>   엠바고 등록 (예: 09:00, 2026-03-21 09:00)");
+    println!("    /embargo list                    활성 엠바고 목록 (해제 시각 순)");
+    println!("    /embargo clear <번호>            엠바고 삭제 (목록 번호)");
+    println!("    /embargo                         (list와 동일){RESET}\n");
+}
+
+fn handle_embargo_set(args: &str) {
+    if args.is_empty() {
+        eprintln!("{RED}  사용법: /embargo set <제목> <해제시각>{RESET}\n");
+        return;
+    }
+
+    // Strip surrounding quotes from title if present
+    let (title, time_str) = parse_embargo_args(args);
+
+    if title.is_empty() || time_str.is_empty() {
+        eprintln!("{RED}  제목과 해제 시각을 모두 지정하세요: /embargo set <제목> <시각>{RESET}\n");
+        return;
+    }
+
+    let datetime = match parse_deadline_datetime(&time_str) {
+        Some(dt) => dt,
+        None => {
+            eprintln!("{RED}  시간 형식을 인식할 수 없습니다: {time_str}{RESET}");
+            eprintln!("{DIM}  예: 09:00, 2026-03-21 09:00{RESET}\n");
+            return;
+        }
+    };
+
+    let path = embargoes_path();
+    let mut embargoes = load_embargoes_from(&path);
+
+    // Update existing or add new
+    if let Some(existing) = embargoes.iter_mut().find(|e| e.title == title) {
+        existing.release_at = datetime.clone();
+    } else {
+        embargoes.push(Embargo {
+            title: title.to_string(),
+            release_at: datetime.clone(),
+        });
+    }
+
+    save_embargoes_to(&embargoes, &path);
+
+    let (_, remaining) = remaining_time(&datetime);
+    println!(
+        "{GREEN}  🔒 엠바고 등록: {title} → {datetime} ({remaining}){RESET}\n"
+    );
+}
+
+/// Parse embargo set arguments, handling quoted titles.
+/// Returns (title, time_string).
+fn parse_embargo_args(args: &str) -> (String, String) {
+    // Check for quoted title: "제목" 2026-03-21 09:00
+    if args.starts_with('"') {
+        if let Some(end_quote) = args[1..].find('"') {
+            let title = &args[1..end_quote + 1];
+            let rest = args[end_quote + 2..].trim();
+            return (title.to_string(), rest.to_string());
+        }
+    }
+
+    // Unquoted: same logic as deadline — time tokens at the end
+    let parts: Vec<&str> = args.rsplitn(3, char::is_whitespace).collect();
+
+    if parts.len() >= 3 {
+        let maybe_datetime = format!("{} {}", parts[1], parts[0]);
+        if parse_deadline_datetime(&maybe_datetime).is_some() {
+            let title_end = args.len() - parts[0].len() - parts[1].len() - 2;
+            return (args[..title_end].to_string(), maybe_datetime);
+        }
+        if parse_deadline_datetime(parts[0]).is_some() {
+            let title_end = args.len() - parts[0].len() - 1;
+            return (args[..title_end].to_string(), parts[0].to_string());
+        }
+    } else if parts.len() == 2 {
+        if parse_deadline_datetime(parts[0]).is_some() {
+            let title_end = args.len() - parts[0].len() - 1;
+            return (args[..title_end].to_string(), parts[0].to_string());
+        }
+    }
+
+    (String::new(), String::new())
+}
+
+fn handle_embargo_list() {
+    let path = embargoes_path();
+    let embargoes = load_embargoes_from(&path);
+
+    if embargoes.is_empty() {
+        println!("{DIM}  등록된 엠바고가 없습니다.{RESET}\n");
+        return;
+    }
+
+    // Sort by release time (ascending — earliest release first)
+    let mut with_remaining: Vec<(usize, &Embargo, i64, String)> = embargoes
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let (secs, text) = remaining_time(&e.release_at);
+            (i + 1, e, secs, text)
+        })
+        .collect();
+    with_remaining.sort_by_key(|(_, _, secs, _)| *secs);
+
+    println!("{BOLD}  🔒 엠바고 목록{RESET}");
+    println!("{DIM}  ──────────────────────────────{RESET}");
+    for (idx, embargo, secs, remaining_text) in &with_remaining {
+        if *secs <= 0 {
+            // Released
+            println!(
+                "  {GREEN}🟢 [{idx}] {}: {} (해제됨 — {}){RESET}",
+                embargo.title, embargo.release_at, remaining_text
+            );
+        } else if *secs <= 3600 {
+            // Less than 1 hour until release
+            println!(
+                "  {YELLOW}🟡 [{idx}] {}: {} ({}){RESET}",
+                embargo.title, embargo.release_at, remaining_text
+            );
+        } else {
+            // Active embargo
+            println!(
+                "  {RED}🔴 [{idx}] {}: {} ({}){RESET}",
+                embargo.title, embargo.release_at, remaining_text
+            );
+        }
+    }
+    println!();
+}
+
+fn handle_embargo_clear(num_str: &str) {
+    if num_str.is_empty() {
+        eprintln!("{RED}  번호를 지정하세요: /embargo clear <번호>{RESET}\n");
+        return;
+    }
+
+    let idx: usize = match num_str.trim().parse() {
+        Ok(n) => n,
+        Err(_) => {
+            eprintln!("{RED}  유효한 번호를 지정하세요: /embargo clear <번호>{RESET}\n");
+            return;
+        }
+    };
+
+    let path = embargoes_path();
+    let mut embargoes = load_embargoes_from(&path);
+
+    if idx < 1 || idx > embargoes.len() {
+        eprintln!(
+            "{RED}  번호 {idx}에 해당하는 엠바고가 없습니다. (총 {}개){RESET}\n",
+            embargoes.len()
+        );
+        return;
+    }
+
+    let removed = embargoes.remove(idx - 1);
+    save_embargoes_to(&embargoes, &path);
+    println!(
+        "{GREEN}  ✅ 엠바고 삭제: [{}] {}{RESET}\n",
+        idx, removed.title
+    );
+}
+
 // ── /export ─────────────────────────────────────────────────────────────
 
 /// Base directory for exported articles.
@@ -8715,5 +8937,126 @@ mod tests {
         save_legal(&path, "# 법적 점검 결과\n내용").unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert_eq!(content, "# 법적 점검 결과\n내용");
+    }
+
+    // ── /embargo tests ──────────────────────────────────────────────────
+
+    fn temp_embargoes_path() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("embargoes.json");
+        (dir, path)
+    }
+
+    #[test]
+    fn embargo_load_empty_returns_empty() {
+        let (_dir, path) = temp_embargoes_path();
+        let embargoes = load_embargoes_from(&path);
+        assert!(embargoes.is_empty());
+    }
+
+    #[test]
+    fn embargo_save_and_load_roundtrip() {
+        let (_dir, path) = temp_embargoes_path();
+        let embargoes = vec![
+            Embargo {
+                title: "보건복지부 의료개혁안".to_string(),
+                release_at: "2026-03-21T09:00:00".to_string(),
+            },
+            Embargo {
+                title: "국방부 발표".to_string(),
+                release_at: "2026-03-22T14:00:00".to_string(),
+            },
+        ];
+        save_embargoes_to(&embargoes, &path);
+        let loaded = load_embargoes_from(&path);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].title, "보건복지부 의료개혁안");
+        assert_eq!(loaded[1].release_at, "2026-03-22T14:00:00");
+    }
+
+    #[test]
+    fn embargo_clear_by_index() {
+        let (_dir, path) = temp_embargoes_path();
+        let embargoes = vec![
+            Embargo {
+                title: "기사A".to_string(),
+                release_at: "2026-03-21T09:00:00".to_string(),
+            },
+            Embargo {
+                title: "기사B".to_string(),
+                release_at: "2026-03-22T14:00:00".to_string(),
+            },
+            Embargo {
+                title: "기사C".to_string(),
+                release_at: "2026-03-23T10:00:00".to_string(),
+            },
+        ];
+        save_embargoes_to(&embargoes, &path);
+
+        // Remove index 2 (기사B)
+        let mut loaded = load_embargoes_from(&path);
+        loaded.remove(1); // 0-indexed
+        save_embargoes_to(&loaded, &path);
+
+        let final_embargoes = load_embargoes_from(&path);
+        assert_eq!(final_embargoes.len(), 2);
+        assert_eq!(final_embargoes[0].title, "기사A");
+        assert_eq!(final_embargoes[1].title, "기사C");
+    }
+
+    #[test]
+    fn embargo_set_updates_existing() {
+        let (_dir, path) = temp_embargoes_path();
+        let mut embargoes = vec![Embargo {
+            title: "보건복지부 의료개혁안".to_string(),
+            release_at: "2026-03-21T09:00:00".to_string(),
+        }];
+        save_embargoes_to(&embargoes, &path);
+
+        // Update release time
+        if let Some(existing) = embargoes
+            .iter_mut()
+            .find(|e| e.title == "보건복지부 의료개혁안")
+        {
+            existing.release_at = "2026-03-22T10:00:00".to_string();
+        }
+        save_embargoes_to(&embargoes, &path);
+
+        let loaded = load_embargoes_from(&path);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].release_at, "2026-03-22T10:00:00");
+    }
+
+    #[test]
+    fn embargo_parse_args_quoted_title() {
+        let (title, time) =
+            parse_embargo_args("\"보건복지부 의료개혁안\" 2026-03-21 09:00");
+        assert_eq!(title, "보건복지부 의료개혁안");
+        assert_eq!(time, "2026-03-21 09:00");
+    }
+
+    #[test]
+    fn embargo_parse_args_unquoted_title() {
+        let (title, time) = parse_embargo_args("국방부발표 2026-03-22 14:00");
+        assert_eq!(title, "국방부발표");
+        assert_eq!(time, "2026-03-22 14:00");
+    }
+
+    #[test]
+    fn embargo_parse_args_time_only() {
+        let (title, time) = parse_embargo_args("긴급속보 09:00");
+        assert_eq!(title, "긴급속보");
+        assert_eq!(time, "09:00");
+    }
+
+    #[test]
+    fn embargo_color_logic() {
+        // Future (>1h) → 🔴 active
+        let (secs, _) = remaining_time("2099-12-31T23:59:00");
+        assert!(secs > 3600);
+
+        // Past → 🟢 released
+        let (secs, _) = remaining_time("2020-01-01T00:00:00");
+        assert!(secs <= 0);
     }
 }
