@@ -680,3 +680,14 @@ SESSION_PLAN.md 작성 완료.
 - 8개 단위 테스트 (CSV 파싱, 통계 계산, 요약, 프롬프트 구성)
 
   ── Task 3 / 4 ──
+완료. `/follow` 커맨드를 구현했습니다:
+
+- **`/follow add <주제> [--due YYYY-MM-DD]`** — 후속 보도 등록 (마감일 선택)
+- **`/follow list`** — 활성 목록 (마감일 기준 정렬, 🔴/🟡/🟢 색상 코딩)
+- **`/follow done <번호>`** — 완료 처리
+- **`/follow remind`** — 3일 이내 임박 보도 알림
+- `.journalist/followups.json`에 저장
+- AI 호출 없이 로컬 동작
+- 7개 테스트 추가 (파싱, 날짜 계산, 저장/로드 라운드트립 등)
+
+  ── Task 4 / 4 ──
