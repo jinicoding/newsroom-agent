@@ -1,6 +1,7 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
 //! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck,
-//! /briefing, /clip, /news, /summary, /stats, /draft, /deadline, /embargo, /export, /quote.
+//! /briefing, /clip, /news, /summary, /stats, /draft, /deadline, /embargo, /export, /quote,
+//! /trend.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -6534,6 +6535,109 @@ pub async fn handle_legal(
     }
 }
 
+// ── /trend — 키워드 뉴스 트렌드 분석 ─────────────────────────────────────
+
+/// Trends directory under .journalist/.
+const TRENDS_DIR: &str = ".journalist/trends";
+
+/// Build the trend file path with an explicit date string (for testing).
+pub fn trend_file_path_with_date(keyword: &str, date: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(keyword, 50);
+    let filename = if slug.is_empty() {
+        format!("{date}_trend.md")
+    } else {
+        format!("{date}_{slug}.md")
+    };
+    std::path::PathBuf::from(TRENDS_DIR).join(filename)
+}
+
+/// Build the trend file path using today's date.
+fn trend_file_path(keyword: &str) -> std::path::PathBuf {
+    trend_file_path_with_date(keyword, &today_str())
+}
+
+/// Save trend analysis result to file.
+fn save_trend(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
+/// Build the AI prompt for trend analysis.
+pub fn build_trend_prompt(keyword: &str, news_context: &str) -> String {
+    format!(
+        "키워드 '{keyword}'에 대한 뉴스 트렌드를 분석해주세요.\n\n\
+         다음 항목을 포함해 분석해주세요:\n\n\
+         ## 1. 보도량 추이\n\
+         최근 보도량이 과열/보통/미개척 중 어디에 해당하는지 판단하고, 근거를 설명하세요.\n\n\
+         ## 2. 주요 프레임·논조 분석\n\
+         이 키워드가 어떤 프레임(각도)으로 보도되고 있는지 분석하세요. \
+         긍정/부정/중립 논조 비율도 추정해주세요.\n\n\
+         ## 3. 아직 안 다뤄진 각도(angle) 제안\n\
+         기존 보도에서 빠져 있거나 충분히 다뤄지지 않은 취재 각도를 3~5개 제안하세요. \
+         각 제안에 왜 독자에게 가치가 있는지 한 줄로 설명하세요.\n\n\
+         ## 4. 취재 타이밍 판단\n\
+         \"지금 쓸 만한가?\" — 이 주제를 지금 기사화하는 것이 적절한 시점인지 판단하세요. \
+         너무 이른지, 적기인지, 이미 늦었는지 판단 근거와 함께 제시하세요.\n\n\
+         ## 5. 종합 제안\n\
+         기자에게 구체적으로 어떤 앵글로, 언제, 어떻게 쓰면 좋을지 요약해주세요.\
+         {news_context}"
+    )
+}
+
+/// Handle the /trend command: analyze news trend for a keyword.
+pub async fn handle_trend(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let keyword = input.strip_prefix("/trend").unwrap_or("").trim();
+
+    if keyword.is_empty() || keyword == "help" {
+        println!("{DIM}  사용법: /trend <키워드>     키워드 뉴스 트렌드 분석{RESET}");
+        println!("{DIM}  예시:   /trend 반도체 수출{RESET}");
+        println!("{DIM}  결과:   보도량 추이, 프레임 분석, 미개척 각도, 취재 타이밍{RESET}\n");
+        return;
+    }
+
+    println!("{DIM}  '{keyword}' 트렌드 분석 중...{RESET}");
+
+    // Fetch recent news to enrich the analysis
+    let news_context = match fetch_news_results(keyword, 10) {
+        Ok(items) if !items.is_empty() => {
+            println!(
+                "{DIM}  네이버 뉴스 API: {}건 수집{RESET}",
+                items.len()
+            );
+            build_news_context(&items)
+        }
+        _ => String::new(),
+    };
+
+    let prompt = build_trend_prompt(keyword, &news_context);
+
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    // Save trend result to file
+    if !response.trim().is_empty() {
+        let path = trend_file_path(keyword);
+        match save_trend(&path, &response) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 트렌드 분석 저장: {}{RESET}\n",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  트렌드 분석 저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -9058,5 +9162,60 @@ mod tests {
         // Past → 🟢 released
         let (secs, _) = remaining_time("2020-01-01T00:00:00");
         assert!(secs <= 0);
+    }
+
+    // --- /trend tests ---
+
+    #[test]
+    fn trend_file_path_with_keyword() {
+        let path = trend_file_path_with_date("반도체 수출", "2026-03-20");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/trends/2026-03-20_반도체-수출.md"
+        );
+    }
+
+    #[test]
+    fn trend_file_path_empty_keyword() {
+        let path = trend_file_path_with_date("", "2026-03-20");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/trends/2026-03-20_trend.md"
+        );
+    }
+
+    #[test]
+    fn trend_file_path_contains_date_and_slug() {
+        let path = trend_file_path_with_date("AI 규제 정책", "2026-06-01");
+        let path_str = path.to_string_lossy();
+        assert!(path_str.contains("2026-06-01"));
+        assert!(path_str.contains("ai-규제-정책"));
+        assert!(path_str.starts_with(".journalist/trends/"));
+    }
+
+    #[test]
+    fn save_trend_creates_dirs_and_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("trends").join("test.md");
+        save_trend(&path, "# 트렌드 분석\n내용").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "# 트렌드 분석\n내용");
+    }
+
+    #[test]
+    fn build_trend_prompt_contains_keyword() {
+        let prompt = build_trend_prompt("반도체", "");
+        assert!(prompt.contains("반도체"));
+        assert!(prompt.contains("보도량 추이"));
+        assert!(prompt.contains("프레임"));
+        assert!(prompt.contains("각도"));
+        assert!(prompt.contains("취재 타이밍"));
+    }
+
+    #[test]
+    fn build_trend_prompt_includes_news_context() {
+        let news_ctx = "\n[뉴스 데이터]\n1. 반도체 수출 급증";
+        let prompt = build_trend_prompt("반도체", news_ctx);
+        assert!(prompt.contains("반도체 수출 급증"));
     }
 }

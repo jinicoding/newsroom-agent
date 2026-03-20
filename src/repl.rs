@@ -692,6 +692,11 @@ pub async fn run_repl(
                 commands::handle_embargo(input);
                 continue;
             }
+            s if s == "/trend" || s.starts_with("/trend ") => {
+                commands::handle_trend(agent, input, &mut session_total, &agent_config.model)
+                    .await;
+                continue;
+            }
             s if s.starts_with('/') && is_unknown_command(s) => {
                 let cmd = s.split_whitespace().next().unwrap_or(s);
                 eprintln!("{RED}  unknown command: {cmd}{RESET}");

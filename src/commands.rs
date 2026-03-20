@@ -84,6 +84,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/alert",
     "/legal",
     "/embargo",
+    "/trend",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -338,6 +339,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /news <키워드>         네이버 뉴스 검색 (save로 클립 저장)\n",
+    );
+    out.push_str(
+        "  /trend <키워드>        키워드 뉴스 트렌드 분석 (보도량/프레임/각도/타이밍)\n",
     );
     out.push_str(
         "  /summary <path|text>   문서 빠른 요약 (3~5줄)\n",
@@ -650,6 +654,7 @@ pub use crate::commands_project::{
     handle_health, handle_index, handle_init, handle_interview, handle_lint, handle_research,
     handle_deadline, handle_draft, handle_embargo, handle_export, handle_news, handle_proofread, handle_quote, handle_run, handle_rewrite, handle_run_usage, handle_sources, handle_stats,
     handle_alert, handle_legal, handle_summary, handle_test, handle_timeline, handle_translate, handle_tree,
+    handle_trend,
 };
 
 // Session-related handlers

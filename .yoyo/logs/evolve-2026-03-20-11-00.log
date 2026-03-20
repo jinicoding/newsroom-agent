@@ -39,3 +39,13 @@ Planning phase 완료. 구현은 하지 않는다.
 테스트 8개 작성·통과, 전체 67개 테스트 통과 확인.
 
   ── Task 2 / 4 ──
+완료. `/embargo` 커맨드를 구현했습니다:
+
+- **`/embargo set <제목> <해제시각>`** — 엠바고 등록 (따옴표 감싼 제목 지원)
+- **`/embargo list`** — 활성 엠바고 목록 (해제 시각 순 정렬, 🔴/🟡/🟢 색상 코딩)
+- **`/embargo clear <번호>`** — 번호로 엠바고 삭제
+- `.journalist/embargoes.json`에 저장
+- 탭 완성 지원 (`/embargo set|list|clear`)
+- 8개 테스트 작성 및 통과
+
+  ── Task 3 / 4 ──
