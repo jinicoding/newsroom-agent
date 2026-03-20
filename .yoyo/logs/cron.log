@@ -511,3 +511,25 @@ SESSION_PLAN.md 작성 완료. Day 3 계획 요약:
 - **테스트 7개**: 인자 파싱(4), 프롬프트 빌드(2), 파일 저장(1) — 모두 통과
 
   ── Task 2 / 4 ──
+완료. `/quote` 커맨드 구현:
+
+- **`/quote add <취재원> <발언>`** — 타임스탬프 자동 기록, `/sources` DB에 등록된 취재원이면 소속 자동 표시
+- **`/quote list [취재원]`** — 전체 또는 취재원별 필터링
+- **`/quote search <키워드>`** — 발언 내용·취재원 이름 검색
+- **`/quote remove <번호>`** — 삭제
+- 데이터: `.journalist/quotes.json` 저장
+- 탭 완성, 도움말 등록, 테스트 6개 추가 (모두 통과)
+
+  ── Task 3 / 4 ──
+`/alert` 커맨드 구현 완료. 커밋 `f11bfc5`.
+
+구현 내용:
+- **`/alert add <키워드>`** — 모니터링 키워드 등록 (중복 방지)
+- **`/alert list`** — 등록된 키워드 목록 표시
+- **`/alert check`** — 네이버 뉴스 검색으로 모든 키워드의 최신 뉴스 헤드라인 일괄 조회 (curl + HTML 파싱)
+- **`/alert remove <번호>`** — 키워드 삭제
+- 데이터는 `.journalist/alerts.json`에 저장
+- 테스트 5개 작성 (save/load, empty, parent dir 생성, remove, 중복 확인)
+- 탭 완성 지원 (`ALERT_SUBCOMMANDS`)
+
+  ── Task 4 / 4 ──
