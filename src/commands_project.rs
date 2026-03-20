@@ -1,7 +1,7 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
 //! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck,
 //! /briefing, /clip, /news, /summary, /stats, /draft, /deadline, /embargo, /export, /quote,
-//! /trend.
+//! /trend, /archive.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -6638,6 +6638,424 @@ pub async fn handle_trend(
     }
 }
 
+// ── /archive — 출고 기사 아카이브 시스템 ────────────────────────────────
+
+const ARCHIVE_DIR: &str = ".journalist/archive";
+const ARCHIVE_INDEX: &str = ".journalist/archive/index.json";
+
+pub fn handle_archive(input: &str) {
+    let args = input.strip_prefix("/archive").unwrap_or("").trim();
+
+    match args.split_whitespace().next().unwrap_or("list") {
+        "save" => {
+            let rest = args.strip_prefix("save").unwrap_or("").trim();
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /archive save <제목> [--section 경제] [--type 스트레이트] [--tags 반도체,삼성]{RESET}");
+                println!("{DIM}  본문: 표준 입력(파이프) 또는 --file <경로> 로 지정{RESET}\n");
+            } else {
+                archive_save(rest);
+            }
+        }
+        "list" => {
+            let rest = args.strip_prefix("list").unwrap_or("").trim();
+            archive_list(rest);
+        }
+        "search" => {
+            let rest = args.strip_prefix("search").unwrap_or("").trim();
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /archive search <키워드>{RESET}");
+                println!("{DIM}  예시: /archive search 반도체{RESET}\n");
+            } else {
+                archive_search(rest);
+            }
+        }
+        "view" => {
+            let rest = args.strip_prefix("view").unwrap_or("").trim();
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /archive view <번호>{RESET}");
+                println!("{DIM}  예시: /archive view 3{RESET}\n");
+            } else {
+                archive_view(rest);
+            }
+        }
+        other => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {other}{RESET}");
+            println!("{DIM}  사용법: /archive [save|list|search|view]{RESET}\n");
+        }
+    }
+}
+
+/// Parse archive save arguments: extract title, --section, --type, --tags, --file.
+fn parse_archive_save_args(args: &str) -> (String, String, String, Vec<String>, Option<String>) {
+    let mut title = String::new();
+    let mut section = String::new();
+    let mut article_type = String::new();
+    let mut tags: Vec<String> = Vec::new();
+    let mut file_path: Option<String> = None;
+
+    let parts: Vec<&str> = args.split_whitespace().collect();
+    let mut i = 0;
+    while i < parts.len() {
+        match parts[i] {
+            "--section" => {
+                if i + 1 < parts.len() {
+                    section = parts[i + 1].to_string();
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            "--type" => {
+                if i + 1 < parts.len() {
+                    article_type = parts[i + 1].to_string();
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            "--tags" => {
+                if i + 1 < parts.len() {
+                    tags = parts[i + 1].split(',').map(|s| s.trim().to_string()).collect();
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            "--file" => {
+                if i + 1 < parts.len() {
+                    file_path = Some(parts[i + 1].to_string());
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            _ => {
+                if title.is_empty() {
+                    title = parts[i].to_string();
+                } else {
+                    // Accumulate multi-word title until we hit a flag
+                    title.push(' ');
+                    title.push_str(parts[i]);
+                }
+                i += 1;
+            }
+        }
+    }
+
+    (title, section, article_type, tags, file_path)
+}
+
+fn archive_save(args: &str) {
+    let (title, section, article_type, tags, file_path) = parse_archive_save_args(args);
+
+    if title.is_empty() {
+        println!("{DIM}  제목을 입력하세요.{RESET}\n");
+        return;
+    }
+
+    // Read body from file if --file provided
+    let body = if let Some(ref fp) = file_path {
+        match std::fs::read_to_string(fp) {
+            Ok(content) => content,
+            Err(e) => {
+                eprintln!("{RED}  파일 읽기 실패: {e}{RESET}\n");
+                return;
+            }
+        }
+    } else {
+        String::new()
+    };
+
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let timestamp = format_unix_timestamp(secs);
+    let date = &timestamp[..10]; // "YYYY-MM-DD"
+
+    let mut index = load_archive_index_from(std::path::Path::new(ARCHIVE_INDEX));
+    let id = index.len() + 1;
+
+    // Save body text file
+    let text_filename = format!("{id:04}.txt");
+    let text_path = std::path::Path::new(ARCHIVE_DIR).join(&text_filename);
+    ensure_sources_dir_at(&text_path);
+    let _ = std::fs::write(&text_path, &body);
+
+    // Build metadata entry
+    let entry = serde_json::json!({
+        "id": id,
+        "title": title,
+        "date": date,
+        "section": section,
+        "type": article_type,
+        "tags": tags,
+        "file": text_filename,
+    });
+
+    index.push(entry);
+    save_archive_index_to(&index, std::path::Path::new(ARCHIVE_INDEX));
+
+    println!("{DIM}  기사 아카이브 저장됨: #{id} \"{title}\" [{date}]{RESET}");
+    if !section.is_empty() {
+        println!("{DIM}    섹션: {section}{RESET}");
+    }
+    if !article_type.is_empty() {
+        println!("{DIM}    유형: {article_type}{RESET}");
+    }
+    if !tags.is_empty() {
+        println!("{DIM}    태그: {}{RESET}", tags.join(", "));
+    }
+    println!();
+}
+
+fn archive_list(args: &str) {
+    archive_list_from(std::path::Path::new(ARCHIVE_INDEX), args);
+}
+
+fn archive_list_from(index_path: &std::path::Path, args: &str) {
+    let index = load_archive_index_from(index_path);
+    if index.is_empty() {
+        println!("{DIM}  아카이브가 비어있습니다.");
+        println!("  /archive save <제목> 으로 기사를 저장하세요.{RESET}\n");
+        return;
+    }
+
+    // Parse --section and --recent flags
+    let mut section_filter: Option<String> = None;
+    let mut recent_limit: Option<usize> = None;
+    let parts: Vec<&str> = args.split_whitespace().collect();
+    let mut i = 0;
+    while i < parts.len() {
+        match parts[i] {
+            "--section" => {
+                if i + 1 < parts.len() {
+                    section_filter = Some(parts[i + 1].to_string());
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            "--recent" => {
+                if i + 1 < parts.len() {
+                    recent_limit = parts[i + 1].parse().ok();
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    // Filter by section
+    let filtered: Vec<&serde_json::Value> = index
+        .iter()
+        .filter(|e| {
+            if let Some(ref sec) = section_filter {
+                e["section"].as_str().unwrap_or("") == sec
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    // Apply recent limit (from the end)
+    let display: Vec<&&serde_json::Value> = if let Some(n) = recent_limit {
+        filtered.iter().rev().take(n).collect::<Vec<_>>().into_iter().rev().collect()
+    } else {
+        filtered.iter().collect()
+    };
+
+    if display.is_empty() {
+        println!("{DIM}  조건에 맞는 기사가 없습니다.{RESET}\n");
+        return;
+    }
+
+    println!("{BOLD}  기사 아카이브 ({} 건){RESET}", display.len());
+    println!("{DIM}  ─────────────────────────────────────{RESET}");
+    for entry in &display {
+        let id = entry["id"].as_u64().unwrap_or(0);
+        let date = entry["date"].as_str().unwrap_or("?");
+        let title = entry["title"].as_str().unwrap_or("?");
+        let section = entry["section"].as_str().unwrap_or("");
+        let sec_display = if section.is_empty() {
+            String::new()
+        } else {
+            format!(" [{section}]")
+        };
+        println!("{DIM}  {id:>4}. {date}  {title}{sec_display}{RESET}");
+    }
+    println!();
+}
+
+fn archive_search(keyword: &str) {
+    archive_search_in(
+        std::path::Path::new(ARCHIVE_INDEX),
+        std::path::Path::new(ARCHIVE_DIR),
+        keyword,
+    );
+}
+
+fn archive_search_in(index_path: &std::path::Path, archive_dir: &std::path::Path, keyword: &str) {
+    let index = load_archive_index_from(index_path);
+    if index.is_empty() {
+        println!("{DIM}  아카이브가 비어있습니다.{RESET}\n");
+        return;
+    }
+
+    let keyword_lower = keyword.to_lowercase();
+    let mut results: Vec<&serde_json::Value> = Vec::new();
+
+    for entry in &index {
+        // Search in title
+        let title = entry["title"].as_str().unwrap_or("");
+        if title.to_lowercase().contains(&keyword_lower) {
+            results.push(entry);
+            continue;
+        }
+
+        // Search in tags
+        if let Some(tags) = entry["tags"].as_array() {
+            if tags.iter().any(|t| {
+                t.as_str()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .contains(&keyword_lower)
+            }) {
+                results.push(entry);
+                continue;
+            }
+        }
+
+        // Search in body text
+        let filename = entry["file"].as_str().unwrap_or("");
+        if !filename.is_empty() {
+            let text_path = archive_dir.join(filename);
+            if let Ok(body) = std::fs::read_to_string(&text_path) {
+                if body.to_lowercase().contains(&keyword_lower) {
+                    results.push(entry);
+                }
+            }
+        }
+    }
+
+    if results.is_empty() {
+        println!("{DIM}  \"{keyword}\" 검색 결과 없음.{RESET}\n");
+        return;
+    }
+
+    println!(
+        "{BOLD}  \"{keyword}\" 검색 결과 ({} 건){RESET}",
+        results.len()
+    );
+    println!("{DIM}  ─────────────────────────────────────{RESET}");
+    for entry in &results {
+        let id = entry["id"].as_u64().unwrap_or(0);
+        let date = entry["date"].as_str().unwrap_or("?");
+        let title = entry["title"].as_str().unwrap_or("?");
+        let section = entry["section"].as_str().unwrap_or("");
+        let sec_display = if section.is_empty() {
+            String::new()
+        } else {
+            format!(" [{section}]")
+        };
+        println!("{DIM}  {id:>4}. {date}  {title}{sec_display}{RESET}");
+    }
+    println!();
+}
+
+fn archive_view(id_str: &str) {
+    archive_view_in(
+        std::path::Path::new(ARCHIVE_INDEX),
+        std::path::Path::new(ARCHIVE_DIR),
+        id_str,
+    );
+}
+
+fn archive_view_in(
+    index_path: &std::path::Path,
+    archive_dir: &std::path::Path,
+    id_str: &str,
+) {
+    let id: usize = match id_str.parse() {
+        Ok(n) => n,
+        Err(_) => {
+            eprintln!("{RED}  유효한 번호를 입력하세요.{RESET}\n");
+            return;
+        }
+    };
+
+    let index = load_archive_index_from(index_path);
+    let entry = index.iter().find(|e| e["id"].as_u64() == Some(id as u64));
+    let entry = match entry {
+        Some(e) => e,
+        None => {
+            eprintln!("{RED}  #{id} 기사를 찾을 수 없습니다.{RESET}\n");
+            return;
+        }
+    };
+
+    let title = entry["title"].as_str().unwrap_or("?");
+    let date = entry["date"].as_str().unwrap_or("?");
+    let section = entry["section"].as_str().unwrap_or("");
+    let article_type = entry["type"].as_str().unwrap_or("");
+    let tags: Vec<&str> = entry["tags"]
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+
+    println!("{BOLD}  #{id} {title}{RESET}");
+    println!("{DIM}  날짜: {date}{RESET}");
+    if !section.is_empty() {
+        println!("{DIM}  섹션: {section}{RESET}");
+    }
+    if !article_type.is_empty() {
+        println!("{DIM}  유형: {article_type}{RESET}");
+    }
+    if !tags.is_empty() {
+        println!("{DIM}  태그: {}{RESET}", tags.join(", "));
+    }
+    println!("{DIM}  ─────────────────────────────────────{RESET}");
+
+    let filename = entry["file"].as_str().unwrap_or("");
+    if !filename.is_empty() {
+        let text_path = archive_dir.join(filename);
+        match std::fs::read_to_string(&text_path) {
+            Ok(body) => {
+                if body.is_empty() {
+                    println!("{DIM}  (본문 없음){RESET}");
+                } else {
+                    println!("{DIM}{body}{RESET}");
+                }
+            }
+            Err(_) => {
+                println!("{DIM}  (본문 파일을 읽을 수 없습니다){RESET}");
+            }
+        }
+    }
+    println!();
+}
+
+fn load_archive_index_from(path: &std::path::Path) -> Vec<serde_json::Value> {
+    if !path.exists() {
+        return Vec::new();
+    }
+    match std::fs::read_to_string(path) {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn save_archive_index_to(index: &[serde_json::Value], path: &std::path::Path) {
+    ensure_sources_dir_at(path);
+    if let Ok(json) = serde_json::to_string_pretty(index) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -9217,5 +9635,197 @@ mod tests {
         let news_ctx = "\n[뉴스 데이터]\n1. 반도체 수출 급증";
         let prompt = build_trend_prompt("반도체", news_ctx);
         assert!(prompt.contains("반도체 수출 급증"));
+    }
+
+    // --- /archive tests ---
+
+    fn temp_archive_paths() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let archive_dir = dir.path().join("archive");
+        std::fs::create_dir_all(&archive_dir).unwrap();
+        let index_path = archive_dir.join("index.json");
+        (dir, index_path, archive_dir)
+    }
+
+    fn add_archive_entry(
+        index_path: &Path,
+        archive_dir: &Path,
+        id: usize,
+        title: &str,
+        date: &str,
+        section: &str,
+        article_type: &str,
+        tags: Vec<&str>,
+        body: &str,
+    ) {
+        let mut index = load_archive_index_from(index_path);
+        let text_filename = format!("{id:04}.txt");
+        let text_path = archive_dir.join(&text_filename);
+        std::fs::write(&text_path, body).unwrap();
+        let entry = serde_json::json!({
+            "id": id,
+            "title": title,
+            "date": date,
+            "section": section,
+            "type": article_type,
+            "tags": tags,
+            "file": text_filename,
+        });
+        index.push(entry);
+        save_archive_index_to(&index, index_path);
+    }
+
+    #[test]
+    fn archive_save_and_load_index() {
+        let (_dir, index_path, archive_dir) = temp_archive_paths();
+        add_archive_entry(
+            &index_path,
+            &archive_dir,
+            1,
+            "반도체 수출 급증",
+            "2026-03-20",
+            "경제",
+            "스트레이트",
+            vec!["반도체", "삼성"],
+            "반도체 수출이 전년 대비 30% 증가했다.",
+        );
+
+        let index = load_archive_index_from(&index_path);
+        assert_eq!(index.len(), 1);
+        assert_eq!(index[0]["title"], "반도체 수출 급증");
+        assert_eq!(index[0]["section"], "경제");
+        assert_eq!(index[0]["tags"][0], "반도체");
+        assert_eq!(index[0]["tags"][1], "삼성");
+    }
+
+    #[test]
+    fn archive_search_finds_by_title() {
+        let (_dir, index_path, archive_dir) = temp_archive_paths();
+        add_archive_entry(&index_path, &archive_dir, 1, "반도체 수출 급증", "2026-03-20", "경제", "", vec![], "본문");
+        add_archive_entry(&index_path, &archive_dir, 2, "자동차 산업 동향", "2026-03-19", "산업", "", vec![], "본문");
+
+        let index = load_archive_index_from(&index_path);
+        let keyword = "반도체";
+        let keyword_lower = keyword.to_lowercase();
+        let results: Vec<_> = index
+            .iter()
+            .filter(|e| {
+                e["title"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .contains(&keyword_lower)
+            })
+            .collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["title"], "반도체 수출 급증");
+    }
+
+    #[test]
+    fn archive_search_finds_by_tag() {
+        let (_dir, index_path, archive_dir) = temp_archive_paths();
+        add_archive_entry(&index_path, &archive_dir, 1, "기사A", "2026-03-20", "", "", vec!["삼성", "반도체"], "");
+        add_archive_entry(&index_path, &archive_dir, 2, "기사B", "2026-03-19", "", "", vec!["현대", "자동차"], "");
+
+        let index = load_archive_index_from(&index_path);
+        let keyword_lower = "삼성";
+        let results: Vec<_> = index
+            .iter()
+            .filter(|e| {
+                if let Some(tags) = e["tags"].as_array() {
+                    tags.iter().any(|t| t.as_str().unwrap_or("").contains(keyword_lower))
+                } else {
+                    false
+                }
+            })
+            .collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["title"], "기사A");
+    }
+
+    #[test]
+    fn archive_search_finds_by_body() {
+        let (_dir, index_path, archive_dir) = temp_archive_paths();
+        add_archive_entry(&index_path, &archive_dir, 1, "기사A", "2026-03-20", "", "", vec![], "반도체 수출이 급증했다");
+        add_archive_entry(&index_path, &archive_dir, 2, "기사B", "2026-03-19", "", "", vec![], "자동차 수출은 감소");
+
+        let index = load_archive_index_from(&index_path);
+        let keyword_lower = "반도체";
+        let results: Vec<_> = index
+            .iter()
+            .filter(|e| {
+                let filename = e["file"].as_str().unwrap_or("");
+                if !filename.is_empty() {
+                    let text_path = archive_dir.join(filename);
+                    if let Ok(body) = std::fs::read_to_string(&text_path) {
+                        return body.contains(keyword_lower);
+                    }
+                }
+                false
+            })
+            .collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["title"], "기사A");
+    }
+
+    #[test]
+    fn archive_view_finds_by_id() {
+        let (_dir, index_path, archive_dir) = temp_archive_paths();
+        add_archive_entry(&index_path, &archive_dir, 1, "기사A", "2026-03-20", "경제", "스트레이트", vec!["반도체"], "본문 내용");
+        add_archive_entry(&index_path, &archive_dir, 2, "기사B", "2026-03-19", "정치", "해설", vec!["국회"], "정치 본문");
+
+        let index = load_archive_index_from(&index_path);
+        let entry = index.iter().find(|e| e["id"].as_u64() == Some(2));
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap()["title"], "기사B");
+
+        // Read body
+        let filename = entry.unwrap()["file"].as_str().unwrap();
+        let body = std::fs::read_to_string(archive_dir.join(filename)).unwrap();
+        assert_eq!(body, "정치 본문");
+    }
+
+    #[test]
+    fn archive_list_section_filter() {
+        let (_dir, index_path, archive_dir) = temp_archive_paths();
+        add_archive_entry(&index_path, &archive_dir, 1, "기사A", "2026-03-20", "경제", "", vec![], "");
+        add_archive_entry(&index_path, &archive_dir, 2, "기사B", "2026-03-19", "정치", "", vec![], "");
+        add_archive_entry(&index_path, &archive_dir, 3, "기사C", "2026-03-18", "경제", "", vec![], "");
+
+        let index = load_archive_index_from(&index_path);
+        let filtered: Vec<_> = index
+            .iter()
+            .filter(|e| e["section"].as_str().unwrap_or("") == "경제")
+            .collect();
+        assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn archive_parse_args_full() {
+        let (title, section, article_type, tags, file_path) =
+            parse_archive_save_args("반도체 수출 기사 --section 경제 --type 스트레이트 --tags 반도체,삼성 --file /tmp/article.txt");
+        assert_eq!(title, "반도체 수출 기사");
+        assert_eq!(section, "경제");
+        assert_eq!(article_type, "스트레이트");
+        assert_eq!(tags, vec!["반도체", "삼성"]);
+        assert_eq!(file_path, Some("/tmp/article.txt".to_string()));
+    }
+
+    #[test]
+    fn archive_parse_args_title_only() {
+        let (title, section, article_type, tags, file_path) =
+            parse_archive_save_args("단순 제목");
+        assert_eq!(title, "단순 제목");
+        assert!(section.is_empty());
+        assert!(article_type.is_empty());
+        assert!(tags.is_empty());
+        assert!(file_path.is_none());
+    }
+
+    #[test]
+    fn archive_empty_index_loads_empty() {
+        let (_dir, index_path, _archive_dir) = temp_archive_paths();
+        let index = load_archive_index_from(&index_path);
+        assert!(index.is_empty());
     }
 }

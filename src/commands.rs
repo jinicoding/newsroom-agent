@@ -85,6 +85,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/legal",
     "/embargo",
     "/trend",
+    "/archive",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -132,6 +133,9 @@ pub const QUOTE_SUBCOMMANDS: &[&str] = &["add", "list", "search", "remove"];
 /// Alert subcommand names for `/alert <Tab>` completion.
 pub const ALERT_SUBCOMMANDS: &[&str] = &["add", "list", "check", "remove"];
 
+/// Archive subcommand names for `/archive <Tab>` completion.
+pub const ARCHIVE_SUBCOMMANDS: &[&str] = &["save", "list", "search", "view"];
+
 /// Return context-aware argument completions for a given command and partial argument.
 ///
 /// `cmd` is the slash command (e.g. "/model"), `partial_arg` is what the user has typed
@@ -150,6 +154,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/embargo" => filter_candidates(EMBARGO_SUBCOMMANDS, &partial_lower),
         "/quote" => filter_candidates(QUOTE_SUBCOMMANDS, &partial_lower),
         "/alert" => filter_candidates(ALERT_SUBCOMMANDS, &partial_lower),
+        "/archive" => filter_candidates(ARCHIVE_SUBCOMMANDS, &partial_lower),
         "/briefing" | "/translate" | "/headline" | "/rewrite" | "/legal" => {
             if partial_arg.starts_with("--file ") {
                 let file_part = &partial_arg[7..];
@@ -372,6 +377,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /legal [text|--file <path>]  기사 법적 리스크 사전 점검 (명예훼손/초상권/반론권)\n",
+    );
+    out.push_str(
+        "  /archive [cmd]     출고 기사 아카이브 (save|list|search|view)\n",
     );
     out.push('\n');
 
@@ -653,7 +661,7 @@ pub use crate::commands_project::{
     handle_context, handle_docs, handle_factcheck, handle_find, handle_fix, handle_headline,
     handle_health, handle_index, handle_init, handle_interview, handle_lint, handle_research,
     handle_deadline, handle_draft, handle_embargo, handle_export, handle_news, handle_proofread, handle_quote, handle_run, handle_rewrite, handle_run_usage, handle_sources, handle_stats,
-    handle_alert, handle_legal, handle_summary, handle_test, handle_timeline, handle_translate, handle_tree,
+    handle_alert, handle_archive, handle_legal, handle_summary, handle_test, handle_timeline, handle_translate, handle_tree,
     handle_trend,
 };
 
