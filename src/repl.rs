@@ -706,6 +706,10 @@ pub async fn run_repl(
                     .await;
                 continue;
             }
+            s if s == "/follow" || s.starts_with("/follow ") => {
+                commands::handle_follow(input);
+                continue;
+            }
             s if s.starts_with('/') && is_unknown_command(s) => {
                 let cmd = s.split_whitespace().next().unwrap_or(s);
                 eprintln!("{RED}  unknown command: {cmd}{RESET}");

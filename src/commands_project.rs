@@ -1,7 +1,7 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
 //! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck,
 //! /briefing, /clip, /news, /summary, /stats, /draft, /deadline, /embargo, /export, /quote,
-//! /trend, /archive, /data.
+//! /trend, /archive, /data, /follow.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -7350,6 +7350,332 @@ async fn data_compare(
     }
 }
 
+// ── /follow ──────────────────────────────────────────────────────────────
+
+const FOLLOWUPS_FILE: &str = ".journalist/followups.json";
+
+/// A single follow-up story entry.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+struct Followup {
+    topic: String,
+    /// Optional due date in "YYYY-MM-DD" format.
+    due: Option<String>,
+    done: bool,
+    /// ISO 8601 datetime when the followup was created.
+    created_at: String,
+}
+
+fn followups_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(FOLLOWUPS_FILE)
+}
+
+fn load_followups_from(path: &std::path::Path) -> Vec<Followup> {
+    match std::fs::read_to_string(path) {
+        Ok(s) if !s.trim().is_empty() => serde_json::from_str(&s).unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+fn save_followups_to(followups: &[Followup], path: &std::path::Path) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let json = serde_json::to_string_pretty(followups).unwrap_or_default();
+    let _ = std::fs::write(path, json);
+}
+
+/// Handle `/follow` command with subcommands: add, list, done, remind.
+pub fn handle_follow(input: &str) {
+    let args = input.strip_prefix("/follow").unwrap_or("").trim();
+
+    if args.is_empty() {
+        handle_follow_list();
+        return;
+    }
+
+    let (sub, rest) = match args.split_once(char::is_whitespace) {
+        Some((s, r)) => (s, r.trim()),
+        None => (args, ""),
+    };
+
+    match sub {
+        "add" => handle_follow_add(rest),
+        "list" => handle_follow_list(),
+        "done" => handle_follow_done(rest),
+        "remind" => handle_follow_remind(),
+        _ => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {sub}{RESET}");
+            print_follow_usage();
+        }
+    }
+}
+
+fn print_follow_usage() {
+    println!("{DIM}  사용법:");
+    println!("    /follow add <주제> [--due YYYY-MM-DD]  후속 보도 등록");
+    println!("    /follow list                           활성 후속 보도 목록");
+    println!("    /follow done <번호>                    완료 처리");
+    println!("    /follow remind                         임박 후속 보도 알림 (3일 이내)");
+    println!("    /follow                                (list와 동일){RESET}\n");
+}
+
+/// Parse topic and optional --due flag from args.
+fn parse_follow_add_args(args: &str) -> (String, Option<String>) {
+    if let Some(due_pos) = args.find("--due") {
+        let topic = args[..due_pos].trim().to_string();
+        let due_str = args[due_pos + 5..].trim().to_string();
+        let due = if due_str.is_empty() {
+            None
+        } else {
+            Some(due_str)
+        };
+        (topic, due)
+    } else {
+        (args.trim().to_string(), None)
+    }
+}
+
+fn handle_follow_add(args: &str) {
+    if args.is_empty() {
+        eprintln!("{RED}  사용법: /follow add <주제> [--due YYYY-MM-DD]{RESET}\n");
+        return;
+    }
+
+    let (topic, due) = parse_follow_add_args(args);
+
+    if topic.is_empty() {
+        eprintln!("{RED}  주제를 지정하세요: /follow add <주제>{RESET}\n");
+        return;
+    }
+
+    // Validate due date format if provided
+    if let Some(ref d) = due {
+        if !is_valid_date(d) {
+            eprintln!("{RED}  날짜 형식이 올바르지 않습니다: {d}{RESET}");
+            eprintln!("{DIM}  예: 2026-03-25{RESET}\n");
+            return;
+        }
+    }
+
+    let now = {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let date = format_unix_timestamp(secs);
+        date.replace(' ', "T").to_string() + ":00"
+    };
+    let path = followups_path();
+    let mut followups = load_followups_from(&path);
+
+    followups.push(Followup {
+        topic: topic.clone(),
+        due: due.clone(),
+        done: false,
+        created_at: now,
+    });
+
+    save_followups_to(&followups, &path);
+
+    let due_text = due
+        .as_deref()
+        .map(|d| format!(" (마감: {d})"))
+        .unwrap_or_default();
+    println!("{GREEN}  📝 후속 보도 등록: {topic}{due_text}{RESET}\n");
+}
+
+fn handle_follow_list() {
+    let path = followups_path();
+    let followups = load_followups_from(&path);
+
+    let active: Vec<&Followup> = followups.iter().filter(|f| !f.done).collect();
+
+    if active.is_empty() {
+        println!("{DIM}  등록된 후속 보도가 없습니다.{RESET}\n");
+        return;
+    }
+
+    // Sort by due date (entries with due date first, then by date ascending; no-date entries last)
+    let mut sorted: Vec<(usize, &Followup)> = followups
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| !f.done)
+        .collect();
+    sorted.sort_by(|(_, a), (_, b)| match (&a.due, &b.due) {
+        (Some(da), Some(db)) => da.cmp(db),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.created_at.cmp(&b.created_at),
+    });
+
+    println!("{BOLD}  📋 후속 보도 목록{RESET}");
+    println!("{DIM}  ──────────────────────────────{RESET}");
+
+    let today = today_date_string();
+
+    for (idx, followup) in &sorted {
+        let num = idx + 1;
+        let due_text = followup
+            .due
+            .as_deref()
+            .map(|d| format!(" [마감: {d}]"))
+            .unwrap_or_default();
+
+        let days_left = followup.due.as_deref().and_then(|d| days_until(d, &today));
+
+        match days_left {
+            Some(n) if n < 0 => {
+                // Overdue
+                println!("  {RED}🔴 #{num} {}{due_text} (기한 초과){RESET}", followup.topic);
+            }
+            Some(n) if n <= 3 => {
+                // Due within 3 days
+                println!(
+                    "  {YELLOW}🟡 #{num} {}{due_text} ({n}일 남음){RESET}",
+                    followup.topic
+                );
+            }
+            _ => {
+                println!("  {GREEN}🟢 #{num} {}{due_text}{RESET}", followup.topic);
+            }
+        }
+    }
+    println!();
+}
+
+fn handle_follow_done(num_str: &str) {
+    if num_str.is_empty() {
+        eprintln!("{RED}  번호를 지정하세요: /follow done <번호>{RESET}\n");
+        return;
+    }
+
+    let num: usize = match num_str.parse() {
+        Ok(n) if n >= 1 => n,
+        _ => {
+            eprintln!("{RED}  유효한 번호를 입력하세요: {num_str}{RESET}\n");
+            return;
+        }
+    };
+
+    let path = followups_path();
+    let mut followups = load_followups_from(&path);
+    let idx = num - 1;
+
+    if idx >= followups.len() {
+        eprintln!("{RED}  #{num}번 후속 보도를 찾을 수 없습니다.{RESET}\n");
+        return;
+    }
+
+    if followups[idx].done {
+        println!("{DIM}  #{num}번은 이미 완료 처리되었습니다.{RESET}\n");
+        return;
+    }
+
+    followups[idx].done = true;
+    let topic = followups[idx].topic.clone();
+    save_followups_to(&followups, &path);
+    println!("{GREEN}  ✅ 후속 보도 완료: #{num} {topic}{RESET}\n");
+}
+
+fn handle_follow_remind() {
+    let path = followups_path();
+    let followups = load_followups_from(&path);
+
+    let today = today_date_string();
+    let mut urgent: Vec<(usize, &Followup, i64)> = Vec::new();
+
+    for (i, f) in followups.iter().enumerate() {
+        if f.done {
+            continue;
+        }
+        if let Some(ref due) = f.due {
+            if let Some(days) = days_until(due, &today) {
+                if days <= 3 {
+                    urgent.push((i, f, days));
+                }
+            }
+        }
+    }
+
+    if urgent.is_empty() {
+        println!("{GREEN}  3일 이내 임박한 후속 보도가 없습니다.{RESET}\n");
+        return;
+    }
+
+    urgent.sort_by_key(|(_, _, days)| *days);
+
+    println!("{BOLD}  ⏰ 임박 후속 보도 알림{RESET}");
+    println!("{DIM}  ──────────────────────────────{RESET}");
+
+    for (idx, f, days) in &urgent {
+        let num = idx + 1;
+        let due = f.due.as_deref().unwrap_or("");
+        if *days < 0 {
+            println!(
+                "  {RED}🔴 #{num} {} [마감: {due}] — 기한 초과!{RESET}",
+                f.topic
+            );
+        } else if *days == 0 {
+            println!(
+                "  {RED}🔴 #{num} {} [마감: {due}] — 오늘 마감!{RESET}",
+                f.topic
+            );
+        } else {
+            println!(
+                "  {YELLOW}🟡 #{num} {} [마감: {due}] — {days}일 남음{RESET}",
+                f.topic
+            );
+        }
+    }
+    println!();
+}
+
+/// Validate YYYY-MM-DD date format.
+fn is_valid_date(s: &str) -> bool {
+    if s.len() != 10 {
+        return false;
+    }
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 3 {
+        return false;
+    }
+    parts[0].len() == 4
+        && parts[1].len() == 2
+        && parts[2].len() == 2
+        && parts[0].parse::<u32>().is_ok()
+        && parts[1].parse::<u32>().map_or(false, |m| (1..=12).contains(&m))
+        && parts[2].parse::<u32>().map_or(false, |d| (1..=31).contains(&d))
+}
+
+/// Calculate days from `today` to `target` date (both YYYY-MM-DD). Returns None if either is invalid.
+fn days_until(target: &str, today: &str) -> Option<i64> {
+    let target_days = date_to_epoch_days(target)?;
+    let today_days = date_to_epoch_days(today)?;
+    Some(target_days - today_days)
+}
+
+/// Convert "YYYY-MM-DD" to days since epoch. Returns None if format is invalid.
+fn date_to_epoch_days(date: &str) -> Option<i64> {
+    let parts: Vec<&str> = date.split('-').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let y: i64 = parts[0].parse().ok()?;
+    let m: u32 = parts[1].parse().ok()?;
+    let d: u32 = parts[2].parse().ok()?;
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    // Civil date to days since epoch (Howard Hinnant's algorithm, inverse of format_unix_timestamp)
+    let (y, m) = if m <= 2 { (y - 1, m + 9) } else { (y, m - 3) };
+    let era = (if y >= 0 { y } else { y - 399 }) / 400;
+    let yoe = (y - era * 400) as u32;
+    let doy = (153 * m + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe as i64 - 719468;
+    Some(days)
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -10188,5 +10514,82 @@ mod tests {
         assert!(prompt.contains("a.csv"));
         assert!(prompt.contains("b.csv"));
         assert!(prompt.contains("구조 비교"));
+    }
+
+    // ── /follow tests ──
+
+    #[test]
+    fn follow_parse_add_args_topic_only() {
+        let (topic, due) = parse_follow_add_args("국회 예산안 후속");
+        assert_eq!(topic, "국회 예산안 후속");
+        assert!(due.is_none());
+    }
+
+    #[test]
+    fn follow_parse_add_args_with_due() {
+        let (topic, due) = parse_follow_add_args("국회 예산안 후속 --due 2026-03-25");
+        assert_eq!(topic, "국회 예산안 후속");
+        assert_eq!(due.unwrap(), "2026-03-25");
+    }
+
+    #[test]
+    fn follow_is_valid_date() {
+        assert!(is_valid_date("2026-03-25"));
+        assert!(is_valid_date("2026-12-01"));
+        assert!(!is_valid_date("2026-13-01"));
+        assert!(!is_valid_date("2026-00-01"));
+        assert!(!is_valid_date("20260325"));
+        assert!(!is_valid_date("abc"));
+    }
+
+    #[test]
+    fn follow_days_until_future() {
+        assert_eq!(days_until("2026-03-25", "2026-03-20"), Some(5));
+    }
+
+    #[test]
+    fn follow_days_until_past() {
+        assert_eq!(days_until("2026-03-18", "2026-03-20"), Some(-2));
+    }
+
+    #[test]
+    fn follow_days_until_today() {
+        assert_eq!(days_until("2026-03-20", "2026-03-20"), Some(0));
+    }
+
+    #[test]
+    fn follow_roundtrip_save_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("followups.json");
+
+        let items = vec![
+            Followup {
+                topic: "예산안 후속".to_string(),
+                due: Some("2026-03-25".to_string()),
+                done: false,
+                created_at: "2026-03-20T14:00:00".to_string(),
+            },
+            Followup {
+                topic: "인사 청문회".to_string(),
+                due: None,
+                done: true,
+                created_at: "2026-03-19T10:00:00".to_string(),
+            },
+        ];
+
+        save_followups_to(&items, &path);
+        let loaded = load_followups_from(&path);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].topic, "예산안 후속");
+        assert_eq!(loaded[0].due, Some("2026-03-25".to_string()));
+        assert!(!loaded[0].done);
+        assert!(loaded[1].done);
+    }
+
+    #[test]
+    fn follow_load_missing_file() {
+        let path = std::path::PathBuf::from("/tmp/nonexistent_followups_test_xyz.json");
+        let loaded = load_followups_from(&path);
+        assert!(loaded.is_empty());
     }
 }
