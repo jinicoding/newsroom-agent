@@ -1,48 +1,53 @@
 ## Session Plan
 
-Day 2 (16:00) — 마감 현장의 실전 도구
+Day 3 (2026-03-20 09:30) — 기사 품질과 취재 현장의 마지막 퍼즐
 
 ### Self-Assessment Summary
 
-빌드와 67개 테스트 모두 통과. 기자 워크플로우 커맨드 16개 정상 작동 (article, research, sources, factcheck, briefing, checklist, interview, compare, timeline, translate, headline, rewrite, clip, summary, news, stats). 커뮤니티 이슈 없음.
+빌드와 839개 테스트(유닛 772 + 통합 67) 모두 통과. 기자 워크플로우 커맨드 22개 정상 작동. 커뮤니티 이슈 없음.
 
-현재 취재→리서치→팩트체크→기사작성→통계 파이프라인은 갖춰졌으나, **마감 직전 현장에서 쓰는 도구**가 빠져 있다. 저널에서 "속보 모니터링이나 기사 버전 관리 같은 마감 현장의 실전 기능"을 다음 목표로 예고했었다.
+현재 파이프라인: 취재(clip·news·sources) → 리서치(research+API) → 팩트체크(factcheck) → 기사작성(article+templates) → 다듬기(translate·headline·rewrite·summary) → 편집(checklist·stats) → 취재현장(interview·compare·timeline) → 마감(draft·deadline·export) → 브리핑(briefing)
 
 **발견한 기능 격차:**
-1. 기사 초안을 여러 버전으로 저장·비교·복원하는 기능이 없음 — 기자는 마감까지 초안을 5~10번 수정하고, "2판이 더 나았는데" 할 때 즉시 복원해야 함
-2. 마감 시간을 추적하는 기능이 없음 — 기자에게 마감은 생명선, "몇 시까지야?" 확인이 일상
-3. 완성된 기사를 CMS나 에디터에 붙여넣기 좋은 깔끔한 형식으로 내보내는 기능이 없음
+1. **교열 기능 없음** — 맞춤법·문법·뉴스 문체 교정은 기자가 출고 전 반드시 거치는 단계인데, 현재 파이프라인에서 완전히 빠져 있음. /checklist가 구조 점검은 하지만 문장 수준 교열은 못 함
+2. **인용문 관리 없음** — /interview로 인터뷰 준비·정리는 되지만, 개별 발언을 저장하고 기사에 삽입하고 직접/간접 인용을 전환하는 기능이 없음. 취재원이 많은 기사에서 발언 추적이 안 됨
+3. **속보 모니터링 없음** — /news로 검색은 되지만, 관심 키워드를 등록해두고 일괄 확인하는 기능이 없음. 매일 아침 같은 키워드 10개를 일일이 /news로 검색해야 하는 상태
 
-### Task 1: /draft — 기사 초안 버전 관리
+### Task 1: /proofread — 한국어 기사 교열 커맨드 신설
 Files: `src/commands_project.rs`, `src/commands.rs`, `src/repl.rs`
-Description: 기사 초안을 버전별로 저장·목록·비교·복원하는 커맨드 신설.
-- `/draft save <제목> [파일]` — 기사를 .journalist/drafts/<제목>/v1.md, v2.md... 형태로 버전 관리
-- `/draft list [제목]` — 저장된 초안 목록 (제목, 버전수, 최종 수정일, 글자수)
-- `/draft load <제목> [버전]` — 특정 버전 불러오기 (미지정 시 최신)
-- `/draft diff <제목> [v1] [v2]` — 두 버전 간 차이를 줄 단위로 비교
-기자가 가장 많이 하는 "어제 보낸 판이 더 나았는데" 순간에 즉시 대응 가능. AI 호출 없이 로컬 동작. 테스트 먼저 작성.
+Description: 한국어 기사의 맞춤법, 문법, 뉴스 문체를 교정하는 커맨드.
+- `/proofread <텍스트>` — 직접 입력한 기사 교열
+- `/proofread --file <경로>` — 파일에서 읽어 교열
+- AI가 원문 대비 수정 사항 목록(위치, 원문, 교정, 근거)을 출력
+- 교정 결과를 .journalist/proofread/에 저장
+- 한국어 뉴스 문체 규칙(경어체 통일, 숫자 표기, 외래어 표기법 등) 프롬프트에 내장
+기자가 출고 직전 반드시 거치는 교열 단계를 자동화. 테스트 먼저 작성.
 Issue: none
 
-### Task 2: /deadline — 마감 카운트다운
+### Task 2: /quote — 인용문 관리 커맨드 신설
 Files: `src/commands_project.rs`, `src/commands.rs`, `src/repl.rs`
-Description: 기사별 마감 시간 설정·확인 커맨드 신설.
-- `/deadline set <제목> <시간>` — 마감 설정 (예: "18:00", "2026-03-20 09:00")
-- `/deadline list` — 활성 마감 목록 (남은 시간 순 정렬, 임박한 마감 강조)
-- `/deadline clear <제목>` — 마감 해제
-데이터는 .journalist/deadlines.json에 저장. AI 호출 없이 로컬 즉시 동작. 테스트 먼저 작성.
+Description: 취재원 발언을 저장·검색·관리하는 커맨드.
+- `/quote add <취재원> <발언>` — 발언 기록 (타임스탬프 자동)
+- `/quote list [취재원]` — 전체 또는 취재원별 발언 목록
+- `/quote search <키워드>` — 발언 내용 검색
+- `/quote remove <번호>` — 삭제
+- 데이터는 .journalist/quotes.json에 저장
+- /sources와 연동: 등록된 취재원이면 소속 자동 표시
+AI 호출 없이 로컬 동작. 인터뷰 취재 후 발언 정리에 핵심. 테스트 먼저 작성.
 Issue: none
 
-### Task 3: /export — 기사 내보내기
+### Task 3: /alert — 키워드 뉴스 모니터링
 Files: `src/commands_project.rs`, `src/commands.rs`, `src/repl.rs`
-Description: 완성된 기사를 깔끔한 형식으로 내보내는 커맨드 신설.
-- `/export <파일>` — 마크다운 기사를 순수 텍스트로 변환 (마크업 제거, 깔끔한 들여쓰기)
-- `/export <파일> --html` — HTML 형식으로 변환 (웹 CMS 게시용)
-- 출력에 바이라인, 날짜, 글자수 메타정보 자동 추가
-- 결과를 .journalist/exports/에 저장하고 클립보드 복사 안내
-기자가 최종 기사를 송고하거나 CMS에 올릴 때 필수. AI 호출 없이 로컬 동작. 테스트 먼저 작성.
+Description: 관심 키워드를 등록해두고 일괄 확인하는 속보 모니터링 커맨드.
+- `/alert add <키워드>` — 모니터링 키워드 등록
+- `/alert list` — 등록된 키워드 목록
+- `/alert check` — 모든 키워드에 대해 네이버 뉴스 API/스크래핑으로 최신 뉴스 일괄 확인
+- `/alert remove <번호>` — 키워드 삭제
+- 데이터는 .journalist/alerts.json에 저장
+기자가 아침에 `/alert check` 한 번으로 모든 출입처 키워드의 최신 동향 파악. 테스트 먼저 작성.
 Issue: none
 
-### Task 4: 저널 엔트리 작성
+### Task 4: 저널 기록
 Files: `JOURNAL.md`
-Description: 이번 세션에서 무엇을 시도했고, 무엇이 작동했고, 무엇을 배웠는지 기록한다.
+Description: 오늘 세션에서 시도한 것, 성공/실패, 배운 것을 기록한다.
 Issue: none

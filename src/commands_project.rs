@@ -5481,6 +5481,181 @@ fn export_file(source_path: &str, html_mode: bool) {
     );
 }
 
+// ── /proofread ─────────────────────────────────────────────────────────
+
+const PROOFREAD_DIR: &str = ".journalist/proofread";
+
+/// Parse `/proofread` arguments: `--file <path>` and remaining inline text.
+pub fn parse_proofread_args(args: &str) -> (Option<String>, String) {
+    let args = args.trim();
+    let mut file_path: Option<String> = None;
+    let mut remaining_parts: Vec<String> = Vec::new();
+
+    let tokens: Vec<&str> = args.split_whitespace().collect();
+    let mut i = 0;
+    while i < tokens.len() {
+        match tokens[i] {
+            "--file" => {
+                if i + 1 < tokens.len() {
+                    file_path = Some(tokens[i + 1].to_string());
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            other => {
+                remaining_parts.push(other.to_string());
+                i += 1;
+            }
+        }
+    }
+
+    (file_path, remaining_parts.join(" "))
+}
+
+/// Build the proofread prompt with Korean news style rules embedded.
+pub fn build_proofread_prompt(article: &str) -> Option<String> {
+    if article.trim().is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        r#"당신은 한국 신문사의 교열 전문가입니다. 아래 기사를 교열하세요.
+
+## 교열 규칙
+1. **맞춤법·띄어쓰기**: 한글 맞춤법 통일안 및 표준어 규정 준수
+2. **경어체 통일**: 뉴스 기사는 '~했다', '~이다' 등 해요체가 아닌 하십시오체/해라체(보도문체) 통일
+3. **숫자 표기**: 만 단위 이상은 한글 병기 (예: 1조2000억원), 날짜는 'O일' (예: 15일)
+4. **외래어 표기법**: 국립국어원 외래어 표기법 준수 (예: 컴퓨터, 인터넷)
+5. **중복 표현 제거**: '약 ~정도', '먼저 ~에 앞서' 등 불필요한 중복 삭제
+6. **인용문 형식**: 직접 인용은 큰따옴표(" "), 간접 인용은 따옴표 없이 '~(이)라고 말했다'
+7. **주어-술어 호응**: 문장 내 주어와 술어의 호응 확인
+8. **문장 길이**: 한 문장이 80자를 초과하면 분리 권장
+9. **비문·어색한 표현**: 자연스러운 한국어로 교정
+10. **뉴스 용어**: 약어 첫 등장 시 풀어쓰기 (예: GDP(국내총생산))
+
+## 출력 형식
+아래 형식으로 교정 결과를 출력하세요:
+
+### 교열 결과
+
+| # | 위치 | 원문 | 교정 | 근거 |
+|---|------|------|------|------|
+| 1 | 1문단 | ... | ... | ... |
+
+### 교정된 전문
+(교정이 반영된 전체 기사)
+
+### 총평
+(전반적인 문체·구조 평가, 1~2문장)
+
+## 원문
+{article}"#
+    ))
+}
+
+/// Build proofread result file path with an explicit date string.
+pub fn proofread_file_path_with_date(slug_source: &str, date: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(slug_source, 50);
+    let filename = if slug.is_empty() {
+        format!("{date}_proofread.md")
+    } else {
+        format!("{date}_{slug}.md")
+    };
+    std::path::PathBuf::from(PROOFREAD_DIR).join(filename)
+}
+
+/// Build proofread result file path with today's date.
+pub fn proofread_file_path(slug_source: &str) -> std::path::PathBuf {
+    proofread_file_path_with_date(slug_source, &today_str())
+}
+
+/// Save proofread result to file. Creates the directory if needed.
+fn save_proofread(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
+/// Handle the `/proofread` command: proofread a Korean article for grammar, spelling, and news style.
+pub async fn handle_proofread(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/proofread").unwrap_or("").trim();
+    let (file_path, inline_text) = parse_proofread_args(args);
+
+    // Read article from file or inline
+    let article = if let Some(ref path) = file_path {
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                println!(
+                    "{DIM}  파일 읽기: {path} ({} bytes){RESET}",
+                    content.len()
+                );
+                if inline_text.is_empty() {
+                    content
+                } else {
+                    format!("{content}\n\n{inline_text}")
+                }
+            }
+            Err(e) => {
+                eprintln!("{RED}  파일 읽기 실패: {path} — {e}{RESET}\n");
+                return;
+            }
+        }
+    } else {
+        inline_text
+    };
+
+    let prompt = match build_proofread_prompt(&article) {
+        Some(p) => p,
+        None => {
+            println!("{DIM}  사용법: /proofread <기사 텍스트>{RESET}");
+            println!("{DIM}  또는:   /proofread --file <경로>{RESET}");
+            println!(
+                "{DIM}  한국어 기사의 맞춤법, 문법, 뉴스 문체를 교정합니다.{RESET}\n"
+            );
+            return;
+        }
+    };
+
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    // Save proofread result to .journalist/proofread/
+    if !response.trim().is_empty() {
+        let slug_source = if let Some(ref path) = file_path {
+            std::path::Path::new(path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "proofread".to_string())
+        } else {
+            let preview: String = article.chars().take(30).collect();
+            if preview.is_empty() {
+                "proofread".to_string()
+            } else {
+                preview
+            }
+        };
+        let path = proofread_file_path(&slug_source);
+        match save_proofread(&path, &response) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 교열 결과 저장: {}{RESET}\n",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  교열 결과 저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -7603,5 +7778,81 @@ mod tests {
         // Unbalanced delimiters should return original
         let result = regex_replace_pairs("a **b c", "**", "<strong>", "</strong>");
         assert_eq!(result, "a **b c");
+    }
+
+    // ── /proofread tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn parse_proofread_args_inline_text() {
+        let (file, text) = parse_proofread_args("삼성전자가 실적을 발표했다");
+        assert!(file.is_none());
+        assert_eq!(text, "삼성전자가 실적을 발표했다");
+    }
+
+    #[test]
+    fn parse_proofread_args_with_file() {
+        let (file, text) = parse_proofread_args("--file article.txt");
+        assert_eq!(file.as_deref(), Some("article.txt"));
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn parse_proofread_args_file_and_text() {
+        let (file, text) = parse_proofread_args("--file draft.md 추가 맥락");
+        assert_eq!(file.as_deref(), Some("draft.md"));
+        assert_eq!(text, "추가 맥락");
+    }
+
+    #[test]
+    fn parse_proofread_args_empty() {
+        let (file, text) = parse_proofread_args("");
+        assert!(file.is_none());
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn build_proofread_prompt_basic() {
+        let prompt = build_proofread_prompt("삼성전자가 1분기 실적을 발표했다.");
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert!(p.contains("삼성전자가 1분기 실적을 발표했다."));
+        assert!(p.contains("교열"));
+        assert!(p.contains("맞춤법"));
+        assert!(p.contains("경어체"));
+    }
+
+    #[test]
+    fn build_proofread_prompt_empty_returns_none() {
+        assert!(build_proofread_prompt("").is_none());
+        assert!(build_proofread_prompt("   ").is_none());
+    }
+
+    #[test]
+    fn proofread_file_path_with_topic() {
+        let path = proofread_file_path_with_date("반도체 수출", "2026-03-20");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/proofread/2026-03-20_반도체-수출.md"
+        );
+    }
+
+    #[test]
+    fn proofread_file_path_empty_slug() {
+        let path = proofread_file_path_with_date("", "2026-03-20");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/proofread/2026-03-20_proofread.md"
+        );
+    }
+
+    #[test]
+    fn save_proofread_creates_dir_and_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("proofread").join("test.md");
+        let result = save_proofread(&path, "# 교열 결과\n\n교정된 기사 본문");
+        assert!(result.is_ok());
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("교열 결과"));
     }
 }

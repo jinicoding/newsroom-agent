@@ -79,6 +79,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/draft",
     "/deadline",
     "/export",
+    "/proofread",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -336,6 +337,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /export <파일> [--html] 기사 내보내기 (텍스트/HTML)\n",
+    );
+    out.push_str(
+        "  /proofread [text|--file <path>]  한국어 기사 교열 (맞춤법/문법/뉴스문체)\n",
     );
     out.push('\n');
 
@@ -616,7 +620,7 @@ pub use crate::commands_project::{
     handle_article, handle_briefing, handle_checklist, handle_clip, handle_compare,
     handle_context, handle_docs, handle_factcheck, handle_find, handle_fix, handle_headline,
     handle_health, handle_index, handle_init, handle_interview, handle_lint, handle_research,
-    handle_deadline, handle_draft, handle_export, handle_news, handle_run, handle_rewrite, handle_run_usage, handle_sources, handle_stats,
+    handle_deadline, handle_draft, handle_export, handle_news, handle_proofread, handle_run, handle_rewrite, handle_run_usage, handle_sources, handle_stats,
     handle_summary, handle_test, handle_timeline, handle_translate, handle_tree,
 };
 
