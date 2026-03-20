@@ -1,7 +1,7 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
 //! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck,
 //! /briefing, /clip, /news, /summary, /stats, /draft, /deadline, /embargo, /export, /quote,
-//! /trend, /archive, /data, /follow, /desk.
+//! /trend, /archive, /data, /follow, /desk, /coverage.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -8449,6 +8449,360 @@ fn collab_close(args: &str) {
     );
 }
 
+// ── /coverage ─────────────────────────────────────────────────────────────
+
+const COVERAGE_FILE: &str = ".journalist/coverage.json";
+
+/// A single coverage claim (속보 취재 영역 선점).
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+struct CoverageClaim {
+    topic: String,
+    reporter: String,
+    /// Optional expiry time in "HH:MM" format.
+    until: Option<String>,
+    active: bool,
+    created_at: String,
+}
+
+fn coverage_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(COVERAGE_FILE)
+}
+
+fn load_coverage_from(path: &std::path::Path) -> Vec<CoverageClaim> {
+    match std::fs::read_to_string(path) {
+        Ok(s) if !s.trim().is_empty() => serde_json::from_str(&s).unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+fn save_coverage_to(claims: &[CoverageClaim], path: &std::path::Path) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let json = serde_json::to_string_pretty(claims).unwrap_or_default();
+    let _ = std::fs::write(path, json);
+}
+
+/// Check if a claim has expired based on its `until` time and current HH:MM.
+fn is_claim_expired(claim: &CoverageClaim, now_hhmm: &str) -> bool {
+    match &claim.until {
+        Some(until) => now_hhmm >= until.as_str(),
+        None => false,
+    }
+}
+
+/// Get current time as "HH:MM" (UTC).
+fn current_hhmm() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let time_of_day = secs % 86400;
+    let h = time_of_day / 3600;
+    let m = (time_of_day % 3600) / 60;
+    format!("{h:02}:{m:02}")
+}
+
+/// Mark expired claims as inactive (mutates in place, returns count of newly expired).
+fn expire_claims(claims: &mut [CoverageClaim], now_hhmm: &str) -> usize {
+    let mut count = 0;
+    for claim in claims.iter_mut() {
+        if claim.active && is_claim_expired(claim, now_hhmm) {
+            claim.active = false;
+            count += 1;
+        }
+    }
+    count
+}
+
+/// Parse claim args: `<주제> [--reporter 기자명] [--until HH:MM]`
+fn parse_coverage_claim_args(args: &str) -> (String, String, Option<String>) {
+    let mut topic_parts = Vec::new();
+    let mut reporter = String::new();
+    let mut until: Option<String> = None;
+
+    let tokens: Vec<&str> = args.split_whitespace().collect();
+    let mut i = 0;
+    while i < tokens.len() {
+        if tokens[i] == "--reporter" {
+            if i + 1 < tokens.len() {
+                reporter = tokens[i + 1].to_string();
+                i += 2;
+            } else {
+                i += 1;
+            }
+        } else if tokens[i] == "--until" {
+            if i + 1 < tokens.len() {
+                until = Some(tokens[i + 1].to_string());
+                i += 2;
+            } else {
+                i += 1;
+            }
+        } else {
+            topic_parts.push(tokens[i]);
+            i += 1;
+        }
+    }
+
+    let topic = topic_parts.join(" ");
+    (topic, reporter, until)
+}
+
+/// Handle `/coverage` command with subcommands: claim, list, release, check.
+pub fn handle_coverage(input: &str) {
+    let args = input.strip_prefix("/coverage").unwrap_or("").trim();
+
+    if args.is_empty() {
+        handle_coverage_list();
+        return;
+    }
+
+    let (sub, rest) = match args.split_once(char::is_whitespace) {
+        Some((s, r)) => (s, r.trim()),
+        None => (args, ""),
+    };
+
+    match sub {
+        "claim" => handle_coverage_claim(rest),
+        "list" => handle_coverage_list(),
+        "release" => handle_coverage_release(rest),
+        "check" => handle_coverage_check(rest),
+        _ => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {sub}{RESET}");
+            print_coverage_usage();
+        }
+    }
+}
+
+fn print_coverage_usage() {
+    println!("{DIM}  사용법:");
+    println!("    /coverage claim <주제> [--reporter 기자명] [--until HH:MM]  취재 영역 선점");
+    println!("    /coverage list                                              현재 취재 목록");
+    println!("    /coverage release <번호>                                    취재 영역 해제");
+    println!("    /coverage check <키워드>                                    중복 취재 확인");
+    println!("    /coverage                                                   (list와 동일){RESET}\n");
+}
+
+fn handle_coverage_claim(args: &str) {
+    if args.is_empty() {
+        eprintln!("{RED}  사용법: /coverage claim <주제> [--reporter 기자명] [--until HH:MM]{RESET}\n");
+        return;
+    }
+
+    let (topic, reporter, until) = parse_coverage_claim_args(args);
+
+    if topic.is_empty() {
+        eprintln!("{RED}  주제를 지정하세요: /coverage claim <주제>{RESET}\n");
+        return;
+    }
+
+    // Validate until time format if provided
+    if let Some(ref t) = until {
+        if !is_valid_time(t) {
+            eprintln!("{RED}  시간 형식이 올바르지 않습니다: {t}{RESET}");
+            eprintln!("{DIM}  예: 18:00{RESET}\n");
+            return;
+        }
+    }
+
+    let path = coverage_path();
+    let mut claims = load_coverage_from(&path);
+
+    // Auto-expire old claims
+    let now = current_hhmm();
+    expire_claims(&mut claims, &now);
+
+    let reporter_name = if reporter.is_empty() {
+        "(미지정)".to_string()
+    } else {
+        reporter.clone()
+    };
+
+    claims.push(CoverageClaim {
+        topic: topic.clone(),
+        reporter: reporter_name.clone(),
+        until: until.clone(),
+        active: true,
+        created_at: now_timestamp(),
+    });
+
+    save_coverage_to(&claims, &path);
+
+    let until_text = until
+        .as_deref()
+        .map(|t| format!(" (만료: {t})"))
+        .unwrap_or_default();
+    println!(
+        "{GREEN}  🚨 취재 영역 선점: {topic} — {reporter_name}{until_text}{RESET}\n"
+    );
+}
+
+fn handle_coverage_list() {
+    let path = coverage_path();
+    let mut claims = load_coverage_from(&path);
+
+    // Auto-expire
+    let now = current_hhmm();
+    let expired_count = expire_claims(&mut claims, &now);
+    if expired_count > 0 {
+        save_coverage_to(&claims, &path);
+    }
+
+    let active: Vec<(usize, &CoverageClaim)> = claims
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.active)
+        .collect();
+
+    if active.is_empty() && claims.iter().all(|c| !c.active) && claims.is_empty() {
+        println!("{DIM}  등록된 취재 영역이 없습니다.{RESET}\n");
+        return;
+    }
+
+    println!("{BOLD}  🚨 속보 취재 현황{RESET}");
+    println!("{DIM}  ──────────────────────────────{RESET}");
+
+    if active.is_empty() {
+        println!("{DIM}  현재 활성 취재 영역이 없습니다.{RESET}");
+    } else {
+        for (idx, claim) in &active {
+            let num = idx + 1;
+            let until_text = claim
+                .until
+                .as_deref()
+                .map(|t| {
+                    // Color-code based on proximity to expiry
+                    let remaining = time_diff_minutes(t, &now);
+                    match remaining {
+                        Some(m) if m < 0 => format!(" {RED}[만료: {t} — 시간 초과]{RESET}"),
+                        Some(m) if m <= 30 => format!(" {YELLOW}[만료: {t} — {m}분 남음]{RESET}"),
+                        Some(m) => format!(" {GREEN}[만료: {t} — {m}분 남음]{RESET}"),
+                        None => format!(" [만료: {t}]"),
+                    }
+                })
+                .unwrap_or_default();
+
+            println!(
+                "  {GREEN}#{num}{RESET} {BOLD}{}{RESET} — {}{until_text}",
+                claim.topic, claim.reporter
+            );
+        }
+    }
+
+    // Show recently expired
+    let inactive: Vec<(usize, &CoverageClaim)> = claims
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| !c.active)
+        .collect();
+    if !inactive.is_empty() {
+        println!("{DIM}  ── 만료/해제된 항목 ──{RESET}");
+        for (idx, claim) in &inactive {
+            let num = idx + 1;
+            println!("{DIM}  #{num} {} — {}{RESET}", claim.topic, claim.reporter);
+        }
+    }
+
+    println!();
+}
+
+fn handle_coverage_release(num_str: &str) {
+    if num_str.is_empty() {
+        eprintln!("{RED}  번호를 지정하세요: /coverage release <번호>{RESET}\n");
+        return;
+    }
+
+    let num: usize = match num_str.parse() {
+        Ok(n) if n >= 1 => n,
+        _ => {
+            eprintln!("{RED}  유효한 번호를 입력하세요: {num_str}{RESET}\n");
+            return;
+        }
+    };
+
+    let path = coverage_path();
+    let mut claims = load_coverage_from(&path);
+    let idx = num - 1;
+
+    if idx >= claims.len() {
+        eprintln!("{RED}  #{num}번 취재 영역을 찾을 수 없습니다.{RESET}\n");
+        return;
+    }
+
+    if !claims[idx].active {
+        println!("{DIM}  #{num}번은 이미 비활성 상태입니다.{RESET}\n");
+        return;
+    }
+
+    claims[idx].active = false;
+    let topic = claims[idx].topic.clone();
+    save_coverage_to(&claims, &path);
+    println!("{GREEN}  ✅ 취재 영역 해제: #{num} {topic}{RESET}\n");
+}
+
+fn handle_coverage_check(keyword: &str) {
+    if keyword.is_empty() {
+        eprintln!("{RED}  키워드를 지정하세요: /coverage check <키워드>{RESET}\n");
+        return;
+    }
+
+    let path = coverage_path();
+    let mut claims = load_coverage_from(&path);
+
+    // Auto-expire
+    let now = current_hhmm();
+    let expired_count = expire_claims(&mut claims, &now);
+    if expired_count > 0 {
+        save_coverage_to(&claims, &path);
+    }
+
+    let keyword_lower = keyword.to_lowercase();
+    let matches: Vec<(usize, &CoverageClaim)> = claims
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.active && c.topic.to_lowercase().contains(&keyword_lower))
+        .collect();
+
+    if matches.is_empty() {
+        println!(
+            "{GREEN}  ✅ \"{keyword}\" 관련 진행 중인 취재가 없습니다. 취재 가능합니다.{RESET}\n"
+        );
+    } else {
+        println!(
+            "{YELLOW}  ⚠️  \"{keyword}\" 관련 취재가 이미 진행 중입니다:{RESET}"
+        );
+        for (idx, claim) in &matches {
+            let num = idx + 1;
+            let until_text = claim
+                .until
+                .as_deref()
+                .map(|t| format!(" [만료: {t}]"))
+                .unwrap_or_default();
+            println!(
+                "  {YELLOW}  #{num} {} — {}{until_text}{RESET}",
+                claim.topic, claim.reporter
+            );
+        }
+        println!();
+    }
+}
+
+/// Calculate difference in minutes between two HH:MM times. Returns None if parsing fails.
+fn time_diff_minutes(target: &str, now: &str) -> Option<i32> {
+    let parse_hhmm = |s: &str| -> Option<i32> {
+        let parts: Vec<&str> = s.split(':').collect();
+        if parts.len() != 2 {
+            return None;
+        }
+        let h: i32 = parts[0].parse().ok()?;
+        let m: i32 = parts[1].parse().ok()?;
+        Some(h * 60 + m)
+    };
+    let target_mins = parse_hhmm(target)?;
+    let now_mins = parse_hhmm(now)?;
+    Some(target_mins - now_mins)
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -11699,5 +12053,215 @@ mod tests {
         assert_eq!(loaded.notes.len(), 3);
         assert_eq!(loaded.notes[0].content, "메모 1");
         assert_eq!(loaded.notes[2].content, "메모 3");
+    }
+
+    // ── /coverage tests ──────────────────────────────────────────────────
+
+    fn temp_coverage_path() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("coverage.json");
+        (dir, path)
+    }
+
+    #[test]
+    fn coverage_claim_and_load() {
+        let (_dir, path) = temp_coverage_path();
+        let claims = load_coverage_from(&path);
+        assert!(claims.is_empty());
+
+        let mut claims = Vec::new();
+        claims.push(CoverageClaim {
+            topic: "국회 본회의".to_string(),
+            reporter: "김기자".to_string(),
+            until: Some("18:00".to_string()),
+            active: true,
+            created_at: "2026-03-20T14:00:00".to_string(),
+        });
+        save_coverage_to(&claims, &path);
+
+        let loaded = load_coverage_from(&path);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].topic, "국회 본회의");
+        assert_eq!(loaded[0].reporter, "김기자");
+        assert!(loaded[0].active);
+        assert_eq!(loaded[0].until, Some("18:00".to_string()));
+    }
+
+    #[test]
+    fn coverage_release_deactivates() {
+        let (_dir, path) = temp_coverage_path();
+
+        let mut claims = vec![
+            CoverageClaim {
+                topic: "반도체 실적".to_string(),
+                reporter: "이기자".to_string(),
+                until: None,
+                active: true,
+                created_at: "2026-03-20T10:00:00".to_string(),
+            },
+            CoverageClaim {
+                topic: "환율 동향".to_string(),
+                reporter: "박기자".to_string(),
+                until: Some("17:00".to_string()),
+                active: true,
+                created_at: "2026-03-20T11:00:00".to_string(),
+            },
+        ];
+        save_coverage_to(&claims, &path);
+
+        // Release first claim
+        claims[0].active = false;
+        save_coverage_to(&claims, &path);
+
+        let loaded = load_coverage_from(&path);
+        assert!(!loaded[0].active);
+        assert!(loaded[1].active);
+    }
+
+    #[test]
+    fn coverage_expire_claims() {
+        let mut claims = vec![
+            CoverageClaim {
+                topic: "속보1".to_string(),
+                reporter: "A".to_string(),
+                until: Some("14:00".to_string()),
+                active: true,
+                created_at: "2026-03-20T13:00:00".to_string(),
+            },
+            CoverageClaim {
+                topic: "속보2".to_string(),
+                reporter: "B".to_string(),
+                until: Some("20:00".to_string()),
+                active: true,
+                created_at: "2026-03-20T13:00:00".to_string(),
+            },
+            CoverageClaim {
+                topic: "속보3".to_string(),
+                reporter: "C".to_string(),
+                until: None,
+                active: true,
+                created_at: "2026-03-20T13:00:00".to_string(),
+            },
+        ];
+
+        let expired = expire_claims(&mut claims, "15:00");
+        assert_eq!(expired, 1); // Only 속보1 (14:00) expired
+        assert!(!claims[0].active);
+        assert!(claims[1].active);
+        assert!(claims[2].active); // No until → never expires
+    }
+
+    #[test]
+    fn coverage_check_keyword_match() {
+        let (_dir, path) = temp_coverage_path();
+
+        let claims = vec![
+            CoverageClaim {
+                topic: "국회 본회의 표결".to_string(),
+                reporter: "김기자".to_string(),
+                until: None,
+                active: true,
+                created_at: "2026-03-20T14:00:00".to_string(),
+            },
+            CoverageClaim {
+                topic: "반도체 실적 발표".to_string(),
+                reporter: "이기자".to_string(),
+                until: None,
+                active: true,
+                created_at: "2026-03-20T14:00:00".to_string(),
+            },
+            CoverageClaim {
+                topic: "환율 동향".to_string(),
+                reporter: "박기자".to_string(),
+                until: None,
+                active: false, // inactive
+                created_at: "2026-03-20T14:00:00".to_string(),
+            },
+        ];
+        save_coverage_to(&claims, &path);
+
+        let loaded = load_coverage_from(&path);
+        let keyword = "국회";
+        let keyword_lower = keyword.to_lowercase();
+        let matches: Vec<&CoverageClaim> = loaded
+            .iter()
+            .filter(|c| c.active && c.topic.to_lowercase().contains(&keyword_lower))
+            .collect();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].reporter, "김기자");
+
+        // Inactive claims should not match
+        let keyword2 = "환율";
+        let keyword2_lower = keyword2.to_lowercase();
+        let matches2: Vec<&CoverageClaim> = loaded
+            .iter()
+            .filter(|c| c.active && c.topic.to_lowercase().contains(&keyword2_lower))
+            .collect();
+        assert!(matches2.is_empty());
+    }
+
+    #[test]
+    fn coverage_parse_claim_args_full() {
+        let (topic, reporter, until) =
+            parse_coverage_claim_args("국회 본회의 --reporter 김기자 --until 18:00");
+        assert_eq!(topic, "국회 본회의");
+        assert_eq!(reporter, "김기자");
+        assert_eq!(until, Some("18:00".to_string()));
+    }
+
+    #[test]
+    fn coverage_parse_claim_args_topic_only() {
+        let (topic, reporter, until) = parse_coverage_claim_args("반도체 실적");
+        assert_eq!(topic, "반도체 실적");
+        assert!(reporter.is_empty());
+        assert!(until.is_none());
+    }
+
+    #[test]
+    fn coverage_parse_claim_args_with_reporter_only() {
+        let (topic, reporter, until) =
+            parse_coverage_claim_args("환율 --reporter 박기자");
+        assert_eq!(topic, "환율");
+        assert_eq!(reporter, "박기자");
+        assert!(until.is_none());
+    }
+
+    #[test]
+    fn coverage_time_diff_minutes() {
+        assert_eq!(time_diff_minutes("18:00", "14:00"), Some(240));
+        assert_eq!(time_diff_minutes("14:30", "14:00"), Some(30));
+        assert_eq!(time_diff_minutes("13:00", "14:00"), Some(-60));
+    }
+
+    #[test]
+    fn coverage_is_claim_expired_checks() {
+        let claim_with_until = CoverageClaim {
+            topic: "test".to_string(),
+            reporter: "r".to_string(),
+            until: Some("15:00".to_string()),
+            active: true,
+            created_at: "".to_string(),
+        };
+        assert!(is_claim_expired(&claim_with_until, "15:00"));
+        assert!(is_claim_expired(&claim_with_until, "16:00"));
+        assert!(!is_claim_expired(&claim_with_until, "14:59"));
+
+        let claim_no_until = CoverageClaim {
+            topic: "test".to_string(),
+            reporter: "r".to_string(),
+            until: None,
+            active: true,
+            created_at: "".to_string(),
+        };
+        assert!(!is_claim_expired(&claim_no_until, "23:59"));
+    }
+
+    #[test]
+    fn coverage_known_command() {
+        use crate::commands::KNOWN_COMMANDS;
+        assert!(
+            KNOWN_COMMANDS.contains(&"/coverage"),
+            "/coverage should be in KNOWN_COMMANDS"
+        );
     }
 }
