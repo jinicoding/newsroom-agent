@@ -2,7 +2,7 @@
 //! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck,
 //! /briefing, /clip, /news, /summary, /stats, /draft, /deadline, /embargo, /export, /quote,
 //! /trend, /archive, /data, /follow, /desk, /coverage, /dashboard, /publish,
-//! /anonymize, /press, /law, /readability.
+//! /anonymize, /press, /law, /readability, /performance.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -10882,6 +10882,288 @@ fn sns_print_help() {
     println!("{DIM}    /sns buzz AI규제{RESET}\n");
 }
 
+// ── /performance — 기사 퍼포먼스 추적 ──────────────────────────────────
+
+const PERFORMANCE_FILE: &str = ".journalist/performance.json";
+
+fn load_performance_from(path: &std::path::Path) -> Vec<serde_json::Value> {
+    if !path.exists() {
+        return Vec::new();
+    }
+    match std::fs::read_to_string(path) {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn save_performance_to(data: &[serde_json::Value], path: &std::path::Path) {
+    ensure_sources_dir_at(path);
+    if let Ok(json) = serde_json::to_string_pretty(data) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
+/// Parse --views N, --comments N, --shares N flags from argument string.
+/// Returns (title, views, comments, shares).
+fn parse_performance_args(args: &str) -> (String, Option<u64>, Option<u64>, Option<u64>) {
+    let mut title_parts: Vec<&str> = Vec::new();
+    let mut views: Option<u64> = None;
+    let mut comments: Option<u64> = None;
+    let mut shares: Option<u64> = None;
+
+    let parts: Vec<&str> = args.split_whitespace().collect();
+    let mut i = 0;
+    while i < parts.len() {
+        match parts[i] {
+            "--views" => {
+                if i + 1 < parts.len() {
+                    views = parts[i + 1].parse().ok();
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            "--comments" => {
+                if i + 1 < parts.len() {
+                    comments = parts[i + 1].parse().ok();
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            "--shares" => {
+                if i + 1 < parts.len() {
+                    shares = parts[i + 1].parse().ok();
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            _ => {
+                title_parts.push(parts[i]);
+                i += 1;
+            }
+        }
+    }
+
+    (title_parts.join(" "), views, comments, shares)
+}
+
+fn performance_add(args: &str, perf_path: &std::path::Path) {
+    let (title, views, comments, shares) = parse_performance_args(args);
+
+    if title.is_empty() {
+        println!("{DIM}  사용법: /performance add <제목> --views N --comments N --shares N{RESET}\n");
+        return;
+    }
+
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let timestamp = format_unix_timestamp(secs);
+    let date = &timestamp[..10];
+
+    let mut data = load_performance_from(perf_path);
+    let id = data.len() + 1;
+
+    let entry = serde_json::json!({
+        "id": id,
+        "title": title,
+        "date": date,
+        "views": views.unwrap_or(0),
+        "comments": comments.unwrap_or(0),
+        "shares": shares.unwrap_or(0),
+    });
+
+    data.push(entry);
+    save_performance_to(&data, perf_path);
+
+    println!(
+        "{DIM}  #{id} 성과 등록: \"{title}\" [{date}] — 조회 {}, 댓글 {}, 공유 {}{RESET}\n",
+        views.unwrap_or(0),
+        comments.unwrap_or(0),
+        shares.unwrap_or(0),
+    );
+}
+
+fn performance_update(args: &str, perf_path: &std::path::Path) {
+    let (id_str, views, comments, shares) = parse_performance_args(args);
+
+    let id: usize = match id_str.parse() {
+        Ok(n) if n >= 1 => n,
+        _ => {
+            println!("{DIM}  사용법: /performance update <번호> --views N --comments N --shares N{RESET}\n");
+            return;
+        }
+    };
+
+    let mut data = load_performance_from(perf_path);
+    if id > data.len() {
+        eprintln!("{RED}  #{id}번 항목이 없습니다. (총 {}건){RESET}\n", data.len());
+        return;
+    }
+
+    {
+        let entry = &mut data[id - 1];
+        if let Some(v) = views {
+            entry["views"] = serde_json::json!(v);
+        }
+        if let Some(c) = comments {
+            entry["comments"] = serde_json::json!(c);
+        }
+        if let Some(s) = shares {
+            entry["shares"] = serde_json::json!(s);
+        }
+    }
+
+    save_performance_to(&data, perf_path);
+
+    let entry = &data[id - 1];
+    let title = entry["title"].as_str().unwrap_or("?");
+    println!(
+        "{DIM}  #{id} 성과 업데이트: \"{title}\" — 조회 {}, 댓글 {}, 공유 {}{RESET}\n",
+        entry["views"], entry["comments"], entry["shares"],
+    );
+}
+
+fn performance_list(perf_path: &std::path::Path) {
+    let data = load_performance_from(perf_path);
+    if data.is_empty() {
+        println!("{DIM}  등록된 성과 데이터가 없습니다.");
+        println!("  /performance add <제목> --views N 으로 등록하세요.{RESET}\n");
+        return;
+    }
+
+    // Sort by total engagement (views + comments + shares) descending
+    let mut sorted: Vec<(usize, &serde_json::Value)> = data.iter().enumerate().collect();
+    sorted.sort_by(|a, b| {
+        let total_a = a.1["views"].as_u64().unwrap_or(0)
+            + a.1["comments"].as_u64().unwrap_or(0)
+            + a.1["shares"].as_u64().unwrap_or(0);
+        let total_b = b.1["views"].as_u64().unwrap_or(0)
+            + b.1["comments"].as_u64().unwrap_or(0)
+            + b.1["shares"].as_u64().unwrap_or(0);
+        total_b.cmp(&total_a)
+    });
+
+    println!("{DIM}  ── 기사 퍼포먼스 (성과순) ──{RESET}");
+    for (idx, entry) in &sorted {
+        let id = idx + 1;
+        let title = entry["title"].as_str().unwrap_or("?");
+        let date = entry["date"].as_str().unwrap_or("?");
+        let views = entry["views"].as_u64().unwrap_or(0);
+        let comments = entry["comments"].as_u64().unwrap_or(0);
+        let shares = entry["shares"].as_u64().unwrap_or(0);
+        let total = views + comments + shares;
+        println!(
+            "{DIM}  #{id} [{date}] \"{title}\" — 조회 {views} / 댓글 {comments} / 공유 {shares} (합계 {total}){RESET}"
+        );
+    }
+    println!();
+}
+
+fn performance_top(perf_path: &std::path::Path) {
+    let data = load_performance_from(perf_path);
+    if data.is_empty() {
+        println!("{DIM}  등록된 성과 데이터가 없습니다.{RESET}\n");
+        return;
+    }
+
+    let best = data
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, e)| {
+            e["views"].as_u64().unwrap_or(0)
+                + e["comments"].as_u64().unwrap_or(0)
+                + e["shares"].as_u64().unwrap_or(0)
+        })
+        .unwrap();
+
+    let id = best.0 + 1;
+    let entry = best.1;
+    let title = entry["title"].as_str().unwrap_or("?");
+    let date = entry["date"].as_str().unwrap_or("?");
+    let views = entry["views"].as_u64().unwrap_or(0);
+    let comments = entry["comments"].as_u64().unwrap_or(0);
+    let shares = entry["shares"].as_u64().unwrap_or(0);
+    let total = views + comments + shares;
+
+    println!("{DIM}  🏆 베스트 기사: #{id} \"{title}\" [{date}]{RESET}");
+    println!("{DIM}     조회 {views} / 댓글 {comments} / 공유 {shares} (합계 {total}){RESET}\n");
+}
+
+pub fn performance_report_prompt(data: &[serde_json::Value]) -> String {
+    let mut lines = Vec::new();
+    lines.push("아래는 기자의 기사별 퍼포먼스 데이터입니다. 주간/월간 퍼포먼스 리포트를 작성해 주세요.\n".to_string());
+    lines.push("데이터:".to_string());
+    for (i, entry) in data.iter().enumerate() {
+        let id = i + 1;
+        let title = entry["title"].as_str().unwrap_or("?");
+        let date = entry["date"].as_str().unwrap_or("?");
+        let views = entry["views"].as_u64().unwrap_or(0);
+        let comments = entry["comments"].as_u64().unwrap_or(0);
+        let shares = entry["shares"].as_u64().unwrap_or(0);
+        lines.push(format!(
+            "  #{id} [{date}] \"{title}\" — 조회 {views}, 댓글 {comments}, 공유 {shares}"
+        ));
+    }
+    lines.push(String::new());
+    lines.push("리포트에 포함할 내용:".to_string());
+    lines.push("1. 전체 성과 요약 (총 조회수, 평균 인게이지먼트)".to_string());
+    lines.push("2. 베스트 기사와 그 성공 요인 분석".to_string());
+    lines.push("3. 기사 유형별 성과 패턴".to_string());
+    lines.push("4. 개선 제안 (다음 기사 전략)".to_string());
+    lines.join("\n")
+}
+
+/// Handle the /performance command: article performance tracking.
+pub async fn handle_performance(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/performance").unwrap_or("").trim();
+    let perf_path = std::path::Path::new(PERFORMANCE_FILE);
+
+    match args.split_whitespace().next().unwrap_or("list") {
+        "add" => {
+            let rest = args.strip_prefix("add").unwrap_or("").trim();
+            performance_add(rest, perf_path);
+        }
+        "update" => {
+            let rest = args.strip_prefix("update").unwrap_or("").trim();
+            performance_update(rest, perf_path);
+        }
+        "list" => {
+            performance_list(perf_path);
+        }
+        "top" => {
+            performance_top(perf_path);
+        }
+        "report" => {
+            let data = load_performance_from(perf_path);
+            if data.is_empty() {
+                println!("{DIM}  등록된 성과 데이터가 없습니다.{RESET}\n");
+                return;
+            }
+            let prompt = performance_report_prompt(&data);
+            auto_compact_if_needed(agent);
+            run_prompt(agent, &prompt, session_total, model).await;
+        }
+        other => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {other}{RESET}");
+            println!("{DIM}  사용법: /performance [add|update|list|top|report]{RESET}");
+            println!("{DIM}    /performance add <제목> --views N --comments N --shares N{RESET}");
+            println!("{DIM}    /performance update <번호> --views N{RESET}");
+            println!("{DIM}    /performance list{RESET}");
+            println!("{DIM}    /performance top{RESET}");
+            println!("{DIM}    /performance report{RESET}\n");
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -15249,5 +15531,149 @@ mod tests {
         let prompt = sns_trend_prompt();
         assert!(!prompt.is_empty());
         assert!(prompt.contains("트렌드"));
+    }
+
+    // --- performance tests ---
+
+    fn temp_performance_path() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("performance.json");
+        (dir, path)
+    }
+
+    #[test]
+    fn performance_add_creates_entry() {
+        let (_dir, path) = temp_performance_path();
+        performance_add("테스트기사 --views 100 --comments 5 --shares 10", &path);
+        let data = load_performance_from(&path);
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0]["title"], "테스트기사");
+        assert_eq!(data[0]["views"], 100);
+        assert_eq!(data[0]["comments"], 5);
+        assert_eq!(data[0]["shares"], 10);
+        assert_eq!(data[0]["id"], 1);
+    }
+
+    #[test]
+    fn performance_add_multi_word_title() {
+        let (_dir, path) = temp_performance_path();
+        performance_add("반도체 수출 동향 --views 200", &path);
+        let data = load_performance_from(&path);
+        assert_eq!(data[0]["title"], "반도체 수출 동향");
+        assert_eq!(data[0]["views"], 200);
+        assert_eq!(data[0]["comments"], 0);
+        assert_eq!(data[0]["shares"], 0);
+    }
+
+    #[test]
+    fn performance_update_modifies_entry() {
+        let (_dir, path) = temp_performance_path();
+        performance_add("기사A --views 10", &path);
+        performance_update("1 --views 500 --comments 20", &path);
+        let data = load_performance_from(&path);
+        assert_eq!(data[0]["views"], 500);
+        assert_eq!(data[0]["comments"], 20);
+        assert_eq!(data[0]["shares"], 0); // unchanged
+    }
+
+    #[test]
+    fn performance_update_out_of_range() {
+        let (_dir, path) = temp_performance_path();
+        performance_add("기사A --views 10", &path);
+        // Should not crash for out-of-range
+        performance_update("99 --views 500", &path);
+        let data = load_performance_from(&path);
+        assert_eq!(data[0]["views"], 10); // unchanged
+    }
+
+    #[test]
+    fn performance_list_sorted_by_engagement() {
+        let (_dir, path) = temp_performance_path();
+        performance_add("기사낮음 --views 10", &path);
+        performance_add("기사높음 --views 1000 --comments 50 --shares 200", &path);
+        performance_add("기사중간 --views 100 --comments 10", &path);
+        let data = load_performance_from(&path);
+        assert_eq!(data.len(), 3);
+
+        // Verify sorting logic
+        let mut sorted: Vec<(usize, &serde_json::Value)> = data.iter().enumerate().collect();
+        sorted.sort_by(|a, b| {
+            let total_a = a.1["views"].as_u64().unwrap_or(0)
+                + a.1["comments"].as_u64().unwrap_or(0)
+                + a.1["shares"].as_u64().unwrap_or(0);
+            let total_b = b.1["views"].as_u64().unwrap_or(0)
+                + b.1["comments"].as_u64().unwrap_or(0)
+                + b.1["shares"].as_u64().unwrap_or(0);
+            total_b.cmp(&total_a)
+        });
+        assert_eq!(sorted[0].1["title"], "기사높음");
+        assert_eq!(sorted[1].1["title"], "기사중간");
+        assert_eq!(sorted[2].1["title"], "기사낮음");
+    }
+
+    #[test]
+    fn performance_top_finds_best() {
+        let (_dir, path) = temp_performance_path();
+        performance_add("기사A --views 10", &path);
+        performance_add("기사B --views 1000 --shares 500", &path);
+        performance_add("기사C --views 100", &path);
+        let data = load_performance_from(&path);
+
+        let best = data
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, e)| {
+                e["views"].as_u64().unwrap_or(0)
+                    + e["comments"].as_u64().unwrap_or(0)
+                    + e["shares"].as_u64().unwrap_or(0)
+            })
+            .unwrap();
+        assert_eq!(best.1["title"], "기사B");
+    }
+
+    #[test]
+    fn performance_json_roundtrip() {
+        let (_dir, path) = temp_performance_path();
+        performance_add("기사1 --views 100 --comments 10 --shares 5", &path);
+        performance_add("기사2 --views 200", &path);
+        let data = load_performance_from(&path);
+        assert_eq!(data.len(), 2);
+
+        // Re-save and re-load
+        save_performance_to(&data, &path);
+        let reloaded = load_performance_from(&path);
+        assert_eq!(reloaded.len(), 2);
+        assert_eq!(reloaded[0]["title"], "기사1");
+        assert_eq!(reloaded[1]["title"], "기사2");
+    }
+
+    #[test]
+    fn performance_report_prompt_contains_data() {
+        let data = vec![
+            serde_json::json!({"id": 1, "title": "테스트", "date": "2026-03-21", "views": 100, "comments": 5, "shares": 10}),
+        ];
+        let prompt = performance_report_prompt(&data);
+        assert!(prompt.contains("테스트"));
+        assert!(prompt.contains("100"));
+        assert!(prompt.contains("리포트"));
+    }
+
+    #[test]
+    fn parse_performance_args_basic() {
+        let (title, views, comments, shares) =
+            parse_performance_args("기사제목 --views 100 --comments 5 --shares 10");
+        assert_eq!(title, "기사제목");
+        assert_eq!(views, Some(100));
+        assert_eq!(comments, Some(5));
+        assert_eq!(shares, Some(10));
+    }
+
+    #[test]
+    fn parse_performance_args_partial() {
+        let (title, views, comments, shares) = parse_performance_args("제목만 있는 경우");
+        assert_eq!(title, "제목만 있는 경우");
+        assert_eq!(views, None);
+        assert_eq!(comments, None);
+        assert_eq!(shares, None);
     }
 }
