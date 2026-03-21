@@ -748,6 +748,10 @@ pub async fn run_repl(
                     .await;
                 continue;
             }
+            s if s == "/calendar" || s.starts_with("/calendar ") => {
+                commands::handle_calendar(input);
+                continue;
+            }
             s if s == "/anonymize" || s.starts_with("/anonymize ") => {
                 commands::handle_anonymize(agent, input, &mut session_total, &agent_config.model)
                     .await;

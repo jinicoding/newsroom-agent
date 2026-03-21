@@ -98,6 +98,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/law",
     "/readability",
     "/improve",
+    "/calendar",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -135,6 +136,9 @@ pub const DRAFT_SUBCOMMANDS: &[&str] = &["save", "list", "load", "diff"];
 
 /// Deadline subcommand names for `/deadline <Tab>` completion.
 pub const DEADLINE_SUBCOMMANDS: &[&str] = &["set", "list", "clear"];
+
+/// Calendar subcommand names for `/calendar <Tab>` completion.
+pub const CALENDAR_SUBCOMMANDS: &[&str] = &["add", "list", "today", "week", "done", "remove"];
 
 /// Embargo subcommand names for `/embargo <Tab>` completion.
 pub const EMBARGO_SUBCOMMANDS: &[&str] = &["set", "list", "clear"];
@@ -178,6 +182,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/sources" => filter_candidates(SOURCES_SUBCOMMANDS, &partial_lower),
         "/draft" => filter_candidates(DRAFT_SUBCOMMANDS, &partial_lower),
         "/deadline" => filter_candidates(DEADLINE_SUBCOMMANDS, &partial_lower),
+        "/calendar" => filter_candidates(CALENDAR_SUBCOMMANDS, &partial_lower),
         "/embargo" => filter_candidates(EMBARGO_SUBCOMMANDS, &partial_lower),
         "/quote" => filter_candidates(QUOTE_SUBCOMMANDS, &partial_lower),
         "/alert" => filter_candidates(ALERT_SUBCOMMANDS, &partial_lower),
@@ -706,7 +711,7 @@ pub use crate::commands_project::{
     handle_health, handle_index, handle_init, handle_interview, handle_lint, handle_research,
     handle_deadline, handle_draft, handle_embargo, handle_export, handle_news, handle_proofread, handle_quote, handle_run, handle_rewrite, handle_run_usage, handle_sources, handle_stats,
     handle_alert, handle_archive, handle_data, handle_desk, handle_follow, handle_legal, handle_summary, handle_test, handle_timeline, handle_translate, handle_tree,
-    handle_anonymize, handle_collaborate, handle_coverage, handle_dashboard, handle_improve, handle_law, handle_press, handle_publish, handle_readability, handle_trend,
+    handle_anonymize, handle_calendar, handle_collaborate, handle_coverage, handle_dashboard, handle_improve, handle_law, handle_press, handle_publish, handle_readability, handle_trend,
 };
 
 // Session-related handlers

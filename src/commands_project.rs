@@ -10309,6 +10309,420 @@ pub async fn handle_improve(
     }
 }
 
+// ── /calendar — 취재 일정 관리 ──────────────────────────────────────────
+
+const CALENDAR_FILE: &str = ".journalist/calendar.json";
+
+/// A single calendar event entry.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+struct CalendarEvent {
+    /// Unique numeric ID (1-based, assigned at creation)
+    id: u32,
+    /// Date string "YYYY-MM-DD"
+    date: String,
+    /// Time string "HH:MM"
+    time: String,
+    /// Event description
+    description: String,
+    /// Whether the event is completed
+    #[serde(default)]
+    done: bool,
+}
+
+fn calendar_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(CALENDAR_FILE)
+}
+
+fn load_calendar_from(path: &std::path::Path) -> Vec<CalendarEvent> {
+    match std::fs::read_to_string(path) {
+        Ok(s) if !s.trim().is_empty() => serde_json::from_str(&s).unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+fn save_calendar_to(events: &[CalendarEvent], path: &std::path::Path) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let json = serde_json::to_string_pretty(events).unwrap_or_default();
+    let _ = std::fs::write(path, json);
+}
+
+/// Compute next available ID for a calendar event list.
+fn next_calendar_id(events: &[CalendarEvent]) -> u32 {
+    events.iter().map(|e| e.id).max().unwrap_or(0) + 1
+}
+
+/// Parse a date string. Accepts "YYYY-MM-DD".
+/// Returns Some("YYYY-MM-DD") if valid, None otherwise.
+fn parse_calendar_date(input: &str) -> Option<String> {
+    let parts: Vec<&str> = input.split('-').collect();
+    if parts.len() != 3 || parts[0].len() != 4 || parts[1].len() != 2 || parts[2].len() != 2 {
+        return None;
+    }
+    if parts[0].parse::<u32>().is_err()
+        || parts[1].parse::<u32>().is_err()
+        || parts[2].parse::<u32>().is_err()
+    {
+        return None;
+    }
+    let month: u32 = parts[1].parse().unwrap();
+    let day: u32 = parts[2].parse().unwrap();
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    Some(input.to_string())
+}
+
+/// Parse a time string. Accepts "HH:MM".
+fn parse_calendar_time(input: &str) -> Option<String> {
+    let parts: Vec<&str> = input.split(':').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let hour: u32 = parts[0].parse().ok()?;
+    let minute: u32 = parts[1].parse().ok()?;
+    if hour > 23 || minute > 59 {
+        return None;
+    }
+    Some(format!("{:02}:{:02}", hour, minute))
+}
+
+/// Determine color coding index for a date relative to today.
+/// Returns 0=today(red), 1=tomorrow(yellow), 2=past(dim), 3=future(none).
+fn date_color_index(date: &str, today: &str) -> u8 {
+    if date == today {
+        0
+    } else if let Some(tomorrow) = next_day(today) {
+        if date == tomorrow {
+            1
+        } else if date < today {
+            2
+        } else {
+            3
+        }
+    } else if date < today {
+        2
+    } else {
+        3
+    }
+}
+
+/// Compute the next day from a "YYYY-MM-DD" string. Simple implementation.
+fn next_day(date: &str) -> Option<String> {
+    let parts: Vec<u32> = date.split('-').filter_map(|s| s.parse().ok()).collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let (year, month, day) = (parts[0], parts[1], parts[2]);
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if is_leap_year(year as u64) {
+                29
+            } else {
+                28
+            }
+        }
+        _ => return None,
+    };
+    if day < days_in_month {
+        Some(format!("{:04}-{:02}-{:02}", year, month, day + 1))
+    } else if month < 12 {
+        Some(format!("{:04}-{:02}-01", year, month + 1))
+    } else {
+        Some(format!("{:04}-01-01", year + 1))
+    }
+}
+
+/// Get the day-of-week (0=Mon .. 6=Sun) for a "YYYY-MM-DD" date using Zeller-like calculation.
+fn day_of_week(date: &str) -> Option<u32> {
+    let epoch = datetime_to_epoch(&format!("{date}T00:00:00"))?;
+    // 1970-01-01 was a Thursday (3 in 0=Mon..6=Sun)
+    let days = epoch / 86400;
+    Some(((days + 3) % 7) as u32) // 0=Mon
+}
+
+/// Get the Monday of the week containing the given date.
+fn week_start(date: &str) -> Option<String> {
+    let dow = day_of_week(date)?;
+    let epoch = datetime_to_epoch(&format!("{date}T00:00:00"))?;
+    let monday_epoch = epoch - (dow as u64) * 86400;
+    Some(format_date_from_epoch(monday_epoch))
+}
+
+/// Get the Sunday of the week containing the given date.
+fn week_end(date: &str) -> Option<String> {
+    let dow = day_of_week(date)?;
+    let epoch = datetime_to_epoch(&format!("{date}T00:00:00"))?;
+    let sunday_epoch = epoch + ((6 - dow) as u64) * 86400;
+    Some(format_date_from_epoch(sunday_epoch))
+}
+
+/// Handle `/calendar` command with subcommands: add, list, today, week, done, remove.
+pub fn handle_calendar(input: &str) {
+    let args = input.strip_prefix("/calendar").unwrap_or("").trim();
+
+    if args.is_empty() {
+        // Default to list
+        handle_calendar_list();
+        return;
+    }
+
+    let (sub, rest) = match args.split_once(char::is_whitespace) {
+        Some((s, r)) => (s, r.trim()),
+        None => (args, ""),
+    };
+
+    match sub {
+        "add" => handle_calendar_add(rest),
+        "list" => handle_calendar_list(),
+        "today" => handle_calendar_today(),
+        "week" => handle_calendar_week(),
+        "done" => handle_calendar_done(rest),
+        "remove" => handle_calendar_remove(rest),
+        _ => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {sub}{RESET}");
+            print_calendar_usage();
+        }
+    }
+}
+
+fn print_calendar_usage() {
+    println!("\n{BOLD}  📅 /calendar — 취재 일정 관리{RESET}\n");
+    println!("    /calendar add <날짜> <시각> <설명>  일정 등록");
+    println!("    /calendar list                     전체 목록 (날짜순)");
+    println!("    /calendar today                    오늘 일정");
+    println!("    /calendar week                     이번 주 일정");
+    println!("    /calendar done <번호>              완료 처리");
+    println!("    /calendar remove <번호>            삭제");
+    println!("    /calendar                          (list와 동일){RESET}\n");
+}
+
+fn handle_calendar_add(args: &str) {
+    if args.is_empty() {
+        eprintln!("{RED}  사용법: /calendar add <날짜> <시각> <설명>{RESET}");
+        eprintln!("{DIM}  예: /calendar add 2026-03-25 14:00 기자간담회 — 삼성전자 실적{RESET}\n");
+        return;
+    }
+
+    let parts: Vec<&str> = args.splitn(3, ' ').collect();
+    if parts.len() < 3 {
+        eprintln!("{RED}  날짜, 시각, 설명을 모두 입력하세요.{RESET}");
+        eprintln!("{DIM}  예: /calendar add 2026-03-25 14:00 기자간담회{RESET}\n");
+        return;
+    }
+
+    let date_str = parts[0];
+    let time_str = parts[1];
+    let description = parts[2].trim().to_string();
+
+    let date = match parse_calendar_date(date_str) {
+        Some(d) => d,
+        None => {
+            eprintln!("{RED}  날짜 형식 오류: {date_str}{RESET}");
+            eprintln!("{DIM}  예: 2026-03-25{RESET}\n");
+            return;
+        }
+    };
+
+    let time = match parse_calendar_time(time_str) {
+        Some(t) => t,
+        None => {
+            eprintln!("{RED}  시각 형식 오류: {time_str}{RESET}");
+            eprintln!("{DIM}  예: 14:00{RESET}\n");
+            return;
+        }
+    };
+
+    if description.is_empty() {
+        eprintln!("{RED}  설명을 입력하세요.{RESET}\n");
+        return;
+    }
+
+    let path = calendar_path();
+    let mut events = load_calendar_from(&path);
+    let id = next_calendar_id(&events);
+
+    events.push(CalendarEvent {
+        id,
+        date: date.clone(),
+        time: time.clone(),
+        description: description.clone(),
+        done: false,
+    });
+
+    save_calendar_to(&events, &path);
+    println!("{GREEN}  📅 일정 등록 (#{id}): {date} {time} — {description}{RESET}\n");
+}
+
+fn handle_calendar_list() {
+    let path = calendar_path();
+    let mut events = load_calendar_from(&path);
+
+    if events.is_empty() {
+        println!("{DIM}  등록된 일정이 없습니다.{RESET}\n");
+        return;
+    }
+
+    // Sort by date then time
+    events.sort_by(|a, b| (&a.date, &a.time).cmp(&(&b.date, &b.time)));
+
+    let today = today_date_string();
+    println!("\n{BOLD}  📅 전체 일정 ({} 건){RESET}\n", events.len());
+    print_calendar_events(&events, &today);
+}
+
+fn handle_calendar_today() {
+    let path = calendar_path();
+    let events = load_calendar_from(&path);
+    let today = today_date_string();
+
+    let mut today_events: Vec<&CalendarEvent> = events.iter().filter(|e| e.date == today).collect();
+    today_events.sort_by(|a, b| a.time.cmp(&b.time));
+
+    if today_events.is_empty() {
+        println!("{DIM}  오늘({today}) 일정이 없습니다.{RESET}\n");
+        return;
+    }
+
+    println!(
+        "\n{BOLD}  📅 오늘 일정 — {today} ({} 건){RESET}\n",
+        today_events.len()
+    );
+    for event in &today_events {
+        let done_mark = if event.done { "✅" } else { "⬜" };
+        println!(
+            "    {RED}#{:<3}{RESET} {done_mark} {RED}{}{RESET}  {}{}",
+            event.id,
+            event.time,
+            event.description,
+            if event.done {
+                format!(" {DIM}(완료){RESET}")
+            } else {
+                String::new()
+            },
+        );
+    }
+    println!();
+}
+
+fn handle_calendar_week() {
+    let path = calendar_path();
+    let events = load_calendar_from(&path);
+    let today = today_date_string();
+
+    let mon = match week_start(&today) {
+        Some(d) => d,
+        None => {
+            eprintln!("{RED}  날짜 계산 오류{RESET}\n");
+            return;
+        }
+    };
+    let sun = match week_end(&today) {
+        Some(d) => d,
+        None => {
+            eprintln!("{RED}  날짜 계산 오류{RESET}\n");
+            return;
+        }
+    };
+
+    let mut week_events: Vec<&CalendarEvent> = events
+        .iter()
+        .filter(|e| e.date >= mon && e.date <= sun)
+        .collect();
+    week_events.sort_by(|a, b| (&a.date, &a.time).cmp(&(&b.date, &b.time)));
+
+    if week_events.is_empty() {
+        println!("{DIM}  이번 주({mon} ~ {sun}) 일정이 없습니다.{RESET}\n");
+        return;
+    }
+
+    println!(
+        "\n{BOLD}  📅 이번 주 일정 — {mon} ~ {sun} ({} 건){RESET}\n",
+        week_events.len()
+    );
+    let owned: Vec<CalendarEvent> = week_events.into_iter().cloned().collect();
+    print_calendar_events(&owned, &today);
+}
+
+fn handle_calendar_done(num_str: &str) {
+    let id: u32 = match num_str.trim().parse() {
+        Ok(n) => n,
+        Err(_) => {
+            eprintln!("{RED}  번호를 입력하세요: /calendar done <번호>{RESET}\n");
+            return;
+        }
+    };
+
+    let path = calendar_path();
+    let mut events = load_calendar_from(&path);
+
+    if let Some(event) = events.iter_mut().find(|e| e.id == id) {
+        event.done = true;
+        let desc = event.description.clone();
+        save_calendar_to(&events, &path);
+        println!("{GREEN}  ✅ 완료 처리: #{id} — {desc}{RESET}\n");
+    } else {
+        eprintln!("{RED}  #{id} 일정을 찾을 수 없습니다.{RESET}\n");
+    }
+}
+
+fn handle_calendar_remove(num_str: &str) {
+    let id: u32 = match num_str.trim().parse() {
+        Ok(n) => n,
+        Err(_) => {
+            eprintln!("{RED}  번호를 입력하세요: /calendar remove <번호>{RESET}\n");
+            return;
+        }
+    };
+
+    let path = calendar_path();
+    let mut events = load_calendar_from(&path);
+    let original_len = events.len();
+    events.retain(|e| e.id != id);
+
+    if events.len() < original_len {
+        save_calendar_to(&events, &path);
+        println!("{GREEN}  🗑️ 일정 삭제: #{id}{RESET}\n");
+    } else {
+        eprintln!("{RED}  #{id} 일정을 찾을 수 없습니다.{RESET}\n");
+    }
+}
+
+/// Print a list of calendar events with color coding.
+fn print_calendar_events(events: &[CalendarEvent], today: &str) {
+    for event in events {
+        let ci = date_color_index(&event.date, today);
+        let done_mark = if event.done { "✅" } else { "⬜" };
+        let done_suffix = if event.done {
+            format!(" {DIM}(완료){RESET}")
+        } else {
+            String::new()
+        };
+        match ci {
+            0 => println!(
+                "    {RED}#{:<3}{RESET} {done_mark} {RED}{} {}{RESET}  {}{done_suffix}",
+                event.id, event.date, event.time, event.description,
+            ),
+            1 => println!(
+                "    {YELLOW}#{:<3}{RESET} {done_mark} {YELLOW}{} {}{RESET}  {}{done_suffix}",
+                event.id, event.date, event.time, event.description,
+            ),
+            2 => println!(
+                "    {DIM}#{:<3}{RESET} {done_mark} {DIM}{} {}{RESET}  {}{done_suffix}",
+                event.id, event.date, event.time, event.description,
+            ),
+            _ => println!(
+                "    #{:<3} {done_mark} {} {}  {}{done_suffix}",
+                event.id, event.date, event.time, event.description,
+            ),
+        }
+    }
+    println!();
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -14342,5 +14756,230 @@ mod tests {
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("개선 제안"));
+    }
+
+    // ── /calendar tests ─────────────────────────────────────────────────
+
+    fn temp_calendar_path() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("calendar.json");
+        (dir, path)
+    }
+
+    #[test]
+    fn calendar_load_empty_returns_empty() {
+        let (_dir, path) = temp_calendar_path();
+        let events = load_calendar_from(&path);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn calendar_save_and_load_roundtrip() {
+        let (_dir, path) = temp_calendar_path();
+        let events = vec![
+            CalendarEvent {
+                id: 1,
+                date: "2026-03-25".to_string(),
+                time: "14:00".to_string(),
+                description: "기자간담회".to_string(),
+                done: false,
+            },
+            CalendarEvent {
+                id: 2,
+                date: "2026-03-26".to_string(),
+                time: "10:00".to_string(),
+                description: "국회 일정".to_string(),
+                done: false,
+            },
+        ];
+        save_calendar_to(&events, &path);
+        let loaded = load_calendar_from(&path);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].description, "기자간담회");
+        assert_eq!(loaded[1].date, "2026-03-26");
+    }
+
+    #[test]
+    fn calendar_next_id() {
+        let events = vec![
+            CalendarEvent {
+                id: 1,
+                date: "2026-03-25".to_string(),
+                time: "14:00".to_string(),
+                description: "A".to_string(),
+                done: false,
+            },
+            CalendarEvent {
+                id: 5,
+                date: "2026-03-26".to_string(),
+                time: "10:00".to_string(),
+                description: "B".to_string(),
+                done: false,
+            },
+        ];
+        assert_eq!(next_calendar_id(&events), 6);
+        assert_eq!(next_calendar_id(&[]), 1);
+    }
+
+    #[test]
+    fn calendar_parse_date_valid() {
+        assert_eq!(
+            parse_calendar_date("2026-03-25"),
+            Some("2026-03-25".to_string())
+        );
+    }
+
+    #[test]
+    fn calendar_parse_date_invalid() {
+        assert!(parse_calendar_date("2026-13-01").is_none());
+        assert!(parse_calendar_date("2026-00-01").is_none());
+        assert!(parse_calendar_date("2026-01-00").is_none());
+        assert!(parse_calendar_date("invalid").is_none());
+        assert!(parse_calendar_date("").is_none());
+    }
+
+    #[test]
+    fn calendar_parse_time_valid() {
+        assert_eq!(parse_calendar_time("14:00"), Some("14:00".to_string()));
+        assert_eq!(parse_calendar_time("09:30"), Some("09:30".to_string()));
+        assert_eq!(parse_calendar_time("0:00"), Some("00:00".to_string()));
+    }
+
+    #[test]
+    fn calendar_parse_time_invalid() {
+        assert!(parse_calendar_time("25:00").is_none());
+        assert!(parse_calendar_time("12:60").is_none());
+        assert!(parse_calendar_time("invalid").is_none());
+        assert!(parse_calendar_time("").is_none());
+    }
+
+    #[test]
+    fn calendar_done_marks_event() {
+        let (_dir, path) = temp_calendar_path();
+        let events = vec![CalendarEvent {
+            id: 1,
+            date: "2026-03-25".to_string(),
+            time: "14:00".to_string(),
+            description: "테스트".to_string(),
+            done: false,
+        }];
+        save_calendar_to(&events, &path);
+
+        let mut loaded = load_calendar_from(&path);
+        if let Some(e) = loaded.iter_mut().find(|e| e.id == 1) {
+            e.done = true;
+        }
+        save_calendar_to(&loaded, &path);
+
+        let final_events = load_calendar_from(&path);
+        assert!(final_events[0].done);
+    }
+
+    #[test]
+    fn calendar_remove_deletes_event() {
+        let (_dir, path) = temp_calendar_path();
+        let events = vec![
+            CalendarEvent {
+                id: 1,
+                date: "2026-03-25".to_string(),
+                time: "14:00".to_string(),
+                description: "A".to_string(),
+                done: false,
+            },
+            CalendarEvent {
+                id: 2,
+                date: "2026-03-26".to_string(),
+                time: "10:00".to_string(),
+                description: "B".to_string(),
+                done: false,
+            },
+        ];
+        save_calendar_to(&events, &path);
+
+        let mut loaded = load_calendar_from(&path);
+        loaded.retain(|e| e.id != 1);
+        save_calendar_to(&loaded, &path);
+
+        let final_events = load_calendar_from(&path);
+        assert_eq!(final_events.len(), 1);
+        assert_eq!(final_events[0].id, 2);
+    }
+
+    #[test]
+    fn calendar_sort_by_date_then_time() {
+        let mut events = vec![
+            CalendarEvent {
+                id: 1,
+                date: "2026-03-26".to_string(),
+                time: "10:00".to_string(),
+                description: "B".to_string(),
+                done: false,
+            },
+            CalendarEvent {
+                id: 2,
+                date: "2026-03-25".to_string(),
+                time: "14:00".to_string(),
+                description: "A".to_string(),
+                done: false,
+            },
+            CalendarEvent {
+                id: 3,
+                date: "2026-03-25".to_string(),
+                time: "09:00".to_string(),
+                description: "C".to_string(),
+                done: false,
+            },
+        ];
+        events.sort_by(|a, b| (&a.date, &a.time).cmp(&(&b.date, &b.time)));
+        assert_eq!(events[0].description, "C");
+        assert_eq!(events[1].description, "A");
+        assert_eq!(events[2].description, "B");
+    }
+
+    #[test]
+    fn calendar_date_color_today_is_red() {
+        assert_eq!(date_color_index("2026-03-21", "2026-03-21"), 0);
+    }
+
+    #[test]
+    fn calendar_date_color_tomorrow_is_yellow() {
+        assert_eq!(date_color_index("2026-03-22", "2026-03-21"), 1);
+    }
+
+    #[test]
+    fn calendar_date_color_past_is_dim() {
+        assert_eq!(date_color_index("2026-03-20", "2026-03-21"), 2);
+    }
+
+    #[test]
+    fn calendar_date_color_future_is_none() {
+        assert_eq!(date_color_index("2026-03-25", "2026-03-21"), 3);
+    }
+
+    #[test]
+    fn calendar_next_day_basic() {
+        assert_eq!(next_day("2026-03-21"), Some("2026-03-22".to_string()));
+        assert_eq!(next_day("2026-03-31"), Some("2026-04-01".to_string()));
+        assert_eq!(next_day("2026-12-31"), Some("2027-01-01".to_string()));
+        assert_eq!(next_day("2024-02-28"), Some("2024-02-29".to_string())); // leap
+        assert_eq!(next_day("2024-02-29"), Some("2024-03-01".to_string()));
+        assert_eq!(next_day("2026-02-28"), Some("2026-03-01".to_string())); // non-leap
+    }
+
+    #[test]
+    fn calendar_week_start_and_end() {
+        // 2026-03-21 is a Saturday
+        let mon = week_start("2026-03-21");
+        let sun = week_end("2026-03-21");
+        assert_eq!(mon, Some("2026-03-16".to_string()));
+        assert_eq!(sun, Some("2026-03-22".to_string()));
+    }
+
+    #[test]
+    fn calendar_day_of_week() {
+        // 2026-03-21 is a Saturday = 5 (0=Mon)
+        assert_eq!(day_of_week("2026-03-21"), Some(5));
+        // 2026-03-16 is a Monday = 0
+        assert_eq!(day_of_week("2026-03-16"), Some(0));
     }
 }

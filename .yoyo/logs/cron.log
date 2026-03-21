@@ -1019,3 +1019,15 @@ test result: ok. 67 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fin
   계획된 태스크: 4개
 
   ── Task 1 / 4 ──
+완료. `/improve` 커맨드를 구현하고 커밋했습니다.
+
+**구현 내용:**
+- `commands_project.rs`: `handle_improve`, `build_improve_prompt`, `parse_improve_args`, `improve_file_path`, `save_improve` 함수 추가
+- `commands.rs`: `KNOWN_COMMANDS`에 `/improve` 등록 + import 추가
+- `repl.rs`: 디스패치 분기 추가
+- 5개 분석 항목(리드문 흡인력, 문단 전환, 인용문 활용, 구체성·수치, 결론 완성도)에 대해 10점 만점 평가 + 구체적 수정 제안
+- `--file`, 인라인 텍스트, 최근 초안 자동 감지 지원
+- 결과를 `.journalist/improve/`에 저장
+- 11개 테스트 추가 (인자 파싱, 프롬프트 구성, 파일 경로 생성, 파일 저장 검증)
+
+  ── Task 2 / 4 ──
