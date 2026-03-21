@@ -1,7 +1,7 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
 //! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck,
 //! /briefing, /clip, /news, /summary, /stats, /draft, /deadline, /embargo, /export, /quote,
-//! /trend, /archive, /data, /follow, /desk, /coverage, /dashboard.
+//! /trend, /archive, /data, /follow, /desk, /coverage, /dashboard, /publish.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -8955,6 +8955,216 @@ fn handle_dashboard_impl(
     println!("{BOLD}  ══════════════════════════════════════{RESET}\n");
 }
 
+// ── /publish ────────────────────────────────────────────────────────────
+
+/// Possible outcomes for each pipeline step.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PublishStepResult {
+    /// Step completed successfully.
+    Pass(String),
+    /// Step failed (e.g. file not found, empty article).
+    Fail(String),
+    /// Legal step found 위험 — pipeline must halt.
+    Blocked(String),
+}
+
+/// Run the publish pipeline: checklist → proofread → legal → export.
+/// Returns a vec of (step_name, result) pairs.
+/// Stops early if legal returns 위험.
+pub async fn handle_publish(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/publish").unwrap_or("").trim();
+
+    // Determine the target file (--file flag or latest draft)
+    let file_path = if args.contains("--file") {
+        let parts: Vec<&str> = args.splitn(3, "--file").collect();
+        let after = parts.get(1).unwrap_or(&"").trim();
+        let path = after.split_whitespace().next().unwrap_or("").to_string();
+        if path.is_empty() {
+            None
+        } else {
+            Some(path)
+        }
+    } else if !args.is_empty() {
+        Some(args.to_string())
+    } else {
+        find_latest_draft().map(|p| p.to_string_lossy().to_string())
+    };
+
+    let file_path = match file_path {
+        Some(p) => p,
+        None => {
+            println!("{DIM}  사용법: /publish <파일> 또는 /publish --file <경로>{RESET}");
+            println!(
+                "{DIM}  출고 파이프라인: checklist → proofread → legal → export 를 순차 실행합니다.{RESET}"
+            );
+            println!("{DIM}  legal 단계에서 🚨 위험 판정 시 파이프라인을 중단합니다.{RESET}\n");
+            return;
+        }
+    };
+
+    // Verify file exists
+    if !std::path::Path::new(&file_path).exists() {
+        eprintln!("{RED}  파일을 찾을 수 없습니다: {file_path}{RESET}\n");
+        return;
+    }
+
+    println!("\n{BOLD}  ══════════════════════════════════════{RESET}");
+    println!("{BOLD}   🚀 출고 파이프라인 시작{RESET}");
+    println!("{BOLD}   대상: {file_path}{RESET}");
+    println!("{BOLD}  ══════════════════════════════════════{RESET}\n");
+
+    let results =
+        run_publish_pipeline(agent, session_total, model, &file_path).await;
+
+    print_publish_report(&results);
+}
+
+/// Core pipeline logic, separated for testability of the report printer.
+async fn run_publish_pipeline(
+    agent: &mut Agent,
+    session_total: &mut Usage,
+    model: &str,
+    file_path: &str,
+) -> Vec<(&'static str, PublishStepResult)> {
+    let mut results: Vec<(&'static str, PublishStepResult)> = Vec::new();
+    let steps: &[&str] = &["checklist", "proofread", "legal", "export"];
+
+    for &step in steps {
+        println!(
+            "{CYAN}  ▶ [{step}] 단계 실행 중...{RESET}"
+        );
+
+        let result = match step {
+            "checklist" => {
+                let cmd = format!("/checklist --file {file_path}");
+                handle_checklist(agent, &cmd, session_total, model).await;
+                PublishStepResult::Pass("체크리스트 완료".to_string())
+            }
+            "proofread" => {
+                let cmd = format!("/proofread --file {file_path}");
+                handle_proofread(agent, &cmd, session_total, model).await;
+                PublishStepResult::Pass("교열 완료".to_string())
+            }
+            "legal" => {
+                // We need to capture the legal response to check for 위험
+                let article = match std::fs::read_to_string(file_path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let msg = format!("파일 읽기 실패: {e}");
+                        results.push((step, PublishStepResult::Fail(msg)));
+                        break;
+                    }
+                };
+                let prompt = match build_legal_prompt(&article) {
+                    Some(p) => p,
+                    None => {
+                        results.push((
+                            step,
+                            PublishStepResult::Fail("빈 기사 — 법적 점검 불가".to_string()),
+                        ));
+                        break;
+                    }
+                };
+                let response = run_prompt(agent, &prompt, session_total, model).await;
+                auto_compact_if_needed(agent);
+
+                // Save legal result (same as handle_legal)
+                if !response.trim().is_empty() {
+                    let slug = std::path::Path::new(file_path)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "legal".to_string());
+                    let path = legal_file_path(&slug);
+                    if let Ok(()) = save_legal(&path, &response) {
+                        println!("{GREEN}  ✓ 법적 점검 저장: {}{RESET}", path.display());
+                    }
+                }
+
+                // Check for 🚨 위험 — halt if found
+                if response.contains("위험") {
+                    PublishStepResult::Blocked(
+                        "🚨 법적 리스크 '위험' 판정 — 파이프라인 중단".to_string(),
+                    )
+                } else {
+                    PublishStepResult::Pass("법적 점검 통과".to_string())
+                }
+            }
+            "export" => {
+                let cmd = format!("/export {file_path}");
+                handle_export(&cmd);
+                PublishStepResult::Pass("내보내기 완료".to_string())
+            }
+            _ => unreachable!(),
+        };
+
+        let blocked = matches!(&result, PublishStepResult::Blocked(_));
+        results.push((step, result));
+
+        if blocked {
+            // Mark remaining steps as skipped
+            let done = results.len();
+            for &remaining in &steps[done..] {
+                results.push((
+                    remaining,
+                    PublishStepResult::Fail("이전 단계 중단으로 건너뜀".to_string()),
+                ));
+            }
+            break;
+        }
+    }
+
+    results
+}
+
+/// Print the publish pipeline summary report.
+pub fn print_publish_report(results: &[(&str, PublishStepResult)]) {
+    println!("\n{BOLD}  ──────────────────────────────────────{RESET}");
+    println!("{BOLD}   📊 출고 파이프라인 결과{RESET}");
+    println!("{BOLD}  ──────────────────────────────────────{RESET}\n");
+
+    let mut pass_count = 0u32;
+    let mut fail_count = 0u32;
+    let mut blocked = false;
+
+    for (step, result) in results {
+        match result {
+            PublishStepResult::Pass(msg) => {
+                println!("   ✅ {step}: {msg}");
+                pass_count += 1;
+            }
+            PublishStepResult::Fail(msg) => {
+                println!("   ❌ {step}: {msg}");
+                fail_count += 1;
+            }
+            PublishStepResult::Blocked(msg) => {
+                println!("   🚨 {step}: {msg}");
+                fail_count += 1;
+                blocked = true;
+            }
+        }
+    }
+
+    println!();
+    if blocked {
+        println!(
+            "{RED}  ⛔ 출고 중단 — 법적 리스크를 먼저 해결하세요 (통과: {pass_count}, 실패/중단: {fail_count}){RESET}\n"
+        );
+    } else if fail_count > 0 {
+        println!(
+            "{YELLOW}  ⚠ 일부 단계 실패 (통과: {pass_count}, 실패: {fail_count}){RESET}\n"
+        );
+    } else {
+        println!(
+            "{GREEN}  ✅ 출고 준비 완료! 모든 단계 통과 ({pass_count}/{pass_count}){RESET}\n"
+        );
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -12520,6 +12730,59 @@ mod tests {
             &followups_path,
             &collab_dir,
             &coverage_path,
+        );
+    }
+
+    // ── /publish tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn publish_report_all_pass() {
+        let results = vec![
+            ("checklist", PublishStepResult::Pass("체크리스트 완료".into())),
+            ("proofread", PublishStepResult::Pass("교열 완료".into())),
+            ("legal", PublishStepResult::Pass("법적 점검 통과".into())),
+            ("export", PublishStepResult::Pass("내보내기 완료".into())),
+        ];
+        // Should not panic
+        print_publish_report(&results);
+    }
+
+    #[test]
+    fn publish_report_blocked_by_legal() {
+        let results = vec![
+            ("checklist", PublishStepResult::Pass("체크리스트 완료".into())),
+            ("proofread", PublishStepResult::Pass("교열 완료".into())),
+            (
+                "legal",
+                PublishStepResult::Blocked(
+                    "🚨 법적 리스크 '위험' 판정 — 파이프라인 중단".into(),
+                ),
+            ),
+            (
+                "export",
+                PublishStepResult::Fail("이전 단계 중단으로 건너뜀".into()),
+            ),
+        ];
+        print_publish_report(&results);
+    }
+
+    #[test]
+    fn publish_step_result_variants() {
+        let pass = PublishStepResult::Pass("ok".into());
+        let fail = PublishStepResult::Fail("err".into());
+        let blocked = PublishStepResult::Blocked("halt".into());
+
+        assert_eq!(pass, PublishStepResult::Pass("ok".into()));
+        assert_ne!(pass, fail);
+        assert!(matches!(blocked, PublishStepResult::Blocked(_)));
+    }
+
+    #[test]
+    fn publish_known_command() {
+        use crate::commands::KNOWN_COMMANDS;
+        assert!(
+            KNOWN_COMMANDS.contains(&"/publish"),
+            "/publish should be in KNOWN_COMMANDS"
         );
     }
 }

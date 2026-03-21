@@ -848,3 +848,18 @@ SESSION_PLAN.md 작성 완료.
   계획된 태스크: 4개
 
   ── Task 1 / 4 ──
+완료. `/dashboard` 커맨드를 구현했습니다:
+
+- **`handle_dashboard()`** — 6개 JSON 데이터 소스를 로컬에서 읽어 한 화면에 렌더링
+  - ⏰ 마감 임박 (deadlines)
+  - 🔒 활성 엠바고 (embargoes)
+  - 📝 대기 중인 데스크 지시 (desk assignments, pending only)
+  - 🔄 후속 보도 (followups, 미완료만)
+  - 🤝 활성 공동취재 (collaborate, active only)
+  - 🏷️ 취재 선점 현황 (coverage, active only)
+  - 하단에 활성 항목 합계 표시
+- AI 호출 없이 순수 로컬 렌더링
+- 테스트 3개 추가 (known command, empty state, populated data)
+- 빌드 + 전체 테스트 통과
+
+  ── Task 2 / 4 ──

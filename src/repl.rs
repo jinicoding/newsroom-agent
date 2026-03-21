@@ -726,6 +726,11 @@ pub async fn run_repl(
                 commands::handle_dashboard();
                 continue;
             }
+            s if s == "/publish" || s.starts_with("/publish ") => {
+                commands::handle_publish(agent, input, &mut session_total, &agent_config.model)
+                    .await;
+                continue;
+            }
             s if s.starts_with('/') && is_unknown_command(s) => {
                 let cmd = s.split_whitespace().next().unwrap_or(s);
                 eprintln!("{RED}  unknown command: {cmd}{RESET}");
