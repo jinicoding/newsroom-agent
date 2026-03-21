@@ -2,7 +2,7 @@
 //! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck,
 //! /briefing, /clip, /news, /summary, /stats, /draft, /deadline, /embargo, /export, /quote,
 //! /trend, /archive, /data, /follow, /desk, /coverage, /dashboard, /publish,
-//! /anonymize.
+//! /anonymize, /press.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -9320,6 +9320,313 @@ pub async fn handle_anonymize(
     }
 }
 
+// ── /press ──────────────────────────────────────────────────────────────
+
+const PRESS_DIR: &str = ".journalist/press";
+
+/// A single press release item parsed from the API response.
+#[derive(Debug, Clone)]
+pub struct PressRelease {
+    pub title: String,
+    pub ministry: String,
+    pub date: String,
+    pub link: String,
+    pub summary: String,
+}
+
+/// Build the cache directory path for press releases.
+fn press_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(PRESS_DIR)
+}
+
+/// Cache a press release to `.journalist/press/<id>.json`.
+fn cache_press_release(item: &PressRelease, idx: usize) -> Result<(), String> {
+    let dir = press_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("디렉토리 생성 실패: {e}"))?;
+    let filename = format!("press_{idx}.json");
+    let path = dir.join(filename);
+    let json = serde_json::json!({
+        "title": item.title,
+        "ministry": item.ministry,
+        "date": item.date,
+        "link": item.link,
+        "summary": item.summary,
+    });
+    let content = serde_json::to_string_pretty(&json).unwrap_or_default();
+    std::fs::write(&path, content).map_err(|e| format!("캐시 저장 실패: {e}"))
+}
+
+/// Parse the XML response from the press release API.
+/// The API returns XML with <item> elements containing <title>, <Ministry>, <ModDate>, <Link>, <Description>.
+pub fn parse_press_xml(xml: &str) -> Vec<PressRelease> {
+    let mut results = Vec::new();
+    let items: Vec<&str> = xml.split("<item>").collect();
+    // Skip the first split part (before first <item>)
+    for item_xml in items.iter().skip(1) {
+        let title = extract_xml_tag(item_xml, "title").unwrap_or_default();
+        let ministry = extract_xml_tag(item_xml, "SubName1")
+            .or_else(|| extract_xml_tag(item_xml, "Ministry"))
+            .unwrap_or_default();
+        let date = extract_xml_tag(item_xml, "ModDate")
+            .or_else(|| extract_xml_tag(item_xml, "Date"))
+            .unwrap_or_default();
+        let link = extract_xml_tag(item_xml, "DetailUrl")
+            .or_else(|| extract_xml_tag(item_xml, "Link"))
+            .or_else(|| extract_xml_tag(item_xml, "OriginalUrl"))
+            .unwrap_or_default();
+        let summary = extract_xml_tag(item_xml, "SubContent1")
+            .or_else(|| extract_xml_tag(item_xml, "Description"))
+            .unwrap_or_default();
+        if !title.is_empty() {
+            results.push(PressRelease {
+                title,
+                ministry,
+                date,
+                link,
+                summary,
+            });
+        }
+    }
+    results
+}
+
+/// Extract text content between XML tags, e.g. `<tag>content</tag>`.
+fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>", tag = tag);
+    if let Some(start) = xml.find(&open) {
+        let after = &xml[start + open.len()..];
+        if let Some(end) = after.find(&close) {
+            let content = after[..end].trim();
+            // Handle CDATA sections
+            let content = if content.starts_with("<![CDATA[") && content.ends_with("]]>") {
+                &content[9..content.len() - 3]
+            } else {
+                content
+            };
+            return Some(strip_html_tags(content));
+        }
+    }
+    None
+}
+
+/// Fetch press releases from the government API.
+fn fetch_press_releases(
+    api_key: &str,
+    keyword: Option<&str>,
+    count: u32,
+) -> Result<Vec<PressRelease>, String> {
+    let encoded_key = api_key.replace(' ', "%20");
+    let base_url = "https://apis.data.go.kr/1371000/pressReleaseService/pressReleaseList";
+    let url = if let Some(kw) = keyword {
+        let encoded_kw = kw.replace(' ', "%20");
+        format!(
+            "{}?serviceKey={}&numOfRows={}&pageNo=1&keyword={}",
+            base_url, encoded_key, count, encoded_kw
+        )
+    } else {
+        format!(
+            "{}?serviceKey={}&numOfRows={}&pageNo=1",
+            base_url, encoded_key, count
+        )
+    };
+
+    let output = std::process::Command::new("curl")
+        .args(["-s", "--max-time", "15", &url])
+        .output()
+        .map_err(|e| format!("curl 실행 실패: {e}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "API 요청 실패: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let body = String::from_utf8_lossy(&output.stdout).to_string();
+
+    // Check for API error responses
+    if body.contains("<returnReasonCode>") {
+        if let Some(msg) = extract_xml_tag(&body, "returnAuthMsg") {
+            return Err(format!("API 인증 오류: {msg}"));
+        }
+        return Err("API 응답 오류".to_string());
+    }
+
+    Ok(parse_press_xml(&body))
+}
+
+/// Display press release results in a formatted table.
+fn display_press_results(results: &[PressRelease]) {
+    if results.is_empty() {
+        println!("{DIM}  검색 결과가 없습니다.{RESET}\n");
+        return;
+    }
+    println!(
+        "\n{BOLD}  📢 정부 보도자료 ({} 건){RESET}\n",
+        results.len()
+    );
+    for (i, item) in results.iter().enumerate() {
+        let num = i + 1;
+        let ministry_info = if item.ministry.is_empty() {
+            String::new()
+        } else {
+            format!(" [{CYAN}{}{RESET}]", item.ministry)
+        };
+        let date_info = if item.date.is_empty() {
+            String::new()
+        } else {
+            format!("  {DIM}{}{RESET}", item.date)
+        };
+        println!("  {BOLD}{num:>3}.{RESET} {}{ministry_info}{date_info}", item.title);
+        if !item.summary.is_empty() {
+            let preview: String = item.summary.chars().take(80).collect();
+            let ellipsis = if item.summary.chars().count() > 80 {
+                "…"
+            } else {
+                ""
+            };
+            println!("       {DIM}{preview}{ellipsis}{RESET}");
+        }
+    }
+    println!();
+    println!("{DIM}  상세 보기: /press view <번호>{RESET}\n");
+}
+
+/// Handle the `/press` command.
+pub fn handle_press(input: &str) {
+    let args = input.strip_prefix("/press").unwrap_or("").trim();
+
+    // Check for API key
+    let api_key = match std::env::var("PRESS_API_KEY") {
+        Ok(key) if !key.is_empty() => key,
+        _ => {
+            println!("{YELLOW}  PRESS_API_KEY 환경변수가 설정되지 않았습니다.{RESET}");
+            println!(
+                "{DIM}  정책브리핑 보도자료 API를 사용하려면 data.go.kr에서 API 키를 발급받으세요.{RESET}"
+            );
+            println!("{DIM}  발급 후: export PRESS_API_KEY=\"your-api-key\"{RESET}\n");
+            return;
+        }
+    };
+
+    if args.is_empty() {
+        print_press_usage();
+        return;
+    }
+
+    let (subcmd, rest) = match args.split_once(' ') {
+        Some((c, r)) => (c, r.trim()),
+        None => (args, ""),
+    };
+
+    match subcmd {
+        "search" => {
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /press search <키워드>{RESET}\n");
+                return;
+            }
+            println!("{DIM}  보도자료 검색 중: \"{rest}\"...{RESET}");
+            match fetch_press_releases(&api_key, Some(rest), 10) {
+                Ok(results) => {
+                    // Cache results
+                    for (i, item) in results.iter().enumerate() {
+                        let _ = cache_press_release(item, i + 1);
+                    }
+                    display_press_results(&results);
+                }
+                Err(e) => {
+                    eprintln!("{RED}  보도자료 검색 실패: {e}{RESET}\n");
+                }
+            }
+        }
+        "latest" => {
+            let count: u32 = rest.parse().unwrap_or(5);
+            let count = count.clamp(1, 30);
+            println!("{DIM}  최신 보도자료 {count}건 조회 중...{RESET}");
+            match fetch_press_releases(&api_key, None, count) {
+                Ok(results) => {
+                    for (i, item) in results.iter().enumerate() {
+                        let _ = cache_press_release(item, i + 1);
+                    }
+                    display_press_results(&results);
+                }
+                Err(e) => {
+                    eprintln!("{RED}  보도자료 조회 실패: {e}{RESET}\n");
+                }
+            }
+        }
+        "view" => {
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /press view <번호>{RESET}\n");
+                return;
+            }
+            let num: usize = match rest.parse() {
+                Ok(n) if n >= 1 => n,
+                _ => {
+                    println!("{RED}  올바른 번호를 입력하세요.{RESET}\n");
+                    return;
+                }
+            };
+            let cache_path = press_dir().join(format!("press_{num}.json"));
+            match std::fs::read_to_string(&cache_path) {
+                Ok(content) => {
+                    if let Ok(item) = serde_json::from_str::<serde_json::Value>(&content) {
+                        println!("\n{BOLD}  ── 보도자료 상세 ──{RESET}\n");
+                        if let Some(title) = item.get("title").and_then(|v| v.as_str()) {
+                            println!("  {BOLD}제목:{RESET} {title}");
+                        }
+                        if let Some(ministry) = item.get("ministry").and_then(|v| v.as_str()) {
+                            if !ministry.is_empty() {
+                                println!("  {BOLD}부처:{RESET} {ministry}");
+                            }
+                        }
+                        if let Some(date) = item.get("date").and_then(|v| v.as_str()) {
+                            if !date.is_empty() {
+                                println!("  {BOLD}날짜:{RESET} {date}");
+                            }
+                        }
+                        if let Some(link) = item.get("link").and_then(|v| v.as_str()) {
+                            if !link.is_empty() {
+                                println!("  {BOLD}링크:{RESET} {link}");
+                            }
+                        }
+                        if let Some(summary) = item.get("summary").and_then(|v| v.as_str()) {
+                            if !summary.is_empty() {
+                                println!("\n  {BOLD}요약:{RESET}");
+                                // Word-wrap summary at ~70 chars
+                                for line in summary.lines() {
+                                    println!("  {line}");
+                                }
+                            }
+                        }
+                        println!();
+                    } else {
+                        eprintln!("{RED}  캐시 파일 파싱 실패{RESET}\n");
+                    }
+                }
+                Err(_) => {
+                    println!("{YELLOW}  #{num} 보도자료 캐시가 없습니다.{RESET}");
+                    println!(
+                        "{DIM}  먼저 /press search 또는 /press latest 로 검색하세요.{RESET}\n"
+                    );
+                }
+            }
+        }
+        _ => {
+            print_press_usage();
+        }
+    }
+}
+
+fn print_press_usage() {
+    println!("{DIM}  /press — 정부 보도자료 검색·모니터링{RESET}");
+    println!("{DIM}  사용법:{RESET}");
+    println!("{DIM}    /press search <키워드>   키워드로 보도자료 검색{RESET}");
+    println!("{DIM}    /press latest [N]       최신 N건 조회 (기본 5건){RESET}");
+    println!("{DIM}    /press view <번호>      검색 결과 상세 보기{RESET}\n");
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -12992,5 +13299,104 @@ mod tests {
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();
         assert_eq!(content, "익명화 결과");
+    }
+
+    // ── /press tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn press_known_command() {
+        use crate::commands::KNOWN_COMMANDS;
+        assert!(
+            KNOWN_COMMANDS.contains(&"/press"),
+            "/press should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn parse_press_xml_basic() {
+        let xml = r#"
+        <response>
+        <body>
+        <items>
+        <item>
+        <title>테스트 보도자료 제목</title>
+        <SubName1>기획재정부</SubName1>
+        <ModDate>2026-03-21</ModDate>
+        <DetailUrl>https://example.com/press/1</DetailUrl>
+        <SubContent1>경제 정책 관련 보도자료입니다.</SubContent1>
+        </item>
+        <item>
+        <title>두 번째 보도자료</title>
+        <SubName1>과학기술정보통신부</SubName1>
+        <ModDate>2026-03-20</ModDate>
+        <DetailUrl>https://example.com/press/2</DetailUrl>
+        <SubContent1>AI 정책 발표</SubContent1>
+        </item>
+        </items>
+        </body>
+        </response>
+        "#;
+        let results = parse_press_xml(xml);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].title, "테스트 보도자료 제목");
+        assert_eq!(results[0].ministry, "기획재정부");
+        assert_eq!(results[0].date, "2026-03-21");
+        assert_eq!(results[0].link, "https://example.com/press/1");
+        assert!(results[0].summary.contains("경제 정책"));
+        assert_eq!(results[1].title, "두 번째 보도자료");
+        assert_eq!(results[1].ministry, "과학기술정보통신부");
+    }
+
+    #[test]
+    fn parse_press_xml_empty() {
+        let xml = "<response><body><items></items></body></response>";
+        let results = parse_press_xml(xml);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn parse_press_xml_cdata() {
+        let xml = r#"
+        <item>
+        <title><![CDATA[CDATA 제목 테스트]]></title>
+        <SubName1>국토교통부</SubName1>
+        <ModDate>2026-03-19</ModDate>
+        <DetailUrl>https://example.com/3</DetailUrl>
+        <SubContent1><![CDATA[CDATA 내용 테스트]]></SubContent1>
+        </item>
+        "#;
+        let results = parse_press_xml(xml);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "CDATA 제목 테스트");
+        assert_eq!(results[0].summary, "CDATA 내용 테스트");
+    }
+
+    #[test]
+    fn cache_press_release_creates_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("press");
+        // Temporarily override by using the function directly
+        std::fs::create_dir_all(&dir).unwrap();
+        let item = PressRelease {
+            title: "테스트 제목".to_string(),
+            ministry: "테스트부".to_string(),
+            date: "2026-03-21".to_string(),
+            link: "https://example.com".to_string(),
+            summary: "요약".to_string(),
+        };
+        let path = dir.join("press_1.json");
+        let json = serde_json::json!({
+            "title": item.title,
+            "ministry": item.ministry,
+            "date": item.date,
+            "link": item.link,
+            "summary": item.summary,
+        });
+        let content = serde_json::to_string_pretty(&json).unwrap();
+        std::fs::write(&path, &content).unwrap();
+        assert!(path.exists());
+        let loaded: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(loaded["title"], "테스트 제목");
+        assert_eq!(loaded["ministry"], "테스트부");
     }
 }

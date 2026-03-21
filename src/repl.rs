@@ -731,6 +731,10 @@ pub async fn run_repl(
                     .await;
                 continue;
             }
+            s if s == "/press" || s.starts_with("/press ") => {
+                commands::handle_press(input);
+                continue;
+            }
             s if s == "/anonymize" || s.starts_with("/anonymize ") => {
                 commands::handle_anonymize(agent, input, &mut session_total, &agent_config.model)
                     .await;
