@@ -39,3 +39,12 @@ SESSION_PLAN.md 작성 완료.
 - 빌드 + 전체 테스트 통과
 
   ── Task 2 / 4 ──
+완료. `/publish` 커맨드를 구현했습니다:
+
+- **파이프라인**: checklist → proofread → legal → export 순차 실행
+- **법적 리스크 차단**: legal 단계에서 "위험" 키워드 감지 시 파이프라인 즉시 중단, export 건너뜀
+- **요약 리포트**: 각 단계별 ✅ 통과 / ❌ 실패 / 🚨 중단 결과를 한눈에 표시
+- **사용법**: `/publish draft.md` 또는 `/publish --file <경로>`, 인자 없으면 최신 초안 자동 감지
+- **테스트 4개 추가**: 전체 통과/법적 차단/enum 변환/KNOWN_COMMANDS 등록 검증
+
+  ── Task 3 / 4 ──

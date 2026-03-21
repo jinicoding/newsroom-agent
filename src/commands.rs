@@ -93,6 +93,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/coverage",
     "/dashboard",
     "/publish",
+    "/anonymize",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -694,7 +695,7 @@ pub use crate::commands_project::{
     handle_health, handle_index, handle_init, handle_interview, handle_lint, handle_research,
     handle_deadline, handle_draft, handle_embargo, handle_export, handle_news, handle_proofread, handle_quote, handle_run, handle_rewrite, handle_run_usage, handle_sources, handle_stats,
     handle_alert, handle_archive, handle_data, handle_desk, handle_follow, handle_legal, handle_summary, handle_test, handle_timeline, handle_translate, handle_tree,
-    handle_collaborate, handle_coverage, handle_dashboard, handle_publish, handle_trend,
+    handle_anonymize, handle_collaborate, handle_coverage, handle_dashboard, handle_publish, handle_trend,
 };
 
 // Session-related handlers

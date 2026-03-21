@@ -1,7 +1,8 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
 //! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck,
 //! /briefing, /clip, /news, /summary, /stats, /draft, /deadline, /embargo, /export, /quote,
-//! /trend, /archive, /data, /follow, /desk, /coverage, /dashboard, /publish.
+//! /trend, /archive, /data, /follow, /desk, /coverage, /dashboard, /publish,
+//! /anonymize.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -9165,6 +9166,160 @@ pub fn print_publish_report(results: &[(&str, PublishStepResult)]) {
     }
 }
 
+// ── /anonymize ───────────────────────────────────────────────────────────
+
+const ANONYMIZE_DIR: &str = ".journalist/anonymize";
+
+/// Build anonymize result file path with an explicit date string.
+pub fn anonymize_file_path_with_date(slug_source: &str, date: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(slug_source, 50);
+    let filename = if slug.is_empty() {
+        format!("{date}_anonymize.md")
+    } else {
+        format!("{date}_{slug}.md")
+    };
+    std::path::PathBuf::from(ANONYMIZE_DIR).join(filename)
+}
+
+/// Build anonymize result file path with today's date.
+pub fn anonymize_file_path(slug_source: &str) -> std::path::PathBuf {
+    anonymize_file_path_with_date(slug_source, &today_str())
+}
+
+/// Save anonymized result to file. Creates the directory if needed.
+fn save_anonymize(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
+/// Build the anonymize prompt for PII de-identification in Korean news articles.
+pub fn build_anonymize_prompt(article: &str) -> Option<String> {
+    if article.trim().is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        r#"당신은 한국 언론의 취재원 보호 전문가입니다. 아래 기사 텍스트에서 개인식별정보(PII)를 감지하고 익명화 처리하세요.
+
+## 익명화 규칙
+1. **실명** → A씨, B씨, C씨 등 (등장 순서대로 알파벳 부여, 동일 인물은 같은 알파벳 유지)
+2. **소속·기관명** → A기관, B기관, C기관 등 (공공기관·정부부처·국제기구는 유지 가능)
+3. **직함·직위** → 구체적 직함 제거, '관계자', '임원', '직원' 등으로 대체
+4. **전화번호** → [전화번호 삭제]
+5. **이메일** → [이메일 삭제]
+6. **주소** → [주소 삭제] (시·도 단위는 유지 가능)
+7. **주민등록번호·계좌번호 등** → [개인정보 삭제]
+8. **나이·성별**: 기사 맥락에 필수적이면 유지, 아니면 삭제
+9. **공인(대통령, 장관, 국회의원 등 공적 인물)**: 실명 유지 가능
+10. **기업명**: 상장사·대기업은 유지, 중소기업·스타트업은 익명화 고려
+
+## 출력 형식
+
+### 감지된 개인식별정보
+
+| # | 유형 | 원문 | 처리 | 비고 |
+|---|------|------|------|------|
+| 1 | 실명 | 홍길동 | A씨 | 취재원 |
+
+### 익명화된 전문
+(모든 PII가 처리된 전체 기사)
+
+### 익명화 매핑표
+(원문 ↔ 익명화 대응표, 내부 참조용)
+
+| 익명 | 원문 | 유형 |
+|------|------|------|
+| A씨 | 홍길동 | 실명 |
+
+### 주의사항
+(익명화 과정에서 판단이 필요했던 사항, 공인 여부 판단 근거 등)
+
+## 원문
+{article}"#
+    ))
+}
+
+/// Handle the `/anonymize` command: detect and anonymize PII in article text.
+pub async fn handle_anonymize(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/anonymize").unwrap_or("").trim();
+    let (file_path, inline_text) = parse_proofread_args(args);
+
+    // Read article from file or inline
+    let article = if let Some(ref path) = file_path {
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                println!(
+                    "{DIM}  파일 읽기: {path} ({} bytes){RESET}",
+                    content.len()
+                );
+                if inline_text.is_empty() {
+                    content
+                } else {
+                    format!("{content}\n\n{inline_text}")
+                }
+            }
+            Err(e) => {
+                eprintln!("{RED}  파일 읽기 실패: {path} — {e}{RESET}\n");
+                return;
+            }
+        }
+    } else {
+        inline_text
+    };
+
+    let prompt = match build_anonymize_prompt(&article) {
+        Some(p) => p,
+        None => {
+            println!("{DIM}  사용법: /anonymize <기사 텍스트>{RESET}");
+            println!("{DIM}  또는:   /anonymize --file <경로>{RESET}");
+            println!(
+                "{DIM}  기사에서 실명·전화번호·이메일 등 개인식별정보를 감지하고 익명화합니다.{RESET}"
+            );
+            println!("{DIM}  탐사보도 초안 공유, 법률 검토 시 취재원 보호에 활용하세요.{RESET}\n");
+            return;
+        }
+    };
+
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    // Save anonymized result to .journalist/anonymize/
+    if !response.trim().is_empty() {
+        let slug_source = if let Some(ref path) = file_path {
+            std::path::Path::new(path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "anonymize".to_string())
+        } else {
+            let preview: String = article.chars().take(30).collect();
+            if preview.is_empty() {
+                "anonymize".to_string()
+            } else {
+                preview
+            }
+        };
+        let path = anonymize_file_path(&slug_source);
+        match save_anonymize(&path, &response) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 익명화 결과 저장: {}{RESET}\n",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  익명화 결과 저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -12784,5 +12939,58 @@ mod tests {
             KNOWN_COMMANDS.contains(&"/publish"),
             "/publish should be in KNOWN_COMMANDS"
         );
+    }
+
+    // ── /anonymize tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn anonymize_known_command() {
+        use crate::commands::KNOWN_COMMANDS;
+        assert!(
+            KNOWN_COMMANDS.contains(&"/anonymize"),
+            "/anonymize should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn build_anonymize_prompt_basic() {
+        let prompt = build_anonymize_prompt("홍길동 기자가 취재한 내용입니다.");
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert!(p.contains("개인식별정보"));
+        assert!(p.contains("홍길동 기자가 취재한 내용입니다."));
+        assert!(p.contains("익명화 매핑표"));
+    }
+
+    #[test]
+    fn build_anonymize_prompt_empty_returns_none() {
+        assert!(build_anonymize_prompt("").is_none());
+        assert!(build_anonymize_prompt("   ").is_none());
+    }
+
+    #[test]
+    fn anonymize_file_path_with_topic() {
+        let path = anonymize_file_path_with_date("탐사보도초안", "2026-03-21");
+        let s = path.to_string_lossy();
+        assert!(s.contains("anonymize"));
+        assert!(s.contains("2026-03-21"));
+        assert!(s.contains("탐사보도초안"));
+    }
+
+    #[test]
+    fn anonymize_file_path_empty_slug() {
+        let path = anonymize_file_path_with_date("", "2026-03-21");
+        let s = path.to_string_lossy();
+        assert!(s.contains("2026-03-21_anonymize.md"));
+    }
+
+    #[test]
+    fn save_anonymize_creates_dir_and_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("sub").join("anon.md");
+        save_anonymize(&path, "익명화 결과").unwrap();
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "익명화 결과");
     }
 }
