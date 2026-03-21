@@ -10723,6 +10723,165 @@ fn print_calendar_events(events: &[CalendarEvent], today: &str) {
     println!();
 }
 
+// ── /sns — SNS 트렌드 모니터링 ──────────────────────────────────────────
+
+const SNS_CACHE_DIR: &str = ".journalist/sns";
+
+/// Return the cache directory path for SNS results.
+fn sns_cache_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(SNS_CACHE_DIR)
+}
+
+/// Build the cache file path for a given subcommand and keyword.
+fn sns_cache_path(subcmd: &str, keyword: &str) -> std::path::PathBuf {
+    let safe_keyword = keyword
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect::<String>();
+    let date = today_str();
+    sns_cache_dir().join(format!("{subcmd}_{safe_keyword}_{date}.md"))
+}
+
+/// Save SNS result to cache.
+fn sns_save_cache(subcmd: &str, keyword: &str, content: &str) {
+    let path = sns_cache_path(subcmd, keyword);
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&path, content);
+}
+
+/// Build the AI prompt for SNS trend (real-time trending topics).
+fn sns_trend_prompt() -> String {
+    "현재 한국 소셜미디어(X/Twitter, 네이버, 커뮤니티 등)에서 \
+     실시간으로 화제가 되고 있는 트렌드 키워드를 분석해주세요.\n\n\
+     다음 형식으로 정리해주세요:\n\n\
+     ## 실시간 트렌드 키워드 (상위 10개)\n\
+     각 키워드마다:\n\
+     - **키워드**: 이름\n\
+     - **맥락**: 왜 화제인지 1~2문장\n\
+     - **뉴스 가치**: 기사화 가능성 (높음/보통/낮음)\n\
+     - **추천 앵글**: 기자가 접근할 수 있는 취재 각도\n\n\
+     ## 종합 판단\n\
+     오늘 SNS에서 가장 기사 가치가 높은 주제 1~2개를 추천하고 이유를 설명하세요."
+        .to_string()
+}
+
+/// Build the AI prompt for SNS keyword search (public opinion analysis).
+fn sns_search_prompt(keyword: &str) -> String {
+    format!(
+        "키워드 '{keyword}'에 대한 SNS 여론을 분석해주세요.\n\n\
+         다음 항목을 포함해 분석해주세요:\n\n\
+         ## 1. 여론 동향\n\
+         이 키워드에 대해 사람들이 어떤 반응을 보이고 있는지 분석하세요.\n\
+         긍정/부정/중립 비율을 추정하고, 대표적인 의견 유형을 정리하세요.\n\n\
+         ## 2. 주요 논점\n\
+         SNS에서 이 키워드를 둘러싼 주요 쟁점이나 논쟁 포인트를 정리하세요.\n\n\
+         ## 3. 영향력 있는 목소리\n\
+         이 주제에 대해 영향력 있는 의견을 내고 있는 그룹이나 커뮤니티를 파악하세요.\n\n\
+         ## 4. 기자를 위한 시사점\n\
+         이 여론 동향이 기사 작성에 어떤 시사점을 주는지, \
+         독자 반응을 고려한 앵글 제안을 해주세요."
+    )
+}
+
+/// Build the AI prompt for SNS buzz analysis (virality assessment).
+fn sns_buzz_prompt(keyword: &str) -> String {
+    format!(
+        "키워드 '{keyword}'의 화제성을 종합 분석해주세요.\n\n\
+         최근 뉴스 보도와 SNS 반응을 종합해서 다음 항목을 분석해주세요:\n\n\
+         ## 1. 화제성 지수\n\
+         이 키워드의 현재 화제성을 5단계로 평가하세요: \
+         🔥🔥🔥🔥🔥 폭발적 / 🔥🔥🔥🔥 높음 / 🔥🔥🔥 보통 / 🔥🔥 낮음 / 🔥 미미\n\
+         판단 근거를 구체적으로 설명하세요.\n\n\
+         ## 2. 확산 경로\n\
+         이 키워드가 어디서 시작해서 어떻게 확산되고 있는지 추정하세요.\n\
+         (예: 커뮤니티 → SNS → 언론 / 언론 → SNS 확산 등)\n\n\
+         ## 3. 뉴스와 SNS 온도차\n\
+         언론 보도의 논조와 SNS 여론 사이에 차이가 있는지 분석하세요.\n\
+         온도차가 있다면 그것 자체가 기사 소재가 될 수 있습니다.\n\n\
+         ## 4. 지속성 전망\n\
+         이 화제가 일시적 이슈인지, 장기적 관심사로 이어질지 판단하세요.\n\n\
+         ## 5. 기사화 추천\n\
+         지금 기사로 쓸 가치가 있는지, 있다면 어떤 앵글이 좋을지 제안하세요."
+    )
+}
+
+/// Handle the /sns command: SNS trend monitoring.
+pub async fn handle_sns(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/sns").unwrap_or("").trim();
+
+    let subcmd = args.split_whitespace().next().unwrap_or("help");
+    match subcmd {
+        "trend" => {
+            println!("{DIM}  SNS 실시간 트렌드 분석 중...{RESET}");
+            let prompt = sns_trend_prompt();
+            let response = run_prompt(agent, &prompt, session_total, model).await;
+            auto_compact_if_needed(agent);
+            if !response.trim().is_empty() {
+                sns_save_cache("trend", "realtime", &response);
+                println!("{DIM}  💡 결과가 .journalist/sns/에 캐시됩니다.{RESET}\n");
+            }
+        }
+        "search" => {
+            let keyword = args.strip_prefix("search").unwrap_or("").trim();
+            if keyword.is_empty() {
+                println!("{DIM}  사용법: /sns search <키워드>{RESET}");
+                println!("{DIM}  예시:   /sns search 반도체{RESET}\n");
+                return;
+            }
+            println!("{DIM}  '{keyword}' SNS 여론 분석 중...{RESET}");
+            let prompt = sns_search_prompt(keyword);
+            let response = run_prompt(agent, &prompt, session_total, model).await;
+            auto_compact_if_needed(agent);
+            if !response.trim().is_empty() {
+                sns_save_cache("search", keyword, &response);
+                println!("{DIM}  💡 결과가 .journalist/sns/에 캐시됩니다.{RESET}\n");
+            }
+        }
+        "buzz" => {
+            let keyword = args.strip_prefix("buzz").unwrap_or("").trim();
+            if keyword.is_empty() {
+                println!("{DIM}  사용법: /sns buzz <키워드>{RESET}");
+                println!("{DIM}  예시:   /sns buzz AI규제{RESET}\n");
+                return;
+            }
+            println!("{DIM}  '{keyword}' 화제성 분석 중...{RESET}");
+            let prompt = sns_buzz_prompt(keyword);
+            let response = run_prompt(agent, &prompt, session_total, model).await;
+            auto_compact_if_needed(agent);
+            if !response.trim().is_empty() {
+                sns_save_cache("buzz", keyword, &response);
+                println!("{DIM}  💡 결과가 .journalist/sns/에 캐시됩니다.{RESET}\n");
+            }
+        }
+        "help" => {
+            sns_print_help();
+        }
+        other => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {other}{RESET}");
+            sns_print_help();
+        }
+    }
+}
+
+fn sns_print_help() {
+    println!("{DIM}  /sns — SNS 트렌드 모니터링{RESET}");
+    println!("{DIM}  사용법:{RESET}");
+    println!("{DIM}    /sns trend              실시간 트렌드 키워드 분석{RESET}");
+    println!("{DIM}    /sns search <키워드>    키워드의 SNS 여론 분석{RESET}");
+    println!("{DIM}    /sns buzz <키워드>      키워드 화제성 종합 분석{RESET}");
+    println!("{DIM}  예시:{RESET}");
+    println!("{DIM}    /sns trend{RESET}");
+    println!("{DIM}    /sns search 반도체{RESET}");
+    println!("{DIM}    /sns buzz AI규제{RESET}\n");
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -14981,5 +15140,114 @@ mod tests {
         assert_eq!(day_of_week("2026-03-21"), Some(5));
         // 2026-03-16 is a Monday = 0
         assert_eq!(day_of_week("2026-03-16"), Some(0));
+    }
+
+    // ── /sns tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn sns_cache_path_format() {
+        let path = sns_cache_path("search", "반도체");
+        let path_str = path.to_string_lossy();
+        assert!(path_str.starts_with(".journalist/sns/"));
+        assert!(path_str.contains("search_"));
+        assert!(path_str.ends_with(".md"));
+    }
+
+    #[test]
+    fn sns_cache_path_sanitizes_spaces() {
+        let path = sns_cache_path("buzz", "AI 규제");
+        let filename = path.file_name().unwrap().to_string_lossy();
+        // Space should be replaced with underscore
+        assert!(
+            filename.starts_with("buzz_AI_"),
+            "unexpected filename: {filename}"
+        );
+        assert!(!filename.contains(' '));
+    }
+
+    #[test]
+    fn sns_cache_dir_is_correct() {
+        let dir = sns_cache_dir();
+        assert_eq!(dir.to_str().unwrap(), ".journalist/sns");
+    }
+
+    #[test]
+    fn sns_subcommand_routing_help() {
+        // Verify the subcommand parsing logic
+        let input = "/sns";
+        let args = input.strip_prefix("/sns").unwrap_or("").trim();
+        let subcmd = args.split_whitespace().next().unwrap_or("help");
+        assert_eq!(subcmd, "help");
+    }
+
+    #[test]
+    fn sns_subcommand_routing_trend() {
+        let input = "/sns trend";
+        let args = input.strip_prefix("/sns").unwrap_or("").trim();
+        let subcmd = args.split_whitespace().next().unwrap_or("help");
+        assert_eq!(subcmd, "trend");
+    }
+
+    #[test]
+    fn sns_subcommand_routing_search_keyword() {
+        let input = "/sns search 반도체";
+        let args = input.strip_prefix("/sns").unwrap_or("").trim();
+        let subcmd = args.split_whitespace().next().unwrap_or("help");
+        assert_eq!(subcmd, "search");
+        let keyword = args.strip_prefix("search").unwrap_or("").trim();
+        assert_eq!(keyword, "반도체");
+    }
+
+    #[test]
+    fn sns_subcommand_routing_buzz_keyword() {
+        let input = "/sns buzz AI규제";
+        let args = input.strip_prefix("/sns").unwrap_or("").trim();
+        let subcmd = args.split_whitespace().next().unwrap_or("help");
+        assert_eq!(subcmd, "buzz");
+        let keyword = args.strip_prefix("buzz").unwrap_or("").trim();
+        assert_eq!(keyword, "AI규제");
+    }
+
+    #[test]
+    fn sns_search_empty_keyword_detected() {
+        let input = "/sns search";
+        let args = input.strip_prefix("/sns").unwrap_or("").trim();
+        let keyword = args.strip_prefix("search").unwrap_or("").trim();
+        assert!(keyword.is_empty());
+    }
+
+    #[test]
+    fn sns_buzz_empty_keyword_detected() {
+        let input = "/sns buzz";
+        let args = input.strip_prefix("/sns").unwrap_or("").trim();
+        let keyword = args.strip_prefix("buzz").unwrap_or("").trim();
+        assert!(keyword.is_empty());
+    }
+
+    #[test]
+    fn sns_cache_write_and_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sns").join("test_keyword_2026-03-21.md");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&path, "test content").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "test content");
+    }
+
+    #[test]
+    fn sns_prompt_contains_keyword() {
+        let prompt = sns_search_prompt("반도체");
+        assert!(prompt.contains("반도체"));
+        let prompt = sns_buzz_prompt("AI규제");
+        assert!(prompt.contains("AI규제"));
+    }
+
+    #[test]
+    fn sns_trend_prompt_not_empty() {
+        let prompt = sns_trend_prompt();
+        assert!(!prompt.is_empty());
+        assert!(prompt.contains("트렌드"));
     }
 }

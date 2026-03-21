@@ -752,6 +752,11 @@ pub async fn run_repl(
                 commands::handle_calendar(input);
                 continue;
             }
+            s if s == "/sns" || s.starts_with("/sns ") => {
+                commands::handle_sns(agent, input, &mut session_total, &agent_config.model)
+                    .await;
+                continue;
+            }
             s if s == "/anonymize" || s.starts_with("/anonymize ") => {
                 commands::handle_anonymize(agent, input, &mut session_total, &agent_config.model)
                     .await;
