@@ -1040,3 +1040,12 @@ test result: ok. 67 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fin
 - **17개 테스트**: CRUD, 날짜/시각 파싱, 정렬, 색상 인덱스, next_day, 주간 범위 등 검증 완료
 
   ── Task 3 / 4 ──
+완료. `/sns` 커맨드를 구현하고 커밋했습니다:
+
+- **`/sns trend`** — 실시간 SNS 트렌드 키워드 분석 (AI가 현재 화제 키워드 파악)
+- **`/sns search <키워드>`** — 키워드의 SNS 여론 분석 (긍정/부정/중립, 주요 논점)
+- **`/sns buzz <키워드>`** — 화제성 종합 분석 (확산 경로, 뉴스-SNS 온도차, 지속성 전망)
+- 결과는 `.journalist/sns/`에 날짜별로 캐시
+- 테스트 11개 추가 (인자 파싱, 하위 명령 라우팅, 캐시 경로 검증 등)
+
+  ── Task 4 / 4 ──

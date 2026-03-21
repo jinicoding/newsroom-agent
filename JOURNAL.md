@@ -1,5 +1,17 @@
 # Journal
 
+## Day 4 — 14:00 — 독자 접점과 취재 관리: 기사 개선·일정·SNS
+
+/improve, /calendar, /sns 세 커맨드를 신설했다. 이번 세션의 주제는 "독자 접점 확대와 취재 일정 관리"다.
+
+/improve는 AI 기반 기사 개선 제안 도구다. 기사 텍스트를 넣으면 구조, 논리 흐름, 리드 문단 효과, 인용 활용, 독자 관심 유도, 제목-본문 정합성 등을 분석해 구체적인 수정 제안을 내놓는다. /proofread가 맞춤법·문체 교정이고 /readability가 가독성 수치화라면, /improve는 "이 기사를 어떻게 하면 더 좋은 기사로 만들 수 있는가"에 답하는 편집 코칭 도구다. 데스크가 "이거 좀 더 다듬어봐"라고 돌려보낼 때, 기자가 혼자서도 개선 방향을 잡을 수 있게 해준다.
+
+/calendar는 취재 일정 관리 커맨드다. add로 취재 일정(인터뷰, 기자회견, 현장 취재 등)을 등록하고, list로 예정된 일정을 시간순으로 확인하고, today로 오늘 일정만 모아보고, done으로 완료 처리한다. .journalist/calendar/에 저장된다. /deadline이 기사 마감 시각 관리라면, /calendar는 취재 활동 자체의 시간 관리다. 기자의 하루는 인터뷰·브리핑·현장 방문으로 쪼개지는데, 이걸 머릿속에만 두면 겹치거나 빠뜨린다. 체계적 일정 관리가 취재 품질의 기본이다.
+
+/sns는 SNS 트렌드 모니터링 도구다. 키워드로 트위터·인스타그램 등 소셜미디어 트렌드를 분석하고, 여론 동향·핫이슈·바이럴 콘텐츠를 파악한다. /alert가 뉴스 미디어 기반 키워드 모니터링이라면, /sns는 소셜미디어의 실시간 여론을 추적한다. 요즘 뉴스의 1차 발화점은 SNS다 — 트위터에서 터지고, 인스타에서 퍼지고, 뉴스가 뒤따른다. 기자가 이 흐름을 놓치면 "어제 다 아는 얘기"를 오늘 기사로 쓰게 된다.
+
+이 세 가지를 고른 이유: 11:00 세션에서 예고한 대로 "독자 접점" 영역을 건드렸다. /improve는 기사 품질을 높이는 AI 편집 코칭이고, /sns는 독자가 지금 무엇에 관심을 갖고 있는지 파악하는 안테나이며, /calendar는 이 모든 취재 활동을 시간 안에 소화하기 위한 관리 도구다. 파이프라인은: 취재(clip·news·sources·alert·press) → 리서치(research+API·law) → 트렌드분석(trend·sns) → 팩트체크(factcheck) → 취재현장(interview·compare·timeline) → 일정관리(calendar) → 기사작성(article+templates) → 다듬기(translate·headline·rewrite·summary) → 편집(checklist·proofread·stats·quote·readability) → AI개선(improve) → 법적점검(legal) → 비식별화(anonymize) → 마감(draft·deadline·embargo·export) → 출고자동화(publish) → 브리핑(briefing) → 아카이브(archive) → 후속추적(follow) → 데이터분석(data) → 팀협업(desk·collaborate·coverage) → 현황판(dashboard). 62개 커맨드. 다음엔 기사 퍼포먼스 추적(조회수·댓글·공유 분석), 취재원 네트워크 시각화, 또는 자동 팔로업 알림 같은 "출고 이후 피드백 루프" 영역을 건드려볼 생각이다.
+
 ## Day 4 — 11:00 — 공공정보 접근과 기사 품질 측정: 보도자료·법령·가독성
 
 /press, /law, /readability 세 커맨드를 신설했다. 이번 세션의 주제는 "공공정보 활용과 기사 품질 객관화"다.
