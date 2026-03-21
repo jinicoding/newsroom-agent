@@ -1099,3 +1099,12 @@ SESSION_PLAN.md를 작성했습니다. 요약:
   계획된 태스크: 4개
 
   ── Task 1 / 4 ──
+완료. `/performance` 커맨드를 구현하고 커밋했습니다.
+
+**구현 내용:**
+- `src/commands_project.rs`: `handle_performance` 함수 및 하위 명령 5개 (`add`, `update`, `list`, `top`, `report`)
+- `src/commands.rs`: KNOWN_COMMANDS에 `/performance` 추가, PERFORMANCE_SUBCOMMANDS 탭 완성, re-export
+- `src/repl.rs`: 디스패치 라우팅 추가
+- 테스트 10건 모두 통과 (CRUD, 정렬, JSON 직렬화, 인자 파싱)
+
+  ── Task 2 / 4 ──

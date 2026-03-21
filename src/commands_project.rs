@@ -10882,6 +10882,188 @@ fn sns_print_help() {
     println!("{DIM}    /sns buzz AI규제{RESET}\n");
 }
 
+// ── /network — 취재원 네트워크 분석 ──────────────────────────────────
+
+/// Handle the /network command: analyze source network strategically.
+pub async fn handle_network(
+    agent: &mut yoagent::Agent,
+    input: &str,
+    session_total: &mut yoagent::Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/network").unwrap_or("").trim();
+
+    match args.split_whitespace().next().unwrap_or("map") {
+        "map" => network_map(),
+        "gaps" => network_gaps(),
+        "suggest" => {
+            let topic = args.strip_prefix("suggest").unwrap_or("").trim();
+            if topic.is_empty() {
+                println!(
+                    "{DIM}  사용법: /network suggest <주제>{RESET}"
+                );
+                println!(
+                    "{DIM}  예시: /network suggest 반도체 수출규제{RESET}\n"
+                );
+            } else {
+                network_suggest(agent, topic, session_total, model).await;
+            }
+        }
+        other => {
+            println!("{DIM}  알 수 없는 하위 명령: {other}{RESET}");
+            network_usage();
+        }
+    }
+}
+
+/// Compute beat distribution from sources. Returns a map of beat -> count.
+fn compute_beat_distribution(sources: &[serde_json::Value]) -> std::collections::HashMap<String, usize> {
+    let mut dist: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for s in sources {
+        let beat = s["beat"].as_str().unwrap_or("").trim();
+        let key = if beat.is_empty() {
+            "(미지정)".to_string()
+        } else {
+            beat.to_string()
+        };
+        *dist.entry(key).or_insert(0) += 1;
+    }
+    dist
+}
+
+/// Identify weak beats: beats with fewer sources than the threshold.
+fn find_gap_beats(
+    dist: &std::collections::HashMap<String, usize>,
+    threshold: usize,
+) -> Vec<(String, usize)> {
+    let mut gaps: Vec<(String, usize)> = dist
+        .iter()
+        .filter(|(_, &count)| count <= threshold)
+        .map(|(beat, &count)| (beat.clone(), count))
+        .collect();
+    gaps.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+    gaps
+}
+
+/// Display beat distribution matrix.
+fn network_map() {
+    let sources = load_sources();
+    if sources.is_empty() {
+        println!("{DIM}  취재원 DB가 비어 있습니다.");
+        println!("  /sources add 로 취재원을 먼저 등록하세요.{RESET}\n");
+        return;
+    }
+
+    let dist = compute_beat_distribution(&sources);
+    let mut sorted: Vec<(&String, &usize)> = dist.iter().collect();
+    sorted.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+
+    let max_count = sorted.first().map(|(_, &c)| c).unwrap_or(1);
+
+    println!("{DIM}  ── 취재원 네트워크 분포 (총 {} 명) ──\n", sources.len());
+    for (beat, &count) in &sorted {
+        let bar_len = if max_count > 0 {
+            (count * 20) / max_count
+        } else {
+            0
+        };
+        let bar: String = "█".repeat(bar_len.max(1));
+        let strength = if count >= 5 {
+            "강"
+        } else if count >= 3 {
+            "보통"
+        } else {
+            "약"
+        };
+        println!("  {:<10} {:<20} {} 명 ({})", beat, bar, count, strength);
+    }
+    println!("{RESET}");
+}
+
+/// Identify and report weak areas in the network.
+fn network_gaps() {
+    let sources = load_sources();
+    if sources.is_empty() {
+        println!("{DIM}  취재원 DB가 비어 있습니다.");
+        println!("  /sources add 로 취재원을 먼저 등록하세요.{RESET}\n");
+        return;
+    }
+
+    let dist = compute_beat_distribution(&sources);
+    let gaps = find_gap_beats(&dist, 2);
+
+    if gaps.is_empty() {
+        println!("{DIM}  모든 분야에 3명 이상의 취재원이 있습니다. 네트워크가 양호합니다.{RESET}\n");
+        return;
+    }
+
+    println!("{DIM}  ── 취약 분야 경고 ──\n");
+    for (beat, count) in &gaps {
+        let level = if *count == 0 {
+            "⚠ 없음"
+        } else if *count == 1 {
+            "⚠ 매우 부족"
+        } else {
+            "△ 부족"
+        };
+        println!("  {:<10} {} 명 — {}", beat, count, level);
+    }
+    println!(
+        "\n  총 {} 개 분야에서 보강이 필요합니다.",
+        gaps.len()
+    );
+    println!("  /sources add <이름> <소속> <연락처> --beat <분야> 로 보강하세요.{RESET}\n");
+}
+
+/// AI-powered suggestion for source types needed for a topic.
+async fn network_suggest(
+    agent: &mut yoagent::Agent,
+    topic: &str,
+    session_total: &mut yoagent::Usage,
+    model: &str,
+) {
+    let sources = load_sources();
+    let dist = compute_beat_distribution(&sources);
+    let dist_summary: String = dist
+        .iter()
+        .map(|(beat, count)| format!("{}: {} 명", beat, count))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let prompt = network_suggest_prompt(topic, &dist_summary);
+
+    println!("{DIM}  '{topic}' 취재에 필요한 취재원 유형을 분석합니다...{RESET}\n");
+
+    run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+}
+
+/// Build the prompt for network suggest.
+fn network_suggest_prompt(topic: &str, dist_summary: &str) -> String {
+    format!(
+        "당신은 기자의 취재원 네트워크 전략 어드바이저입니다.\n\n\
+         주제: {topic}\n\n\
+         현재 취재원 네트워크 현황: {dist_summary}\n\n\
+         위 주제를 취재하기 위해 필요한 취재원 유형을 제안하세요:\n\
+         1. 어떤 분야/직종의 취재원이 필요한지 (최소 3~5개 유형)\n\
+         2. 각 유형별 역할 (왜 필요한지)\n\
+         3. 현재 네트워크에서 이미 보유한 유형과 부족한 유형 식별\n\
+         4. 취재원 접근 전략 (어떻게 연결할 수 있는지)\n\n\
+         한국어로 답변하세요. 구체적이고 실용적인 제안을 해주세요."
+    )
+}
+
+fn network_usage() {
+    println!("{DIM}  사용법: /network [map|gaps|suggest <주제>]\n");
+    println!("  map     — beat별 취재원 분포 매트릭스");
+    println!("  gaps    — 취약 분야 식별");
+    println!("  suggest — 특정 주제 취재에 필요한 취재원 유형 AI 제안\n");
+    println!("  예시:");
+    println!("    /network map");
+    println!("    /network gaps");
+    println!("    /network suggest 반도체 수출규제{RESET}\n");
+}
+
 // ── /performance — 기사 퍼포먼스 추적 ──────────────────────────────────
 
 const PERFORMANCE_FILE: &str = ".journalist/performance.json";
@@ -15675,5 +15857,66 @@ mod tests {
         assert_eq!(views, None);
         assert_eq!(comments, None);
         assert_eq!(shares, None);
+    }
+
+    // ── /network tests ──
+
+    #[test]
+    fn compute_beat_distribution_basic() {
+        let sources = vec![
+            serde_json::json!({"name": "김기자", "org": "A", "contact": "010", "note": "", "beat": "경제"}),
+            serde_json::json!({"name": "이기자", "org": "B", "contact": "010", "note": "", "beat": "경제"}),
+            serde_json::json!({"name": "박기자", "org": "C", "contact": "010", "note": "", "beat": "정치"}),
+            serde_json::json!({"name": "최기자", "org": "D", "contact": "010", "note": "", "beat": ""}),
+        ];
+        let dist = compute_beat_distribution(&sources);
+        assert_eq!(dist.get("경제"), Some(&2));
+        assert_eq!(dist.get("정치"), Some(&1));
+        assert_eq!(dist.get("(미지정)"), Some(&1));
+        assert_eq!(dist.len(), 3);
+    }
+
+    #[test]
+    fn compute_beat_distribution_empty() {
+        let sources: Vec<serde_json::Value> = vec![];
+        let dist = compute_beat_distribution(&sources);
+        assert!(dist.is_empty());
+    }
+
+    #[test]
+    fn find_gap_beats_identifies_weak_areas() {
+        let mut dist = std::collections::HashMap::new();
+        dist.insert("경제".to_string(), 5);
+        dist.insert("정치".to_string(), 2);
+        dist.insert("사회".to_string(), 1);
+        dist.insert("국제".to_string(), 0);
+
+        // threshold=2: include beats with count <= 2
+        let gaps = find_gap_beats(&dist, 2);
+        assert_eq!(gaps.len(), 3);
+        // sorted by count ascending
+        assert_eq!(gaps[0].0, "국제");
+        assert_eq!(gaps[0].1, 0);
+        assert_eq!(gaps[1].0, "사회");
+        assert_eq!(gaps[1].1, 1);
+        assert_eq!(gaps[2].0, "정치");
+        assert_eq!(gaps[2].1, 2);
+    }
+
+    #[test]
+    fn find_gap_beats_none_when_all_strong() {
+        let mut dist = std::collections::HashMap::new();
+        dist.insert("경제".to_string(), 5);
+        dist.insert("정치".to_string(), 3);
+        let gaps = find_gap_beats(&dist, 2);
+        assert!(gaps.is_empty());
+    }
+
+    #[test]
+    fn network_suggest_prompt_contains_topic() {
+        let prompt = network_suggest_prompt("반도체 수출규제", "경제: 3 명, 정치: 1 명");
+        assert!(prompt.contains("반도체 수출규제"));
+        assert!(prompt.contains("경제: 3 명"));
+        assert!(prompt.contains("취재원"));
     }
 }
