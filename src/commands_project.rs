@@ -2,7 +2,7 @@
 //! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck,
 //! /briefing, /clip, /news, /summary, /stats, /draft, /deadline, /embargo, /export, /quote,
 //! /trend, /archive, /data, /follow, /desk, /coverage, /dashboard, /publish,
-//! /anonymize, /press, /law.
+//! /anonymize, /press, /law, /readability.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -9819,6 +9819,300 @@ pub fn handle_law(input: &str) {
     }
 }
 
+// ── /readability ────────────────────────────────────────────────────────
+
+/// Readability metrics for Korean article text.
+#[derive(Debug, PartialEq)]
+pub struct ReadabilityMetrics {
+    /// Average sentence length in characters.
+    pub avg_sentence_len: f64,
+    /// Ratio of long sentences (over 80 chars), 0.0–1.0.
+    pub long_sentence_ratio: f64,
+    /// Average number of sentences per paragraph.
+    pub avg_paragraph_len: f64,
+    /// Estimated passive voice ratio, 0.0–1.0.
+    pub passive_ratio: f64,
+    /// Jargon density (ratio of jargon-like words), 0.0–1.0.
+    pub jargon_density: f64,
+    /// Overall grade: A (best) through F (worst).
+    pub grade: char,
+    /// Total number of sentences detected.
+    pub sentence_count: usize,
+    /// Total number of paragraphs detected.
+    pub paragraph_count: usize,
+}
+
+/// Split Korean text into sentences using sentence-ending markers.
+///
+/// Korean sentences typically end with 다, 요, 죠, 음, 임 followed by period/question/exclamation,
+/// or just period/question/exclamation on their own.
+fn split_korean_sentences(text: &str) -> Vec<String> {
+    let mut sentences = Vec::new();
+    let mut current = String::new();
+
+    for ch in text.chars() {
+        current.push(ch);
+        if ch == '.' || ch == '!' || ch == '?' || ch == '。' {
+            let trimmed = current.trim().to_string();
+            if !trimmed.is_empty() {
+                sentences.push(trimmed);
+            }
+            current.clear();
+        }
+    }
+    // Remaining text without terminal punctuation counts as a sentence if non-empty
+    let trimmed = current.trim().to_string();
+    if !trimmed.is_empty() {
+        sentences.push(trimmed);
+    }
+    sentences
+}
+
+/// Split text into paragraphs (groups of non-empty lines separated by blank lines).
+fn split_paragraphs(text: &str) -> Vec<String> {
+    let mut paragraphs = Vec::new();
+    let mut current = String::new();
+
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            let trimmed = current.trim().to_string();
+            if !trimmed.is_empty() {
+                paragraphs.push(trimmed);
+            }
+            current.clear();
+        } else {
+            if !current.is_empty() {
+                current.push('\n');
+            }
+            current.push_str(line);
+        }
+    }
+    let trimmed = current.trim().to_string();
+    if !trimmed.is_empty() {
+        paragraphs.push(trimmed);
+    }
+    paragraphs
+}
+
+/// Korean passive voice suffixes.
+const PASSIVE_SUFFIXES: &[&str] = &[
+    "되었다", "됐다", "되었습니다", "됐습니다", "되었으며", "되었고",
+    "된다", "됩니다", "되고", "되며", "되어", "돼",
+    "받았다", "받았습니다", "받게", "받는다",
+    "당했다", "당했습니다", "당하고",
+];
+
+/// Common jargon / technical terms frequently found in Korean news articles.
+const JARGON_TERMS: &[&str] = &[
+    "거버넌스", "컨센서스", "패러다임", "이니셔티브", "로드맵",
+    "리스크", "레버리지", "포트폴리오", "밸류에이션", "모멘텀",
+    "인프라", "플랫폼", "컴플라이언스", "가이드라인", "프레임워크",
+    "시너지", "이해관계자", "스테이크홀더", "디폴트", "모라토리엄",
+    "유동성", "변동성", "펀더멘털", "스프레드", "디커플링",
+];
+
+/// Compute readability metrics for Korean article text.
+pub fn compute_readability(text: &str) -> ReadabilityMetrics {
+    let sentences = split_korean_sentences(text);
+    let paragraphs = split_paragraphs(text);
+
+    let sentence_count = sentences.len();
+    let paragraph_count = paragraphs.len();
+
+    // Average sentence length (character count excluding spaces)
+    let avg_sentence_len = if sentence_count > 0 {
+        let total_chars: usize = sentences
+            .iter()
+            .map(|s| s.chars().filter(|c| !c.is_whitespace()).count())
+            .sum();
+        total_chars as f64 / sentence_count as f64
+    } else {
+        0.0
+    };
+
+    // Long sentence ratio (over 80 chars excluding spaces)
+    let long_sentence_ratio = if sentence_count > 0 {
+        let long_count = sentences
+            .iter()
+            .filter(|s| s.chars().filter(|c| !c.is_whitespace()).count() > 80)
+            .count();
+        long_count as f64 / sentence_count as f64
+    } else {
+        0.0
+    };
+
+    // Average paragraph length in sentences
+    let avg_paragraph_len = if paragraph_count > 0 {
+        let para_sentence_counts: Vec<usize> = paragraphs
+            .iter()
+            .map(|p| split_korean_sentences(p).len())
+            .collect();
+        let total: usize = para_sentence_counts.iter().sum();
+        total as f64 / paragraph_count as f64
+    } else {
+        0.0
+    };
+
+    // Passive voice ratio
+    let passive_ratio = if sentence_count > 0 {
+        let passive_count = sentences
+            .iter()
+            .filter(|s| PASSIVE_SUFFIXES.iter().any(|suf| s.contains(suf)))
+            .count();
+        passive_count as f64 / sentence_count as f64
+    } else {
+        0.0
+    };
+
+    // Jargon density: count jargon occurrences per word
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let word_count = words.len();
+    let jargon_density = if word_count > 0 {
+        let jargon_count = words
+            .iter()
+            .filter(|w| JARGON_TERMS.iter().any(|j| w.contains(j)))
+            .count();
+        jargon_count as f64 / word_count as f64
+    } else {
+        0.0
+    };
+
+    // Grade: score 0–100, then map to A–F
+    // Lower avg sentence len is better, lower long_sentence_ratio is better, etc.
+    let mut score = 100.0_f64;
+
+    // Penalty for long average sentence (ideal: ~30 chars for Korean)
+    if avg_sentence_len > 30.0 {
+        score -= (avg_sentence_len - 30.0) * 0.5;
+    }
+
+    // Penalty for long sentences
+    score -= long_sentence_ratio * 30.0;
+
+    // Penalty for long paragraphs (ideal: 2–4 sentences)
+    if avg_paragraph_len > 4.0 {
+        score -= (avg_paragraph_len - 4.0) * 5.0;
+    }
+
+    // Penalty for passive voice
+    score -= passive_ratio * 20.0;
+
+    // Penalty for jargon
+    score -= jargon_density * 30.0;
+
+    let score = score.max(0.0).min(100.0);
+    let grade = if score >= 90.0 {
+        'A'
+    } else if score >= 80.0 {
+        'B'
+    } else if score >= 70.0 {
+        'C'
+    } else if score >= 60.0 {
+        'D'
+    } else if score >= 50.0 {
+        'E'
+    } else {
+        'F'
+    };
+
+    ReadabilityMetrics {
+        avg_sentence_len,
+        long_sentence_ratio,
+        avg_paragraph_len,
+        passive_ratio,
+        jargon_density,
+        grade,
+        sentence_count,
+        paragraph_count,
+    }
+}
+
+/// Handle `/readability [파일경로]` — show readability analysis for article text.
+pub fn handle_readability(input: &str) {
+    let arg = input.strip_prefix("/readability").unwrap_or("").trim();
+
+    let (path, content) = if arg.is_empty() {
+        match find_latest_draft() {
+            Some(p) => match std::fs::read_to_string(&p) {
+                Ok(c) => (p.to_string_lossy().to_string(), c),
+                Err(e) => {
+                    eprintln!("{RED}  파일 읽기 실패: {e}{RESET}\n");
+                    return;
+                }
+            },
+            None => {
+                eprintln!("{DIM}  분석할 파일이 없습니다. 경로를 지정하거나 /article로 초안을 먼저 작성하세요.{RESET}\n");
+                return;
+            }
+        }
+    } else {
+        match std::fs::read_to_string(arg) {
+            Ok(c) => (arg.to_string(), c),
+            Err(e) => {
+                eprintln!("{RED}  파일 읽기 실패 ({arg}): {e}{RESET}\n");
+                return;
+            }
+        }
+    };
+
+    let m = compute_readability(&content);
+
+    println!("{BOLD}  📖 가독성 분석: {path}{RESET}");
+    println!("{DIM}  ──────────────────────────────{RESET}");
+    println!("  종합 등급             {}", grade_colored(m.grade));
+    println!("  문장 수               {}", m.sentence_count);
+    println!("  문단 수               {}", m.paragraph_count);
+    println!(
+        "  평균 문장 길이         {:.1}자",
+        m.avg_sentence_len
+    );
+    println!(
+        "  긴 문장 비율 (>80자)  {:.1}%",
+        m.long_sentence_ratio * 100.0
+    );
+    println!(
+        "  평균 문단 길이         {:.1}문장",
+        m.avg_paragraph_len
+    );
+    println!(
+        "  수동태 추정 비율       {:.1}%",
+        m.passive_ratio * 100.0
+    );
+    println!(
+        "  전문 용어 밀도         {:.1}%",
+        m.jargon_density * 100.0
+    );
+    println!();
+
+    // Tips
+    if m.long_sentence_ratio > 0.3 {
+        println!("  {YELLOW}💡 긴 문장이 많습니다. 80자 이하로 줄이면 가독성이 높아집니다.{RESET}");
+    }
+    if m.passive_ratio > 0.3 {
+        println!(
+            "  {YELLOW}💡 수동태 표현이 많습니다. 능동태로 바꾸면 더 명확해집니다.{RESET}"
+        );
+    }
+    if m.jargon_density > 0.05 {
+        println!("  {YELLOW}💡 전문 용어가 많습니다. 독자 눈높이에 맞게 풀어쓰는 것을 권장합니다.{RESET}");
+    }
+    if m.avg_paragraph_len > 5.0 {
+        println!("  {YELLOW}💡 문단이 깁니다. 3~4문장 단위로 끊으면 읽기 편합니다.{RESET}");
+    }
+    println!();
+}
+
+/// Return a grade string with color.
+fn grade_colored(grade: char) -> String {
+    match grade {
+        'A' => format!("{GREEN}{BOLD}{grade}{RESET}"),
+        'B' => format!("{GREEN}{grade}{RESET}"),
+        'C' => format!("{YELLOW}{grade}{RESET}"),
+        'D' => format!("{YELLOW}{grade}{RESET}"),
+        _ => format!("{RED}{grade}{RESET}"),
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -13694,5 +13988,77 @@ mod tests {
         // Should print usage, not panic
         handle_law("/law");
         std::env::remove_var("LAW_API_KEY");
+    }
+
+    // ── /readability tests ──
+
+    #[test]
+    fn readability_empty_text() {
+        let m = compute_readability("");
+        assert_eq!(m.sentence_count, 0);
+        assert_eq!(m.paragraph_count, 0);
+        assert_eq!(m.avg_sentence_len, 0.0);
+        assert_eq!(m.grade, 'A'); // empty text = perfect score
+    }
+
+    #[test]
+    fn readability_simple_short_sentences() {
+        let text = "경제가 성장했다. 물가가 안정됐다. 고용이 늘었다.";
+        let m = compute_readability(text);
+        assert_eq!(m.sentence_count, 3);
+        assert!(m.avg_sentence_len < 30.0);
+        assert_eq!(m.long_sentence_ratio, 0.0);
+        assert!(m.grade == 'A' || m.grade == 'B');
+    }
+
+    #[test]
+    fn readability_detects_passive() {
+        let text = "법안이 통과되었다. 예산이 삭감되었다. 결과가 발표되었다.";
+        let m = compute_readability(text);
+        assert!(m.passive_ratio > 0.5); // majority are passive
+    }
+
+    #[test]
+    fn readability_detects_jargon() {
+        let text = "거버넌스 체계와 컨센서스 형성이 중요하다. 패러다임 전환이 필요하다. 이니셔티브를 추진해야 한다.";
+        let m = compute_readability(text);
+        assert!(m.jargon_density > 0.05);
+    }
+
+    #[test]
+    fn readability_long_sentence_detection() {
+        // Create a sentence with >80 non-space characters
+        let long = "가".repeat(90);
+        let text = format!("{long}. 짧다.");
+        let m = compute_readability(&text);
+        assert_eq!(m.sentence_count, 2);
+        assert!(m.long_sentence_ratio > 0.4); // 1 out of 2 is long
+    }
+
+    #[test]
+    fn readability_paragraph_count() {
+        let text = "첫 번째 문단이다.\n\n두 번째 문단이다.\n\n세 번째 문단이다.";
+        let m = compute_readability(text);
+        assert_eq!(m.paragraph_count, 3);
+    }
+
+    #[test]
+    fn readability_grade_mapping() {
+        // Very short, simple text → high score → good grade
+        let text = "안녕하다.";
+        let m = compute_readability(text);
+        assert!(m.grade == 'A' || m.grade == 'B');
+    }
+
+    #[test]
+    fn split_korean_sentences_basic() {
+        let sentences = split_korean_sentences("첫 문장이다. 두 번째다! 세 번째다?");
+        assert_eq!(sentences.len(), 3);
+    }
+
+    #[test]
+    fn split_paragraphs_basic() {
+        let paras = split_paragraphs("문단1\n줄2\n\n문단2\n\n문단3");
+        assert_eq!(paras.len(), 3);
     }
 }

@@ -96,6 +96,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/anonymize",
     "/press",
     "/law",
+    "/readability",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -383,6 +384,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /stats [파일경로]      기사 통계 (글자/단어/문장/문단 수, 읽기 시간)\n",
+    );
+    out.push_str(
+        "  /readability [파일]    가독성 점수 (문장 길이, 수동태, 전문 용어, 등급)\n",
     );
     out.push_str(
         "  /draft <sub> <제목>    기사 초안 버전 관리 (save|list|load|diff)\n",
@@ -701,7 +705,7 @@ pub use crate::commands_project::{
     handle_health, handle_index, handle_init, handle_interview, handle_lint, handle_research,
     handle_deadline, handle_draft, handle_embargo, handle_export, handle_news, handle_proofread, handle_quote, handle_run, handle_rewrite, handle_run_usage, handle_sources, handle_stats,
     handle_alert, handle_archive, handle_data, handle_desk, handle_follow, handle_legal, handle_summary, handle_test, handle_timeline, handle_translate, handle_tree,
-    handle_anonymize, handle_collaborate, handle_coverage, handle_dashboard, handle_law, handle_press, handle_publish, handle_trend,
+    handle_anonymize, handle_collaborate, handle_coverage, handle_dashboard, handle_law, handle_press, handle_publish, handle_readability, handle_trend,
 };
 
 // Session-related handlers

@@ -739,6 +739,10 @@ pub async fn run_repl(
                 commands::handle_law(input);
                 continue;
             }
+            s if s == "/readability" || s.starts_with("/readability ") => {
+                commands::handle_readability(input);
+                continue;
+            }
             s if s == "/anonymize" || s.starts_with("/anonymize ") => {
                 commands::handle_anonymize(agent, input, &mut session_total, &agent_config.model)
                     .await;

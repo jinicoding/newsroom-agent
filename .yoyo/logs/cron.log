@@ -949,3 +949,12 @@ SESSION_PLAN.md 작성 완료.
 - `cargo build` + `cargo test` 67건 전체 통과
 
   ── Task 2 / 4 ──
+완료. `/law` 커맨드를 구현하고 커밋했습니다.
+
+**구현 내용:**
+- `src/commands_project.rs`: `handle_law()` 핸들러 + `fetch_law_terms()` API 호출 + `parse_law_response()` JSON 파싱 + `display_law_results()` 출력
+- `src/commands.rs`: `KNOWN_COMMANDS`에 `/law` 추가, `LAW_SUBCOMMANDS` (term, search) 탭 완성, re-export 추가
+- `src/repl.rs`: `/law` 디스패치 추가
+- 테스트 6건: JSON 파싱 (배열/단일/빈/잘못된 형식/대체 필드명), API 키 미설정 시 안전 처리
+
+  ── Task 3 / 4 ──
