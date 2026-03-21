@@ -10113,6 +10113,202 @@ fn grade_colored(grade: char) -> String {
     }
 }
 
+// ── /improve ────────────────────────────────────────────────────────────
+
+/// Directory for improve feedback results.
+const IMPROVE_DIR: &str = ".journalist/improve";
+
+/// Parse /improve arguments. Supports `--file <path>` and inline text.
+/// Returns (file_path, remaining_text).
+pub fn parse_improve_args(args: &str) -> (Option<String>, String) {
+    // Reuse same parsing logic as proofread
+    parse_proofread_args(args)
+}
+
+/// Build the improve prompt with editorial feedback criteria.
+pub fn build_improve_prompt(article: &str) -> Option<String> {
+    if article.trim().is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        r#"당신은 한국 종합일간지의 베테랑 편집데스크입니다. 아래 기사를 읽고, 이 기사를 더 좋은 기사로 만들기 위한 구체적 개선안을 제시하세요.
+
+## 분석 항목
+
+다음 5개 항목 각각에 대해 **(1) 현재 상태 평가** (10점 만점)와 **(2) 구체적 수정 제안**을 제시하세요.
+
+### 1. 리드문 흡인력
+- 첫 문단이 독자의 관심을 끌어당기는가?
+- 핵심 뉴스 가치가 첫 2~3문장에 드러나는가?
+- 더 강력한 리드를 쓸 수 있다면 대안을 제시하세요.
+
+### 2. 문단 전환 자연스러움
+- 문단과 문단 사이의 논리적 흐름이 자연스러운가?
+- 비약이나 끊김이 있는 곳을 지적하고, 연결 방안을 제안하세요.
+
+### 3. 인용문 활용도
+- 인용문이 기사의 신뢰도와 생동감을 높이고 있는가?
+- 인용문이 부족하거나 과다한 곳, 더 효과적인 배치 방법을 제안하세요.
+- 인용문이 없다면, 어떤 취재원의 발언이 필요한지 제안하세요.
+
+### 4. 구체성·수치 뒷받침
+- 주장이나 서술에 구체적 수치·데이터·사례가 뒷받침되는가?
+- 추상적 서술을 구체화할 수 있는 포인트를 지적하세요.
+- 추가로 필요한 데이터나 팩트를 제안하세요.
+
+### 5. 결론/마무리 완성도
+- 기사의 마무리가 독자에게 여운이나 시사점을 남기는가?
+- 미래 전망, 의미 부여, 독자 행동 유도 등 더 나은 마무리 방안을 제안하세요.
+
+## 출력 형식
+
+### 📊 종합 평가
+| 항목 | 점수 | 한줄 평가 |
+|------|------|-----------|
+| 리드문 흡인력 | ?/10 | ... |
+| 문단 전환 | ?/10 | ... |
+| 인용문 활용 | ?/10 | ... |
+| 구체성·수치 | ?/10 | ... |
+| 결론 완성도 | ?/10 | ... |
+| **종합** | **?/50** | ... |
+
+### 📝 항목별 상세 피드백
+(각 항목에 대해: 현재 상태 → 문제점 → 구체적 수정 제안)
+
+### ✍️ 핵심 개선 Top 3
+(가장 효과가 클 3가지 수정 사항을 우선순위로)
+
+## 원문
+{article}"#
+    ))
+}
+
+/// Build improve result file path with an explicit date string.
+pub fn improve_file_path_with_date(slug_source: &str, date: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(slug_source, 50);
+    let filename = if slug.is_empty() {
+        format!("{date}_improve.md")
+    } else {
+        format!("{date}_{slug}.md")
+    };
+    std::path::PathBuf::from(IMPROVE_DIR).join(filename)
+}
+
+/// Build improve result file path with today's date.
+pub fn improve_file_path(slug_source: &str) -> std::path::PathBuf {
+    improve_file_path_with_date(slug_source, &today_str())
+}
+
+/// Save improve result to file. Creates the directory if needed.
+fn save_improve(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
+/// Handle the /improve command: AI-based article improvement suggestions.
+pub async fn handle_improve(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/improve").unwrap_or("").trim();
+    let (file_path, inline_text) = parse_improve_args(args);
+
+    // Read article from file, latest draft, or inline text
+    let article = if let Some(ref path) = file_path {
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                println!(
+                    "{DIM}  파일 읽기: {path} ({} bytes){RESET}",
+                    content.len()
+                );
+                if inline_text.is_empty() {
+                    content
+                } else {
+                    format!("{content}\n\n{inline_text}")
+                }
+            }
+            Err(e) => {
+                eprintln!("{RED}  파일 읽기 실패: {path} — {e}{RESET}\n");
+                return;
+            }
+        }
+    } else if inline_text.is_empty() {
+        // Try latest draft
+        match find_latest_draft() {
+            Some(p) => match std::fs::read_to_string(&p) {
+                Ok(c) => {
+                    println!(
+                        "{DIM}  최근 초안 사용: {} ({} bytes){RESET}",
+                        p.display(),
+                        c.len()
+                    );
+                    c
+                }
+                Err(e) => {
+                    eprintln!("{RED}  초안 읽기 실패: {e}{RESET}\n");
+                    return;
+                }
+            },
+            None => {
+                println!("{DIM}  사용법: /improve <기사 텍스트>{RESET}");
+                println!("{DIM}  또는:   /improve --file <경로>{RESET}");
+                println!("{DIM}  또는:   /article로 초안을 먼저 작성하세요.{RESET}");
+                println!(
+                    "{DIM}  편집 데스크 수준의 기사 개선 제안을 AI가 제시합니다.{RESET}\n"
+                );
+                return;
+            }
+        }
+    } else {
+        inline_text
+    };
+
+    let prompt = match build_improve_prompt(&article) {
+        Some(p) => p,
+        None => {
+            println!("{DIM}  기사 내용이 비어 있습니다.{RESET}\n");
+            return;
+        }
+    };
+
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    // Save improve result to .journalist/improve/
+    if !response.trim().is_empty() {
+        let slug_source = if let Some(ref path) = file_path {
+            std::path::Path::new(path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "improve".to_string())
+        } else {
+            let preview: String = article.chars().take(30).collect();
+            if preview.is_empty() {
+                "improve".to_string()
+            } else {
+                preview
+            }
+        };
+        let path = improve_file_path(&slug_source);
+        match save_improve(&path, &response) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 개선 제안 저장: {}{RESET}\n",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  개선 제안 저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -14060,5 +14256,91 @@ mod tests {
     fn split_paragraphs_basic() {
         let paras = split_paragraphs("문단1\n줄2\n\n문단2\n\n문단3");
         assert_eq!(paras.len(), 3);
+    }
+
+    // ── /improve tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn improve_command_in_known_commands() {
+        assert!(
+            crate::commands::KNOWN_COMMANDS.contains(&"/improve"),
+            "/improve should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn parse_improve_args_inline_text() {
+        let (file, text) = parse_improve_args("이것은 기사 텍스트입니다");
+        assert!(file.is_none());
+        assert_eq!(text, "이것은 기사 텍스트입니다");
+    }
+
+    #[test]
+    fn parse_improve_args_with_file() {
+        let (file, text) = parse_improve_args("--file article.md");
+        assert_eq!(file.unwrap(), "article.md");
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn parse_improve_args_file_and_text() {
+        let (file, text) = parse_improve_args("--file draft.md 추가 지시사항");
+        assert_eq!(file.unwrap(), "draft.md");
+        assert_eq!(text, "추가 지시사항");
+    }
+
+    #[test]
+    fn parse_improve_args_empty() {
+        let (file, text) = parse_improve_args("");
+        assert!(file.is_none());
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn build_improve_prompt_basic() {
+        let prompt = build_improve_prompt("반도체 수출이 증가했다.");
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert!(p.contains("리드문 흡인력"));
+        assert!(p.contains("문단 전환"));
+        assert!(p.contains("인용문 활용"));
+        assert!(p.contains("구체성·수치"));
+        assert!(p.contains("결론 완성도"));
+        assert!(p.contains("반도체 수출이 증가했다."));
+    }
+
+    #[test]
+    fn build_improve_prompt_empty_returns_none() {
+        assert!(build_improve_prompt("").is_none());
+        assert!(build_improve_prompt("   ").is_none());
+    }
+
+    #[test]
+    fn improve_file_path_with_topic() {
+        let path = improve_file_path_with_date("반도체 수출", "2026-03-21");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/improve/2026-03-21_반도체-수출.md"
+        );
+    }
+
+    #[test]
+    fn improve_file_path_empty_slug() {
+        let path = improve_file_path_with_date("", "2026-03-21");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/improve/2026-03-21_improve.md"
+        );
+    }
+
+    #[test]
+    fn save_improve_creates_dir_and_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("improve").join("test.md");
+        let result = save_improve(&path, "# 개선 제안\n\n기사 피드백");
+        assert!(result.is_ok());
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("개선 제안"));
     }
 }
