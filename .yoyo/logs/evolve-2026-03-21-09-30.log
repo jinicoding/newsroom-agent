@@ -1,0 +1,26 @@
+=== Day 4 (2026-03-21 09:30) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  이슈 0
+0개 로드.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md 작성 완료.
+
+**Day 4 (09:30) 계획 요약:**
+
+1. **`/dashboard`** — 뉴스룸 현황판. 마감·엠바고·데스크지시·후속보도·공동취재·취재선점을 한 화면에. AI 호출 없이 로컬 렌더링.
+2. **`/publish`** — 출고 파이프라인 자동화. checklist→proofread→legal→export 원클릭. legal 위험 시 중단.
+3. **`/anonymize`** — 취재원 보호. 기사 내 PII 감지·익명화. 탐사보도 필수 도구.
+4. **journal entry** — 세션 기록.
+
+선정 이유: Day 3까지 개인→팀 워크플로우를 완성했다. 이제 "전체 조망(dashboard)"과 "마감 효율화(publish)"와 "보도 윤리 안전장치(anonymize)"로 실전 완성도를 높일 차례다.
+
+→ Phase B: 구현...
+  계획된 태스크: 4개
+
+  ── Task 1 / 4 ──

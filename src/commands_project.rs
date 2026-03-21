@@ -1,7 +1,7 @@
 //! Project-related command handlers: /context, /init, /health, /fix, /test, /lint,
 //! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck,
 //! /briefing, /clip, /news, /summary, /stats, /draft, /deadline, /embargo, /export, /quote,
-//! /trend, /archive, /data, /follow, /desk, /coverage.
+//! /trend, /archive, /data, /follow, /desk, /coverage, /dashboard.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -8803,6 +8803,158 @@ fn time_diff_minutes(target: &str, now: &str) -> Option<i32> {
     Some(target_mins - now_mins)
 }
 
+// ── /dashboard ──────────────────────────────────────────────────────────
+
+/// Handle `/dashboard` — newsroom status board showing active items across all systems.
+/// No AI call; purely local JSON reads.
+pub fn handle_dashboard() {
+    handle_dashboard_impl(
+        &deadlines_path(),
+        &embargoes_path(),
+        &desk_path(),
+        &followups_path(),
+        std::path::Path::new(COLLABORATE_DIR),
+        &coverage_path(),
+    );
+}
+
+fn handle_dashboard_impl(
+    deadlines_path: &std::path::Path,
+    embargoes_path: &std::path::Path,
+    desk_path: &std::path::Path,
+    followups_path: &std::path::Path,
+    collab_dir: &std::path::Path,
+    coverage_path: &std::path::Path,
+) {
+    println!("\n{BOLD}  ══════════════════════════════════════{RESET}");
+    println!("{BOLD}   📋 뉴스룸 현황판{RESET}");
+    println!("{BOLD}  ══════════════════════════════════════{RESET}\n");
+
+    let mut total_items = 0u32;
+
+    // 1. Deadlines (마감 임박)
+    let deadlines = load_deadlines_from(deadlines_path);
+    if deadlines.is_empty() {
+        println!("{DIM}  ⏰ 마감: 없음{RESET}");
+    } else {
+        println!("{YELLOW}  ⏰ 마감 ({} 건){RESET}", deadlines.len());
+        for dl in &deadlines {
+            println!("     • {BOLD}{}{RESET}  → {}", dl.title, dl.datetime);
+        }
+        total_items += deadlines.len() as u32;
+    }
+    println!();
+
+    // 2. Embargoes (활성 엠바고)
+    let embargoes = load_embargoes_from(embargoes_path);
+    if embargoes.is_empty() {
+        println!("{DIM}  🔒 엠바고: 없음{RESET}");
+    } else {
+        println!("{RED}  🔒 엠바고 ({} 건){RESET}", embargoes.len());
+        for em in &embargoes {
+            println!("     • {BOLD}{}{RESET}  → 해제: {}", em.title, em.release_at);
+        }
+        total_items += embargoes.len() as u32;
+    }
+    println!();
+
+    // 3. Desk assignments (대기 중인 데스크 지시)
+    let assignments = load_desk_from(desk_path);
+    let pending: Vec<&DeskAssignment> = assignments
+        .iter()
+        .filter(|a| a.status == DeskStatus::Pending)
+        .collect();
+    if pending.is_empty() {
+        println!("{DIM}  📝 데스크 지시: 대기 없음{RESET}");
+    } else {
+        println!("{CYAN}  📝 데스크 지시 — 대기 ({} 건){RESET}", pending.len());
+        for a in &pending {
+            let dl_info = a
+                .deadline
+                .as_deref()
+                .map(|d| format!(" [마감 {d}]"))
+                .unwrap_or_default();
+            let kind = if a.is_pitch { "제안" } else { "지시" };
+            println!(
+                "     • {BOLD}{}{RESET} → {} ({kind}){dl_info}",
+                a.reporter, a.content
+            );
+        }
+        total_items += pending.len() as u32;
+    }
+    println!();
+
+    // 4. Follow-ups due soon (후속 보도 임박)
+    let followups = load_followups_from(followups_path);
+    let active_followups: Vec<&Followup> = followups.iter().filter(|f| !f.done).collect();
+    if active_followups.is_empty() {
+        println!("{DIM}  🔄 후속 보도: 없음{RESET}");
+    } else {
+        println!(
+            "{MAGENTA}  🔄 후속 보도 ({} 건){RESET}",
+            active_followups.len()
+        );
+        for f in &active_followups {
+            let due_info = f
+                .due
+                .as_deref()
+                .map(|d| format!(" [기한 {d}]"))
+                .unwrap_or_default();
+            println!("     • {BOLD}{}{RESET}{due_info}", f.topic);
+        }
+        total_items += active_followups.len() as u32;
+    }
+    println!();
+
+    // 5. Collaborate projects (활성 공동취재)
+    let collab_projects = list_collab_projects_in(collab_dir);
+    let active_collabs: Vec<&CollabProject> = collab_projects
+        .iter()
+        .filter(|p| p.status == CollabStatus::Active)
+        .collect();
+    if active_collabs.is_empty() {
+        println!("{DIM}  🤝 공동취재: 없음{RESET}");
+    } else {
+        println!("{GREEN}  🤝 공동취재 ({} 건){RESET}", active_collabs.len());
+        for p in &active_collabs {
+            let reporters = p.reporters.join(", ");
+            println!(
+                "     • {BOLD}{}{RESET}  참여: {reporters} (메모 {} 건)",
+                p.name,
+                p.notes.len()
+            );
+        }
+        total_items += active_collabs.len() as u32;
+    }
+    println!();
+
+    // 6. Coverage claims (취재 선점 현황)
+    let claims = load_coverage_from(coverage_path);
+    let active_claims: Vec<&CoverageClaim> = claims.iter().filter(|c| c.active).collect();
+    if active_claims.is_empty() {
+        println!("{DIM}  🏷️  취재 선점: 없음{RESET}");
+    } else {
+        println!("{BOLD_CYAN}  🏷️  취재 선점 ({} 건){RESET}", active_claims.len());
+        for c in &active_claims {
+            let until_info = c
+                .until
+                .as_deref()
+                .map(|u| format!(" (~{u})"))
+                .unwrap_or_default();
+            println!(
+                "     • {BOLD}{}{RESET} — {}{until_info}",
+                c.topic, c.reporter
+            );
+        }
+        total_items += active_claims.len() as u32;
+    }
+
+    println!();
+    println!("{BOLD}  ──────────────────────────────────────{RESET}");
+    println!("{BOLD}   활성 항목 합계: {total_items} 건{RESET}");
+    println!("{BOLD}  ══════════════════════════════════════{RESET}\n");
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -12262,6 +12414,112 @@ mod tests {
         assert!(
             KNOWN_COMMANDS.contains(&"/coverage"),
             "/coverage should be in KNOWN_COMMANDS"
+        );
+    }
+
+    // ── /dashboard tests ────────────────────────────────────────────────
+
+    #[test]
+    fn dashboard_known_command() {
+        use crate::commands::KNOWN_COMMANDS;
+        assert!(
+            KNOWN_COMMANDS.contains(&"/dashboard"),
+            "/dashboard should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn dashboard_empty_state_runs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let deadlines = tmp.path().join("deadlines.json");
+        let embargoes = tmp.path().join("embargoes.json");
+        let desk = tmp.path().join("desk.json");
+        let followups = tmp.path().join("followups.json");
+        let collab_dir = tmp.path().join("collab");
+        let coverage = tmp.path().join("coverage.json");
+        // Should not panic with no files
+        handle_dashboard_impl(
+            &deadlines,
+            &embargoes,
+            &desk,
+            &followups,
+            &collab_dir,
+            &coverage,
+        );
+    }
+
+    #[test]
+    fn dashboard_with_data() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Write deadline
+        let deadlines_path = tmp.path().join("deadlines.json");
+        let dls = vec![Deadline {
+            title: "석간 마감".to_string(),
+            datetime: "2026-03-21T15:00:00".to_string(),
+        }];
+        save_deadlines_to(&dls, &deadlines_path);
+
+        // Write embargo
+        let embargoes_path = tmp.path().join("embargoes.json");
+        let ems = vec![Embargo {
+            title: "정부 발표".to_string(),
+            release_at: "2026-03-22T09:00:00".to_string(),
+        }];
+        save_embargoes_to(&ems, &embargoes_path);
+
+        // Write desk assignment
+        let desk_path = tmp.path().join("desk.json");
+        let assigns = vec![DeskAssignment {
+            reporter: "김기자".to_string(),
+            content: "취재 나가세요".to_string(),
+            deadline: Some("18:00".to_string()),
+            status: DeskStatus::Pending,
+            feedback: vec![],
+            is_pitch: false,
+            created_at: "2026-03-21T09:00:00".to_string(),
+        }];
+        save_desk_to(&assigns, &desk_path);
+
+        // Write followup
+        let followups_path = tmp.path().join("followups.json");
+        let fups = vec![Followup {
+            topic: "후속 기사".to_string(),
+            due: Some("2026-03-22".to_string()),
+            done: false,
+            created_at: "2026-03-21T09:00:00".to_string(),
+        }];
+        save_followups_to(&fups, &followups_path);
+
+        // Write coverage
+        let coverage_path = tmp.path().join("coverage.json");
+        let claims = vec![CoverageClaim {
+            topic: "환율".to_string(),
+            reporter: "박기자".to_string(),
+            until: Some("18:00".to_string()),
+            active: true,
+            created_at: "2026-03-21T09:00:00".to_string(),
+        }];
+        save_coverage_to(&claims, &coverage_path);
+
+        let collab_dir = tmp.path().join("collab");
+        std::fs::create_dir_all(&collab_dir).unwrap();
+        let proj = CollabProject {
+            name: "공동취재1".to_string(),
+            reporters: vec!["기자A".to_string(), "기자B".to_string()],
+            notes: vec![],
+            status: CollabStatus::Active,
+            created_at: "2026-03-21T09:00:00".to_string(),
+        };
+        save_collab_project_to(&proj, &collab_dir.join("공동취재1.json"));
+
+        // Should not panic with populated data
+        handle_dashboard_impl(
+            &deadlines_path,
+            &embargoes_path,
+            &desk_path,
+            &followups_path,
+            &collab_dir,
+            &coverage_path,
         );
     }
 }

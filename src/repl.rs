@@ -722,6 +722,10 @@ pub async fn run_repl(
                 commands::handle_coverage(input);
                 continue;
             }
+            "/dashboard" => {
+                commands::handle_dashboard();
+                continue;
+            }
             s if s.starts_with('/') && is_unknown_command(s) => {
                 let cmd = s.split_whitespace().next().unwrap_or(s);
                 eprintln!("{RED}  unknown command: {cmd}{RESET}");
