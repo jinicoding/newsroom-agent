@@ -2,7 +2,7 @@
 //! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck,
 //! /briefing, /clip, /news, /summary, /stats, /draft, /deadline, /embargo, /export, /quote,
 //! /trend, /archive, /data, /follow, /desk, /coverage, /dashboard, /publish,
-//! /anonymize, /press, /law, /readability, /performance.
+//! /anonymize, /press, /law, /readability, /performance, /autopitch.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -11346,6 +11346,262 @@ pub async fn handle_performance(
     }
 }
 
+// ── /autopitch — AI 기사 아이디어 제안 ──────────────────────────────────
+
+const PITCHES_DIR: &str = ".journalist/pitches";
+
+/// Parse `/autopitch` arguments, extracting `--beat <분야>` if present.
+/// Returns (beat, remaining_args).
+pub fn parse_autopitch_args(args: &str) -> (Option<String>, String) {
+    let args = args.trim();
+    if args.is_empty() {
+        return (None, String::new());
+    }
+    let mut beat: Option<String> = None;
+    let mut remaining: Vec<String> = Vec::new();
+    let mut iter = args.split_whitespace().peekable();
+    while let Some(token) = iter.next() {
+        if token == "--beat" {
+            if let Some(val) = iter.next() {
+                beat = Some(val.to_string());
+            }
+        } else {
+            remaining.push(token.to_string());
+        }
+    }
+    (beat, remaining.join(" "))
+}
+
+/// Collect journalist data from `.journalist/` subdirectories for pitch generation.
+/// Returns a summary string of available data.
+pub fn collect_journalist_data() -> String {
+    let mut sections = Vec::new();
+
+    // Recent research
+    let research_dir = std::path::Path::new(".journalist/research");
+    if research_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(research_dir) {
+            let mut files: Vec<_> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+                .collect();
+            files.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+            files.truncate(10);
+            if !files.is_empty() {
+                let mut s = String::from("## 최근 리서치\n");
+                for f in &files {
+                    if let Ok(content) = std::fs::read_to_string(f.path()) {
+                        let preview: String = content.chars().take(500).collect();
+                        s.push_str(&format!(
+                            "\n### {}\n{}\n",
+                            f.file_name().to_string_lossy(),
+                            preview
+                        ));
+                    }
+                }
+                sections.push(s);
+            }
+        }
+    }
+
+    // Recent clips
+    let clips_dir = std::path::Path::new(".journalist/clips");
+    if clips_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(clips_dir) {
+            let mut files: Vec<_> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+                .collect();
+            files.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+            files.truncate(10);
+            if !files.is_empty() {
+                let mut s = String::from("## 최근 스크랩 기사\n");
+                for f in &files {
+                    if let Ok(content) = std::fs::read_to_string(f.path()) {
+                        let preview: String = content.chars().take(300).collect();
+                        s.push_str(&format!(
+                            "\n### {}\n{}\n",
+                            f.file_name().to_string_lossy(),
+                            preview
+                        ));
+                    }
+                }
+                sections.push(s);
+            }
+        }
+    }
+
+    // SNS trends
+    let sns_dir = std::path::Path::new(".journalist/sns");
+    if sns_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(sns_dir) {
+            let mut files: Vec<_> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+                .collect();
+            files.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+            files.truncate(5);
+            if !files.is_empty() {
+                let mut s = String::from("## SNS 트렌드\n");
+                for f in &files {
+                    if let Ok(content) = std::fs::read_to_string(f.path()) {
+                        let preview: String = content.chars().take(300).collect();
+                        s.push_str(&format!(
+                            "\n### {}\n{}\n",
+                            f.file_name().to_string_lossy(),
+                            preview
+                        ));
+                    }
+                }
+                sections.push(s);
+            }
+        }
+    }
+
+    // Sources
+    let sources_path = std::path::Path::new(".journalist/sources.json");
+    if sources_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(sources_path) {
+            if let Ok(sources) = serde_json::from_str::<Vec<serde_json::Value>>(&content) {
+                if !sources.is_empty() {
+                    let mut s = String::from("## 취재원 목록\n");
+                    for src in sources.iter().take(20) {
+                        let name = src.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                        let beat = src.get("beat").and_then(|v| v.as_str()).unwrap_or("");
+                        let org = src.get("org").and_then(|v| v.as_str()).unwrap_or("");
+                        s.push_str(&format!("- {name} ({org}) [beat: {beat}]\n"));
+                    }
+                    sections.push(s);
+                }
+            }
+        }
+    }
+
+    // Archive
+    let archive_dir = std::path::Path::new(".journalist/archive");
+    if archive_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(archive_dir) {
+            let mut files: Vec<_> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.path()
+                        .extension()
+                        .map_or(false, |ext| ext == "md" || ext == "json")
+                })
+                .collect();
+            files.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+            files.truncate(10);
+            if !files.is_empty() {
+                let mut s = String::from("## 기사 아카이브\n");
+                for f in &files {
+                    s.push_str(&format!("- {}\n", f.file_name().to_string_lossy()));
+                }
+                sections.push(s);
+            }
+        }
+    }
+
+    if sections.is_empty() {
+        String::from("(취재 데이터가 아직 없습니다.)")
+    } else {
+        sections.join("\n---\n\n")
+    }
+}
+
+/// Build the autopitch prompt for the AI.
+pub fn build_autopitch_prompt(beat: Option<&str>, data: &str) -> String {
+    let beat_context = match beat {
+        Some(b) => format!("\n\n출입처/분야: {b}\n이 분야에 특화된 기사 아이디어를 중심으로 제안하세요."),
+        None => String::new(),
+    };
+    format!(
+        "당신은 한국 신문사의 선배 기자입니다. 아래 취재 데이터를 분석하고 기사 아이디어를 제안하세요.{beat_context}
+
+다음 세 가지 카테고리로 각 2-3개씩 제안해주세요:
+
+### 1. 미발굴 각도
+기존 취재 주제에서 아직 다루지 않은 새로운 시각이나 각도
+
+### 2. 후속 보도 기회
+기존 취재/기사를 발전시킬 수 있는 후속 보도 아이디어
+
+### 3. 시의성 있는 주제
+현재 시점에서 시의성이 높은 기사 주제
+
+각 아이디어마다:
+- **제목** (가제)
+- **핵심 앵글** (1-2문장)
+- **취재 방향** (어떤 취재원, 어떤 데이터가 필요한지)
+- **시의성** (왜 지금 이 기사가 필요한지)
+
+---
+
+{data}"
+    )
+}
+
+/// Save autopitch result to `.journalist/pitches/` directory.
+fn save_autopitch(content: &str, beat: Option<&str>) -> std::path::PathBuf {
+    let dir = std::path::Path::new(PITCHES_DIR);
+    std::fs::create_dir_all(dir).ok();
+
+    let beat_suffix = match beat {
+        Some(b) => format!("_{b}"),
+        None => String::new(),
+    };
+    let filename = format!("pitch{beat_suffix}.md");
+    let path = dir.join(&filename);
+    std::fs::write(&path, content).ok();
+    path
+}
+
+/// Handle the `/autopitch` command: AI-powered article idea generation.
+pub async fn handle_autopitch(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let raw_args = input.strip_prefix("/autopitch").unwrap_or("").trim();
+    let (beat, _extra) = parse_autopitch_args(raw_args);
+
+    if raw_args == "help" || raw_args == "--help" {
+        autopitch_print_help();
+        return;
+    }
+
+    // Collect journalist data
+    let data = collect_journalist_data();
+
+    let beat_display = beat.as_deref().unwrap_or("전체");
+    println!("{DIM}  📰 기사 아이디어 생성 중... (분야: {beat_display}){RESET}");
+
+    let prompt = build_autopitch_prompt(beat.as_deref(), &data);
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    if !response.trim().is_empty() {
+        let path = save_autopitch(&response, beat.as_deref());
+        println!(
+            "{DIM}  💡 결과가 {}에 저장되었습니다.{RESET}\n",
+            path.display()
+        );
+    }
+}
+
+fn autopitch_print_help() {
+    println!("{DIM}  /autopitch — AI 기사 아이디어 제안{RESET}");
+    println!("{DIM}  사용법:{RESET}");
+    println!("{DIM}    /autopitch                  전체 분야 기사 아이디어 제안{RESET}");
+    println!("{DIM}    /autopitch --beat <분야>    특정 출입처/분야 맞춤 제안{RESET}");
+    println!("{DIM}  예시:{RESET}");
+    println!("{DIM}    /autopitch{RESET}");
+    println!("{DIM}    /autopitch --beat 경제{RESET}");
+    println!(
+        "{DIM}    /autopitch --beat 정치{RESET}\n"
+    );
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -15918,5 +16174,65 @@ mod tests {
         assert!(prompt.contains("반도체 수출규제"));
         assert!(prompt.contains("경제: 3 명"));
         assert!(prompt.contains("취재원"));
+    }
+
+    // ── /autopitch tests ────────────────────────────────────────────────
+
+    #[test]
+    fn parse_autopitch_args_empty() {
+        let (beat, rest) = parse_autopitch_args("");
+        assert!(beat.is_none());
+        assert!(rest.is_empty());
+    }
+
+    #[test]
+    fn parse_autopitch_args_beat_only() {
+        let (beat, rest) = parse_autopitch_args("--beat 경제");
+        assert_eq!(beat, Some("경제".to_string()));
+        assert!(rest.is_empty());
+    }
+
+    #[test]
+    fn parse_autopitch_args_beat_with_extra() {
+        let (beat, rest) = parse_autopitch_args("--beat 정치 추가텍스트");
+        assert_eq!(beat, Some("정치".to_string()));
+        assert_eq!(rest, "추가텍스트");
+    }
+
+    #[test]
+    fn parse_autopitch_args_no_beat() {
+        let (beat, rest) = parse_autopitch_args("그냥 텍스트");
+        assert!(beat.is_none());
+        assert_eq!(rest, "그냥 텍스트");
+    }
+
+    #[test]
+    fn build_autopitch_prompt_no_beat() {
+        let prompt = build_autopitch_prompt(None, "테스트 데이터");
+        assert!(prompt.contains("테스트 데이터"));
+        assert!(prompt.contains("미발굴 각도"));
+        assert!(prompt.contains("후속 보도"));
+        assert!(prompt.contains("시의성"));
+        assert!(!prompt.contains("출입처/분야:"));
+    }
+
+    #[test]
+    fn build_autopitch_prompt_with_beat() {
+        let prompt = build_autopitch_prompt(Some("경제"), "데이터");
+        assert!(prompt.contains("출입처/분야: 경제"));
+        assert!(prompt.contains("데이터"));
+    }
+
+    #[test]
+    fn collect_journalist_data_empty_dir() {
+        // When no .journalist/ subdirectories exist, should return placeholder
+        let data = collect_journalist_data();
+        // Just verify it returns a non-empty string (may have data or placeholder)
+        assert!(!data.is_empty());
+    }
+
+    #[test]
+    fn pitches_dir_constant() {
+        assert_eq!(PITCHES_DIR, ".journalist/pitches");
     }
 }
