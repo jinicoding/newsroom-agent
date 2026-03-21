@@ -95,6 +95,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/publish",
     "/anonymize",
     "/press",
+    "/law",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -157,6 +158,9 @@ pub const DESK_SUBCOMMANDS: &[&str] = &["assign", "list", "done", "feedback", "p
 /// Collaborate subcommand names for `/collaborate <Tab>` completion.
 pub const COLLABORATE_SUBCOMMANDS: &[&str] = &["start", "note", "list", "view", "close"];
 
+/// Law subcommand names for `/law <Tab>` completion.
+pub const LAW_SUBCOMMANDS: &[&str] = &["term", "search"];
+
 /// Return context-aware argument completions for a given command and partial argument.
 ///
 /// `cmd` is the slash command (e.g. "/model"), `partial_arg` is what the user has typed
@@ -180,6 +184,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/follow" => filter_candidates(FOLLOW_SUBCOMMANDS, &partial_lower),
         "/desk" => filter_candidates(DESK_SUBCOMMANDS, &partial_lower),
         "/collaborate" => filter_candidates(COLLABORATE_SUBCOMMANDS, &partial_lower),
+        "/law" => filter_candidates(LAW_SUBCOMMANDS, &partial_lower),
         "/briefing" | "/translate" | "/headline" | "/rewrite" | "/legal" => {
             if partial_arg.starts_with("--file ") {
                 let file_part = &partial_arg[7..];
@@ -696,7 +701,7 @@ pub use crate::commands_project::{
     handle_health, handle_index, handle_init, handle_interview, handle_lint, handle_research,
     handle_deadline, handle_draft, handle_embargo, handle_export, handle_news, handle_proofread, handle_quote, handle_run, handle_rewrite, handle_run_usage, handle_sources, handle_stats,
     handle_alert, handle_archive, handle_data, handle_desk, handle_follow, handle_legal, handle_summary, handle_test, handle_timeline, handle_translate, handle_tree,
-    handle_anonymize, handle_collaborate, handle_coverage, handle_dashboard, handle_press, handle_publish, handle_trend,
+    handle_anonymize, handle_collaborate, handle_coverage, handle_dashboard, handle_law, handle_press, handle_publish, handle_trend,
 };
 
 // Session-related handlers

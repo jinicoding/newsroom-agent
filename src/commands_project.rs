@@ -2,7 +2,7 @@
 //! /tree, /run, /docs, /find, /index, /article, /research, /sources, /factcheck,
 //! /briefing, /clip, /news, /summary, /stats, /draft, /deadline, /embargo, /export, /quote,
 //! /trend, /archive, /data, /follow, /desk, /coverage, /dashboard, /publish,
-//! /anonymize, /press.
+//! /anonymize, /press, /law.
 
 use crate::cli;
 use crate::commands::auto_compact_if_needed;
@@ -9627,6 +9627,198 @@ fn print_press_usage() {
     println!("{DIM}    /press view <번호>      검색 결과 상세 보기{RESET}\n");
 }
 
+// ── /law ────────────────────────────────────────────────────────────────
+
+/// A single legal terminology result.
+struct LawTerm {
+    term: String,
+    definition: String,
+    law_name: String,
+}
+
+/// Parse JSON response from the legal terminology API.
+fn parse_law_response(body: &str) -> Vec<LawTerm> {
+    let mut results = Vec::new();
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(body) else {
+        return results;
+    };
+
+    // Navigate: response.body.items.item (array or single object)
+    let items = json
+        .get("response")
+        .and_then(|r| r.get("body"))
+        .and_then(|b| b.get("items"))
+        .and_then(|i| i.get("item"));
+
+    let item_list: Vec<&serde_json::Value> = match items {
+        Some(serde_json::Value::Array(arr)) => arr.iter().collect(),
+        Some(obj @ serde_json::Value::Object(_)) => vec![obj],
+        _ => Vec::new(),
+    };
+
+    for item in item_list {
+        let term = item
+            .get("termNm")
+            .or_else(|| item.get("lglTrmNm"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let definition = item
+            .get("termDf")
+            .or_else(|| item.get("lglTrmDfn"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let law_name = item
+            .get("rlLwNm")
+            .or_else(|| item.get("lawNm"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if !term.is_empty() {
+            results.push(LawTerm {
+                term,
+                definition,
+                law_name,
+            });
+        }
+    }
+    results
+}
+
+/// Fetch legal terminology from the 법제처 API.
+fn fetch_law_terms(api_key: &str, query: &str, mode: &str) -> Result<Vec<LawTerm>, String> {
+    let encoded_key = api_key.replace(' ', "%20");
+    let encoded_query = query.replace(' ', "%20");
+    let base_url = "https://apis.data.go.kr/1170000/legal-terminology";
+    let endpoint = match mode {
+        "term" => "lglTrmSrch",
+        "search" => "lglTrmSrch",
+        _ => "lglTrmSrch",
+    };
+    let url = format!(
+        "{}/{}?serviceKey={}&query={}&numOfRows=10&pageNo=1&type=json",
+        base_url, endpoint, encoded_key, encoded_query
+    );
+
+    let output = std::process::Command::new("curl")
+        .args(["-s", "--max-time", "15", &url])
+        .output()
+        .map_err(|e| format!("curl 실행 실패: {e}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "API 요청 실패: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let body = String::from_utf8_lossy(&output.stdout).to_string();
+
+    // Check for XML error responses (API may return XML on auth errors)
+    if body.contains("<returnReasonCode>") {
+        if let Some(msg) = extract_xml_tag(&body, "returnAuthMsg") {
+            return Err(format!("API 인증 오류: {msg}"));
+        }
+        return Err("API 응답 오류".to_string());
+    }
+
+    Ok(parse_law_response(&body))
+}
+
+/// Display legal terminology results.
+fn display_law_results(results: &[LawTerm]) {
+    if results.is_empty() {
+        println!("{DIM}  검색 결과가 없습니다.{RESET}\n");
+        return;
+    }
+    println!(
+        "\n{BOLD}  ⚖ 법령용어 검색 결과 ({} 건){RESET}\n",
+        results.len()
+    );
+    for (i, item) in results.iter().enumerate() {
+        let num = i + 1;
+        let law_info = if item.law_name.is_empty() {
+            String::new()
+        } else {
+            format!(" [{CYAN}{}{RESET}]", item.law_name)
+        };
+        println!("  {BOLD}{num:>3}.{RESET} {}{law_info}", item.term);
+        if !item.definition.is_empty() {
+            let preview: String = item.definition.chars().take(100).collect();
+            let ellipsis = if item.definition.chars().count() > 100 {
+                "…"
+            } else {
+                ""
+            };
+            println!("       {DIM}{preview}{ellipsis}{RESET}");
+        }
+    }
+    println!();
+}
+
+fn print_law_usage() {
+    println!("{DIM}  /law — 법령 용어 검색 (법제처 API){RESET}");
+    println!("{DIM}  사용법:{RESET}");
+    println!("{DIM}    /law term <용어>      법률 용어 정의 검색{RESET}");
+    println!("{DIM}    /law search <키워드>  키워드로 관련 용어 검색{RESET}\n");
+}
+
+/// Handle the `/law` command.
+pub fn handle_law(input: &str) {
+    let args = input.strip_prefix("/law").unwrap_or("").trim();
+
+    let api_key = match std::env::var("LAW_API_KEY") {
+        Ok(key) if !key.is_empty() => key,
+        _ => {
+            println!("{YELLOW}  LAW_API_KEY 환경변수가 설정되지 않았습니다.{RESET}");
+            println!(
+                "{DIM}  법제처 법령용어 API를 사용하려면 data.go.kr에서 API 키를 발급받으세요.{RESET}"
+            );
+            println!("{DIM}  발급 후: export LAW_API_KEY=\"your-api-key\"{RESET}\n");
+            return;
+        }
+    };
+
+    if args.is_empty() {
+        print_law_usage();
+        return;
+    }
+
+    let (subcmd, rest) = match args.split_once(' ') {
+        Some((c, r)) => (c, r.trim()),
+        None => (args, ""),
+    };
+
+    match subcmd {
+        "term" => {
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /law term <용어>{RESET}\n");
+                return;
+            }
+            println!("{DIM}  법령용어 검색 중: \"{rest}\"...{RESET}");
+            match fetch_law_terms(&api_key, rest, "term") {
+                Ok(results) => display_law_results(&results),
+                Err(e) => eprintln!("{RED}  법령용어 검색 실패: {e}{RESET}\n"),
+            }
+        }
+        "search" => {
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /law search <키워드>{RESET}\n");
+                return;
+            }
+            println!("{DIM}  법령용어 검색 중: \"{rest}\"...{RESET}");
+            match fetch_law_terms(&api_key, rest, "search") {
+                Ok(results) => display_law_results(&results),
+                Err(e) => eprintln!("{RED}  법령용어 검색 실패: {e}{RESET}\n"),
+            }
+        }
+        _ => {
+            print_law_usage();
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -13398,5 +13590,109 @@ mod tests {
         let loaded: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(loaded["title"], "테스트 제목");
         assert_eq!(loaded["ministry"], "테스트부");
+    }
+
+    #[test]
+    fn parse_law_response_extracts_terms() {
+        let json = r#"{
+            "response": {
+                "body": {
+                    "items": {
+                        "item": [
+                            {
+                                "termNm": "공소시효",
+                                "termDf": "범죄 행위가 종료된 후 일정 기간이 지나면 공소를 제기할 수 없게 되는 제도",
+                                "rlLwNm": "형사소송법"
+                            },
+                            {
+                                "termNm": "공소장",
+                                "termDf": "검사가 공소를 제기할 때 법원에 제출하는 서면",
+                                "rlLwNm": "형사소송법"
+                            }
+                        ]
+                    }
+                }
+            }
+        }"#;
+        let results = parse_law_response(json);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].term, "공소시효");
+        assert!(results[0].definition.contains("공소"));
+        assert_eq!(results[0].law_name, "형사소송법");
+        assert_eq!(results[1].term, "공소장");
+    }
+
+    #[test]
+    fn parse_law_response_single_item() {
+        let json = r#"{
+            "response": {
+                "body": {
+                    "items": {
+                        "item": {
+                            "termNm": "선고",
+                            "termDf": "법원이 판결을 외부에 표시하는 행위",
+                            "rlLwNm": "민사소송법"
+                        }
+                    }
+                }
+            }
+        }"#;
+        let results = parse_law_response(json);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].term, "선고");
+        assert_eq!(results[0].law_name, "민사소송법");
+    }
+
+    #[test]
+    fn parse_law_response_empty() {
+        let json = r#"{"response":{"body":{"items":{}}}}"#;
+        let results = parse_law_response(json);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn parse_law_response_invalid_json() {
+        let results = parse_law_response("not json");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn parse_law_response_alternative_field_names() {
+        let json = r#"{
+            "response": {
+                "body": {
+                    "items": {
+                        "item": [
+                            {
+                                "lglTrmNm": "구속영장",
+                                "lglTrmDfn": "피의자를 구속하기 위해 발부하는 영장",
+                                "lawNm": "형사소송법"
+                            }
+                        ]
+                    }
+                }
+            }
+        }"#;
+        let results = parse_law_response(json);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].term, "구속영장");
+        assert!(results[0].definition.contains("영장"));
+        assert_eq!(results[0].law_name, "형사소송법");
+    }
+
+    #[test]
+    fn handle_law_missing_api_key() {
+        // Ensure LAW_API_KEY is not set
+        std::env::remove_var("LAW_API_KEY");
+        // Should not panic — just prints a message
+        handle_law("/law term 공소시효");
+    }
+
+    #[test]
+    fn handle_law_empty_args_with_key() {
+        std::env::set_var("LAW_API_KEY", "test-key");
+        // Should print usage, not panic
+        handle_law("/law");
+        std::env::remove_var("LAW_API_KEY");
     }
 }
