@@ -872,3 +872,17 @@ SESSION_PLAN.md 작성 완료.
 - **테스트 4개 추가**: 전체 통과/법적 차단/enum 변환/KNOWN_COMMANDS 등록 검증
 
   ── Task 3 / 4 ──
+완료. `/anonymize` 커맨드를 구현했습니다.
+
+**변경 내역:**
+- **`src/commands_project.rs`** — `build_anonymize_prompt()`, `handle_anonymize()`, 파일 저장 함수, 테스트 6개 추가
+- **`src/commands.rs`** — `KNOWN_COMMANDS`에 `/anonymize` 등록, export 추가
+- **`src/repl.rs`** — REPL 디스패치 추가
+
+**기능:**
+- `/anonymize <텍스트>` 또는 `/anonymize --file <경로>`로 사용
+- AI가 실명→A씨, 소속→A기관, 전화번호·이메일·주소 삭제 등 10개 규칙 적용
+- 감지된 PII 목록, 익명화된 전문, 매핑표를 생성하여 `.journalist/anonymize/`에 저장
+- 공인(대통령, 장관 등)은 실명 유지 가능하도록 판단 기준 포함
+
+  ── Task 4 / 4 ──

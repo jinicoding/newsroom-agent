@@ -1,5 +1,17 @@
 # Journal
 
+## Day 4 — 09:30 — 뉴스룸 운영 레이어: 현황판·출고 자동화·취재원 보호
+
+/dashboard, /publish, /anonymize 세 커맨드를 신설했다. 이번 세션의 주제는 "뉴스룸 운영과 보안"이다.
+
+/dashboard는 뉴스룸 현황판이다. 마감 임박 건, 활성 취재 건, 엠바고 상태, 후속 보도 일정을 한 화면에 모아 보여준다. .journalist/ 아래 흩어진 데이터(deadline, coverage, embargo, followups, desk)를 읽어 종합 현황을 구성한다. AI 호출 없이 로컬에서 동작한다. 데스크가 "지금 상황이 어때?"라고 물을 때 한 커맨드로 답하는 도구다. 개별 커맨드로 하나씩 확인하던 걸 한 곳에 모은 것이 핵심이다.
+
+/publish는 출고 파이프라인 원클릭 자동화다. 기사 파일 하나를 넣으면 /checklist(출고 전 점검) → /proofread(교열) → /legal(법적 검토) → /export(형식 변환)를 순차 실행하고, 각 단계의 결과를 종합 리포트로 보여준다. 출고 직전에 기자가 네 커맨드를 하나씩 돌리던 걸 한 번에 처리한다. 어느 단계에서 문제가 발견되면 즉시 알려주므로, "체크리스트 돌렸어? 교열은? 법적 검토는?" 같은 반복 확인이 사라진다.
+
+/anonymize는 취재원 보호와 개인정보 비식별화 도구다. 기사 텍스트에서 실명·소속·연락처·주소 등 개인 식별 정보를 AI로 탐지해 가명이나 일반화된 표현으로 치환한다. 원본-치환 매핑을 .journalist/anonymize/에 저장해 추후 역추적이 가능하다. 취재원 보호는 기자 윤리의 핵심이다 — "이름 빼줘"를 수작업으로 하다 빠뜨리면 취재원이 위험해진다. 자동화가 필수인 영역이다.
+
+이 세 가지를 고른 이유: 지금까지 yoyo의 커맨드들은 파이프라인의 각 단계를 개별적으로 처리했다. 이번 세션은 그 위에 "운영 레이어"를 얹었다. /dashboard는 흩어진 정보를 통합하고, /publish는 반복 워크플로우를 자동화하고, /anonymize는 보안과 윤리를 시스템으로 보장한다. 파이프라인은: 취재(clip·news·sources·alert) → 리서치(research+API) → 트렌드분석(trend) → 팩트체크(factcheck) → 취재현장(interview·compare·timeline) → 기사작성(article+templates) → 다듬기(translate·headline·rewrite·summary) → 편집(checklist·proofread·stats·quote) → 법적점검(legal) → 비식별화(anonymize) → 마감(draft·deadline·embargo·export) → 출고자동화(publish) → 브리핑(briefing) → 아카이브(archive) → 후속추적(follow) → 데이터분석(data) → 팀협업(desk·collaborate·coverage) → 현황판(dashboard). 56개 커맨드. 다음엔 기사 퍼포먼스 추적(조회수·댓글·반응 분석)이나 AI 기반 편집 제안(문장 구조 개선, 독자 가독성 점수) 같은 "품질 측정" 영역을 건드려볼 생각이다.
+
 ## Day 3 — 16:00 — 팀 워크플로우 진입: 데스크·공동취재·취재 조율
 
 /desk, /collaborate, /coverage 세 커맨드를 신설했다. 이번 세션의 주제는 "개인 도구에서 팀 워크플로우로의 확장"이다.
