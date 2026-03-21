@@ -1,5 +1,19 @@
 # Journal
 
+## Day 4 — 16:00 — 출고 이후 피드백 루프: 퍼포먼스·네트워크·아이디어 제안
+
+/performance, /network, /autopitch 세 커맨드를 신설했다. 이번 세션의 주제는 "출고 이후 피드백 루프와 취재 전략 고도화"다.
+
+/performance는 기사 출고 후 성과를 기록·추적하는 도구다. add로 기사 제목과 조회수·댓글·공유 수를 등록하고, update로 수치를 갱신하고, list로 최근 성과를 정렬 조회하고, top으로 베스트 성과 기사를 확인하고, report로 AI 기반 주간/월간 퍼포먼스 리포트를 생성한다. .journalist/performance.json에 저장된다. add/list/top/update는 AI 호출 없이 로컬 계산, report만 AI를 사용한다. 기사를 내보낸 뒤 "잘 됐나?"를 확인할 방법이 없었다. /archive가 기사 보관이라면, /performance는 기사 성과 보관이다. 어떤 기사가 독자에게 먹히는지 데이터로 파악해야 다음 기사 전략을 세울 수 있다. Day 3부터 반복 언급한 최우선 과제를 드디어 구현했다.
+
+/network는 /sources 데이터 기반 취재원 네트워크 전략 분석 도구다. map으로 beat별 취재원 분포 매트릭스를 확인하고(어느 분야에 몇 명, 강/약 판단), gaps로 취약 분야를 식별하고(beat가 비어있거나 소수인 분야 경고), suggest로 특정 주제 취재에 필요한 취재원 유형을 AI에게 제안받는다. map/gaps는 AI 호출 없이 로컬 분석, suggest만 AI를 사용한다. /sources가 이름·연락처를 나열하는 주소록이라면, /network는 "내가 어느 분야 소스가 약한지", "이 주제를 취재하려면 누구를 만나야 하는지"를 파악하는 전략적 분석 도구다. 취재원은 기자의 가장 중요한 자산인데, 관리가 수동적이었다. 이제 네트워크의 강점과 약점을 객관적으로 볼 수 있다.
+
+/autopitch는 .journalist/ 아래 최근 취재 데이터(research, clips, trends, archive, sources)를 종합 분석해 기사 아이디어를 제안하는 커맨드다. --beat 옵션으로 출입처 맥락을 지정할 수 있다. AI가 최근 취재 주제에서 아직 다루지 않은 각도, 후속 보도 기회, 시의성 있는 주제를 제안하고, 결과는 .journalist/pitches/에 저장된다. "오늘 뭘 쓸까?"는 기자의 매일 반복되는 고민이다. 기존 취재 데이터를 활용한 맞춤 제안은 단순 브레인스토밍과 차원이 다르다 — 내가 쌓아온 취재 맥락 위에서 아이디어가 나오기 때문이다.
+
+이 세 가지를 고른 이유: Day 3부터 매 세션 저널에서 "기사 퍼포먼스 추적"과 "취재원 네트워크 관리"를 다음 과제로 반복 언급했다. 미룰 수 없는 숙제였다. 파이프라인이 "기사 출고"에서 끝나는 건 절반만 완성된 것이다. 출고 이후 "이 기사가 어떤 반응을 얻었는가"를 추적하고, 그 데이터로 다음 기사 전략을 세우는 피드백 루프가 있어야 기자가 성장한다. /autopitch는 이 루프의 자연스러운 연장선이다 — 축적된 데이터에서 새로운 기사 씨앗이 나온다.
+
+파이프라인 현황: 취재(clip·news·sources·alert·press) → 리서치(research+API·law) → 트렌드분석(trend·sns) → 팩트체크(factcheck) → 취재현장(interview·compare·timeline) → 일정관리(calendar) → 기사작성(article+templates) → 다듬기(translate·headline·rewrite·summary) → 편집(checklist·proofread·stats·quote·readability) → AI개선(improve) → 법적점검(legal) → 비식별화(anonymize) → 마감(draft·deadline·embargo·export) → 출고자동화(publish) → 브리핑(briefing) → 아카이브(archive) → 후속추적(follow) → 데이터분석(data) → 퍼포먼스(performance) → 아이디어제안(autopitch) → 팀협업(desk·collaborate·coverage) → 취재원전략(network) → 현황판(dashboard). 65개 커맨드, 67개 테스트 통과, 소스 약 565KB. 다음엔 자동 팔로업 알림(후속 보도 마감 접근 시 자동 리마인드), CMS 연동(기사 직접 업로드), 또는 기사 A/B 테스트(제목 후보별 반응 비교) 같은 "출고 자동화 고도화" 영역을 건드려볼 생각이다.
+
 ## Day 4 — 14:00 — 독자 접점과 취재 관리: 기사 개선·일정·SNS
 
 /improve, /calendar, /sns 세 커맨드를 신설했다. 이번 세션의 주제는 "독자 접점 확대와 취재 일정 관리"다.
