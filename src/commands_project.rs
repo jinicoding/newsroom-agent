@@ -11602,6 +11602,212 @@ fn autopitch_print_help() {
     );
 }
 
+// ── /morning — 아침 브리핑 루틴 원커맨드 ──────────────────────────────
+
+const MORNING_DIR: &str = ".journalist/morning";
+
+/// Collect local data for the morning briefing from various .journalist/ sources.
+pub fn collect_morning_data() -> String {
+    let mut sections = Vec::new();
+    let today = today_date_string();
+
+    // 1. Calendar: today's events
+    let calendar = load_calendar_from(&calendar_path());
+    let mut today_events: Vec<&CalendarEvent> =
+        calendar.iter().filter(|e| e.date == today && !e.done).collect();
+    today_events.sort_by(|a, b| a.time.cmp(&b.time));
+    if !today_events.is_empty() {
+        let mut s = format!("## 오늘 일정 ({today})\n");
+        for ev in &today_events {
+            s.push_str(&format!("- {} {}\n", ev.time, ev.description));
+        }
+        sections.push(s);
+    } else {
+        sections.push(format!("## 오늘 일정 ({today})\n등록된 일정 없음\n"));
+    }
+
+    // 2. Deadlines: within 3 days
+    let deadlines = load_deadlines_from(&deadlines_path());
+    let mut urgent_deadlines: Vec<(&Deadline, String)> = Vec::new();
+    for dl in &deadlines {
+        let date_part = dl.datetime.split('T').next().unwrap_or(&dl.datetime);
+        if let Some(days) = days_until(date_part, &today) {
+            if days <= 3 && days >= 0 {
+                let label = if days == 0 {
+                    "오늘".to_string()
+                } else {
+                    format!("{days}일 후")
+                };
+                urgent_deadlines.push((dl, label));
+            }
+        }
+    }
+    if !urgent_deadlines.is_empty() {
+        let mut s = String::from("## 마감 임박 (3일 이내)\n");
+        for (dl, label) in &urgent_deadlines {
+            s.push_str(&format!("- [{}] {} ({})\n", label, dl.title, dl.datetime));
+        }
+        sections.push(s);
+    } else {
+        sections.push("## 마감 임박 (3일 이내)\n임박한 마감 없음\n".to_string());
+    }
+
+    // 3. Follow-up reminders: within 3 days
+    let followups = load_followups_from(&followups_path());
+    let mut urgent_follows: Vec<(&Followup, i64)> = Vec::new();
+    for f in &followups {
+        if f.done {
+            continue;
+        }
+        if let Some(ref due) = f.due {
+            if let Some(days) = days_until(due, &today) {
+                if days <= 3 {
+                    urgent_follows.push((f, days));
+                }
+            }
+        }
+    }
+    urgent_follows.sort_by_key(|(_, d)| *d);
+    if !urgent_follows.is_empty() {
+        let mut s = String::from("## 후속보도 리마인드\n");
+        for (f, days) in &urgent_follows {
+            let label = if *days < 0 {
+                "기한 초과".to_string()
+            } else if *days == 0 {
+                "오늘 마감".to_string()
+            } else {
+                format!("{days}일 남음")
+            };
+            let due_str = f.due.as_deref().unwrap_or("");
+            s.push_str(&format!("- {} [{}] (마감: {})\n", f.topic, label, due_str));
+        }
+        sections.push(s);
+    } else {
+        sections.push("## 후속보도 리마인드\n3일 이내 임박 건 없음\n".to_string());
+    }
+
+    // 4. Desk: pending assignments
+    let desk = load_desk_from(&desk_path());
+    let pending: Vec<&DeskAssignment> = desk
+        .iter()
+        .filter(|a| a.status == DeskStatus::Pending)
+        .collect();
+    if !pending.is_empty() {
+        let mut s = String::from("## 데스크 지시 대기 건\n");
+        for a in &pending {
+            let dl_info = a.deadline.as_deref().unwrap_or("마감 미정");
+            s.push_str(&format!(
+                "- [{}] {} (마감: {})\n",
+                a.reporter, a.content, dl_info
+            ));
+        }
+        sections.push(s);
+    } else {
+        sections.push("## 데스크 지시 대기 건\n대기 중인 업무 없음\n".to_string());
+    }
+
+    // 5. Recent journalist context (reuse existing function)
+    let journalist_data = collect_journalist_data();
+    if !journalist_data.contains("(데이터 없음)") {
+        sections.push(format!("## 최근 취재 컨텍스트\n{journalist_data}"));
+    }
+
+    sections.join("\n")
+}
+
+/// Build the prompt for the morning briefing AI call.
+pub fn build_morning_prompt(data: &str) -> String {
+    format!(
+        "당신은 한국 신문사 기자의 아침 브리핑 비서입니다. \
+아래 데이터를 바탕으로 오늘 하루 업무를 시작하기 위한 종합 아침 브리핑을 작성하세요.
+
+다음 항목을 포함하세요:
+
+### 📅 오늘 일정 요약
+일정이 있으면 시간순으로 정리하고, 준비 사항이 있으면 알려주세요.
+
+### ⏰ 마감 임박 경고
+3일 이내 마감이 있으면 우선순위를 매기고 조언하세요.
+
+### 📰 후속보도 리마인드
+임박한 후속보도가 있으면 간략히 상기시키세요.
+
+### 📋 데스크 지시 대기 건
+대기 중인 업무가 있으면 요약하고 우선순위를 제안하세요.
+
+### 🌐 오늘의 주요 이슈
+최근 취재 맥락을 고려하여, 오늘 주목할 만한 이슈나 뉴스 각도를 2-3개 제안하세요.
+
+### 🎯 오늘의 추천 액션
+위 모든 정보를 종합하여, 오늘 가장 먼저 해야 할 일 3가지를 제안하세요.
+
+간결하고 실용적으로 작성하세요. 기자가 5분 안에 읽고 바로 업무에 들어갈 수 있어야 합니다.
+
+---
+
+{data}"
+    )
+}
+
+/// Save morning briefing to `.journalist/morning/` directory.
+fn save_morning_briefing(content: &str) -> std::path::PathBuf {
+    let dir = std::path::Path::new(MORNING_DIR);
+    std::fs::create_dir_all(dir).ok();
+
+    let today = today_date_string();
+    let filename = format!("{today}_briefing.md");
+    let path = dir.join(&filename);
+    std::fs::write(&path, content).ok();
+    path
+}
+
+/// Handle the `/morning` command: one-command morning briefing routine.
+pub async fn handle_morning(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/morning").unwrap_or("").trim();
+
+    if args == "help" || args == "--help" {
+        morning_print_help();
+        return;
+    }
+
+    println!("{DIM}  ☀️ 아침 브리핑 준비 중...{RESET}");
+
+    let data = collect_morning_data();
+
+    println!("{DIM}  📊 데이터 수집 완료. AI 브리핑 생성 중...{RESET}");
+
+    let prompt = build_morning_prompt(&data);
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    if !response.trim().is_empty() {
+        let path = save_morning_briefing(&response);
+        println!(
+            "{DIM}  ☀️ 브리핑이 {}에 저장되었습니다.{RESET}\n",
+            path.display()
+        );
+    }
+}
+
+fn morning_print_help() {
+    println!("{DIM}  /morning — 아침 브리핑 루틴 원커맨드{RESET}");
+    println!("{DIM}  출근하면 가장 먼저 실행하세요!{RESET}");
+    println!("{DIM}  다음 정보를 종합하여 AI 브리핑을 생성합니다:{RESET}");
+    println!("{DIM}    • 오늘 일정 (/calendar today){RESET}");
+    println!("{DIM}    • 마감 임박 (/deadline 3일 이내){RESET}");
+    println!("{DIM}    • 후속보도 리마인드 (/follow remind){RESET}");
+    println!("{DIM}    • 데스크 지시 대기 건 (/desk list pending){RESET}");
+    println!("{DIM}    • 오늘의 주요 이슈 요약 (AI 기반){RESET}");
+    println!("{DIM}  사용법:{RESET}");
+    println!("{DIM}    /morning              아침 브리핑 실행{RESET}");
+    println!("{DIM}    /morning help         도움말{RESET}\n");
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -16234,5 +16440,32 @@ mod tests {
     #[test]
     fn pitches_dir_constant() {
         assert_eq!(PITCHES_DIR, ".journalist/pitches");
+    }
+
+    #[test]
+    fn morning_dir_constant() {
+        assert_eq!(MORNING_DIR, ".journalist/morning");
+    }
+
+    #[test]
+    fn collect_morning_data_graceful_when_empty() {
+        // When no .journalist/ data files exist, should still return structured sections
+        let data = collect_morning_data();
+        assert!(data.contains("오늘 일정"));
+        assert!(data.contains("마감 임박"));
+        assert!(data.contains("후속보도 리마인드"));
+        assert!(data.contains("데스크 지시 대기 건"));
+    }
+
+    #[test]
+    fn build_morning_prompt_contains_sections() {
+        let prompt = build_morning_prompt("테스트 데이터");
+        assert!(prompt.contains("테스트 데이터"));
+        assert!(prompt.contains("오늘 일정 요약"));
+        assert!(prompt.contains("마감 임박 경고"));
+        assert!(prompt.contains("후속보도 리마인드"));
+        assert!(prompt.contains("데스크 지시 대기 건"));
+        assert!(prompt.contains("오늘의 주요 이슈"));
+        assert!(prompt.contains("오늘의 추천 액션"));
     }
 }
