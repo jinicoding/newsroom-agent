@@ -116,6 +116,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/pipeline",
     "/quality",
     "/template",
+    "/profile",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -201,6 +202,9 @@ pub const BREAKING_SUBCOMMANDS: &[&str] = &["update", "list"];
 
 pub const PIPELINE_SUBCOMMANDS: &[&str] = &["save", "run", "list", "show", "remove"];
 
+/// Profile subcommand names for `/profile <Tab>` completion.
+pub const PROFILE_SUBCOMMANDS: &[&str] = &["show", "set", "remove", "clear"];
+
 /// Template subcommand names for `/template <Tab>` completion.
 pub use crate::commands_writing::TEMPLATE_SUBCOMMANDS;
 
@@ -236,6 +240,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/breaking" => filter_candidates(BREAKING_SUBCOMMANDS, &partial_lower),
         "/pipeline" => filter_candidates(PIPELINE_SUBCOMMANDS, &partial_lower),
         "/template" => filter_candidates(TEMPLATE_SUBCOMMANDS, &partial_lower),
+        "/profile" => filter_candidates(PROFILE_SUBCOMMANDS, &partial_lower),
         "/multiformat" => {
             if partial_arg.starts_with("--format ") {
                 let fmt_part = &partial_arg[9..];
@@ -769,7 +774,8 @@ pub use crate::commands_git::{
 // Project dev-tool handlers
 pub use crate::commands_project::{
     handle_context, handle_docs, handle_find, handle_fix, handle_health, handle_index,
-    handle_init, handle_lint, handle_run, handle_run_usage, handle_test, handle_tree,
+    handle_init, handle_lint, handle_profile, handle_run, handle_run_usage, handle_test,
+    handle_tree,
 };
 
 // Research & source management handlers

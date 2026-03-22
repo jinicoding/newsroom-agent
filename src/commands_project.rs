@@ -1,5 +1,5 @@
 //! Project dev-tool command handlers and shared utilities.
-//! Commands: /context, /init, /health, /fix, /test, /lint, /tree, /run, /docs, /find, /index
+//! Commands: /context, /init, /health, /fix, /test, /lint, /tree, /run, /docs, /find, /index, /profile
 //! Shared utilities: topic_to_slug, today_str, draft paths, research paths, source helpers.
 
 
@@ -1521,6 +1521,171 @@ pub fn build_article_prompt(
 
 
 
+// ── /profile — 기자 프로필 관리 ───────────────────────────────────────────
+
+const PROFILE_FILE: &str = ".journalist/profile.json";
+
+/// Load the journalist profile from `.journalist/profile.json`.
+pub fn load_profile() -> serde_json::Map<String, serde_json::Value> {
+    load_profile_from(std::path::Path::new(PROFILE_FILE))
+}
+
+pub fn load_profile_from(path: &std::path::Path) -> serde_json::Map<String, serde_json::Value> {
+    if !path.exists() {
+        return serde_json::Map::new();
+    }
+    match std::fs::read_to_string(path) {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => serde_json::Map::new(),
+    }
+}
+
+pub fn save_profile(
+    profile: &serde_json::Map<String, serde_json::Value>,
+) -> std::io::Result<()> {
+    save_profile_to(profile, std::path::Path::new(PROFILE_FILE))
+}
+
+pub fn save_profile_to(
+    profile: &serde_json::Map<String, serde_json::Value>,
+    path: &std::path::Path,
+) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        if !dir.exists() {
+            std::fs::create_dir_all(dir)?;
+        }
+    }
+    let json = serde_json::to_string_pretty(profile)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    std::fs::write(path, json)
+}
+
+/// Format the profile for display.
+fn format_profile(profile: &serde_json::Map<String, serde_json::Value>) -> String {
+    if profile.is_empty() {
+        return format!("{DIM}  프로필이 설정되지 않았습니다.\n  /profile set <필드> <값> 으로 설정하세요.\n  필드: name, beat, org, email, phone, bio{RESET}\n");
+    }
+    let mut out = String::new();
+    let labels = [
+        ("name", "이름"),
+        ("org", "소속"),
+        ("beat", "출입처/분야"),
+        ("email", "이메일"),
+        ("phone", "전화"),
+        ("bio", "소개"),
+    ];
+    for (key, label) in &labels {
+        if let Some(val) = profile.get(*key) {
+            if let Some(s) = val.as_str() {
+                out.push_str(&format!("  {BOLD}{label}{RESET}: {s}\n"));
+            }
+        }
+    }
+    // Show any extra fields not in the standard list
+    for (key, val) in profile {
+        if !labels.iter().any(|(k, _)| k == key) {
+            if let Some(s) = val.as_str() {
+                out.push_str(&format!("  {BOLD}{key}{RESET}: {s}\n"));
+            }
+        }
+    }
+    if out.is_empty() {
+        format!("{DIM}  (프로필이 비어 있습니다){RESET}\n")
+    } else {
+        format!("{GREEN}  📋 기자 프로필{RESET}\n{out}")
+    }
+}
+
+/// Build a context string from the profile for injection into prompts.
+/// Used by /article, /briefing, /morning etc. to personalize output.
+#[allow(dead_code)]
+pub fn profile_context() -> String {
+    let profile = load_profile();
+    if profile.is_empty() {
+        return String::new();
+    }
+    let mut parts = Vec::new();
+    if let Some(name) = profile.get("name").and_then(|v| v.as_str()) {
+        parts.push(format!("기자: {name}"));
+    }
+    if let Some(org) = profile.get("org").and_then(|v| v.as_str()) {
+        parts.push(format!("소속: {org}"));
+    }
+    if let Some(beat) = profile.get("beat").and_then(|v| v.as_str()) {
+        parts.push(format!("출입처/분야: {beat}"));
+    }
+    if parts.is_empty() {
+        return String::new();
+    }
+    format!("\n[기자 프로필] {}", parts.join(" | "))
+}
+
+/// Handle the `/profile` command.
+pub fn handle_profile(input: &str) {
+    let args = input.strip_prefix("/profile").unwrap_or("").trim();
+
+    match args.split_whitespace().next().unwrap_or("show") {
+        "show" | "" => {
+            let profile = load_profile();
+            print!("{}", format_profile(&profile));
+        }
+        "set" => {
+            let rest = args.strip_prefix("set").unwrap_or("").trim();
+            let mut parts = rest.splitn(2, char::is_whitespace);
+            let field = parts.next().unwrap_or("").trim();
+            let value = parts.next().unwrap_or("").trim();
+            if field.is_empty() || value.is_empty() {
+                println!("{DIM}  사용법: /profile set <필드> <값>");
+                println!("  필드: name, beat, org, email, phone, bio");
+                println!("  예시: /profile set name 홍길동");
+                println!("        /profile set beat 정치");
+                println!("        /profile set org 한국일보{RESET}\n");
+                return;
+            }
+            let mut profile = load_profile();
+            profile.insert(
+                field.to_string(),
+                serde_json::Value::String(value.to_string()),
+            );
+            match save_profile(&profile) {
+                Ok(_) => {
+                    println!("{GREEN}  ✓ {field} = \"{value}\" 저장됨{RESET}\n");
+                }
+                Err(e) => {
+                    eprintln!("{RED}  프로필 저장 오류: {e}{RESET}\n");
+                }
+            }
+        }
+        "remove" => {
+            let field = args.strip_prefix("remove").unwrap_or("").trim();
+            if field.is_empty() {
+                println!("{DIM}  사용법: /profile remove <필드>{RESET}\n");
+                return;
+            }
+            let mut profile = load_profile();
+            if profile.remove(field).is_some() {
+                match save_profile(&profile) {
+                    Ok(_) => println!("{GREEN}  ✓ {field} 필드 삭제됨{RESET}\n"),
+                    Err(e) => eprintln!("{RED}  프로필 저장 오류: {e}{RESET}\n"),
+                }
+            } else {
+                println!("{DIM}  '{field}' 필드가 프로필에 없습니다.{RESET}\n");
+            }
+        }
+        "clear" => {
+            let empty = serde_json::Map::new();
+            match save_profile(&empty) {
+                Ok(_) => println!("{GREEN}  ✓ 프로필 초기화됨{RESET}\n"),
+                Err(e) => eprintln!("{RED}  프로필 저장 오류: {e}{RESET}\n"),
+            }
+        }
+        other => {
+            println!("{DIM}  알 수 없는 하위 명령: {other}");
+            println!("  사용법: /profile [show|set|remove|clear]{RESET}\n");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2074,5 +2239,116 @@ mod tests {
         let path = dir.path().join("test-diary.md");
         std::fs::write(&path, "일지 내용").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "일지 내용");
+    }
+
+    // ── /profile tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn profile_in_known_commands() {
+        use crate::commands::KNOWN_COMMANDS;
+        assert!(
+            KNOWN_COMMANDS.contains(&"/profile"),
+            "/profile should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn profile_load_empty() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("profile.json");
+        let profile = load_profile_from(&path);
+        assert!(profile.is_empty());
+    }
+
+    #[test]
+    fn profile_save_and_load() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("profile.json");
+        let mut profile = serde_json::Map::new();
+        profile.insert(
+            "name".to_string(),
+            serde_json::Value::String("홍길동".to_string()),
+        );
+        profile.insert(
+            "beat".to_string(),
+            serde_json::Value::String("정치".to_string()),
+        );
+        profile.insert(
+            "org".to_string(),
+            serde_json::Value::String("한국일보".to_string()),
+        );
+        save_profile_to(&profile, &path).unwrap();
+
+        let loaded = load_profile_from(&path);
+        assert_eq!(loaded.get("name").unwrap().as_str().unwrap(), "홍길동");
+        assert_eq!(loaded.get("beat").unwrap().as_str().unwrap(), "정치");
+        assert_eq!(loaded.get("org").unwrap().as_str().unwrap(), "한국일보");
+    }
+
+    #[test]
+    fn profile_save_creates_parent_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("subdir").join("profile.json");
+        let mut profile = serde_json::Map::new();
+        profile.insert(
+            "name".to_string(),
+            serde_json::Value::String("기자".to_string()),
+        );
+        save_profile_to(&profile, &path).unwrap();
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn profile_context_empty() {
+        // When no profile file exists, context should be empty
+        assert_eq!(PROFILE_FILE, ".journalist/profile.json");
+    }
+
+    #[test]
+    fn profile_format_empty() {
+        let profile = serde_json::Map::new();
+        let out = format_profile(&profile);
+        assert!(out.contains("프로필이 설정되지 않았습니다"));
+    }
+
+    #[test]
+    fn profile_format_with_data() {
+        let mut profile = serde_json::Map::new();
+        profile.insert(
+            "name".to_string(),
+            serde_json::Value::String("홍길동".to_string()),
+        );
+        profile.insert(
+            "org".to_string(),
+            serde_json::Value::String("한국일보".to_string()),
+        );
+        let out = format_profile(&profile);
+        assert!(out.contains("홍길동"));
+        assert!(out.contains("한국일보"));
+        assert!(out.contains("기자 프로필"));
+    }
+
+    #[test]
+    fn profile_remove_field() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("profile.json");
+        let mut profile = serde_json::Map::new();
+        profile.insert(
+            "name".to_string(),
+            serde_json::Value::String("홍길동".to_string()),
+        );
+        profile.insert(
+            "beat".to_string(),
+            serde_json::Value::String("정치".to_string()),
+        );
+        save_profile_to(&profile, &path).unwrap();
+
+        let mut loaded = load_profile_from(&path);
+        loaded.remove("beat");
+        save_profile_to(&loaded, &path).unwrap();
+
+        let reloaded = load_profile_from(&path);
+        assert!(reloaded.get("name").is_some());
+        assert!(reloaded.get("beat").is_none());
     }
 }

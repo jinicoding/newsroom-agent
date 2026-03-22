@@ -857,6 +857,10 @@ pub async fn run_repl(
                 }
                 continue;
             }
+            s if s == "/profile" || s.starts_with("/profile ") => {
+                commands::handle_profile(input);
+                continue;
+            }
             s if s.starts_with('/') && is_unknown_command(s) => {
                 let cmd = s.split_whitespace().next().unwrap_or(s);
                 eprintln!("{RED}  unknown command: {cmd}{RESET}");

@@ -1,4 +1,4 @@
-=== Day 5 (2026-03-22 16:13) ===
+=== Day 5 (2026-03-22 16:27) ===
 Mode: 로컬 (Claude Max)
 
 → 빌드 확인...
@@ -59,51 +59,51 @@ warning: unused import: `crate::commands_workflow::*`
      |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 warning: unused import: `std::path::Path`
-    --> src/commands_workflow.rs:5239:9
+    --> src/commands_workflow.rs:5401:9
      |
-5239 |     use std::path::Path;
+5401 |     use std::path::Path;
      |         ^^^^^^^^^^^^^^^
 
 warning: unused import: `crate::commands_project::*`
-    --> src/commands_workflow.rs:5240:9
+    --> src/commands_workflow.rs:5402:9
      |
-5240 |     use crate::commands_project::*;
+5402 |     use crate::commands_project::*;
      |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 warning: unused import: `crate::commands_writing::*`
-    --> src/commands_workflow.rs:5242:9
+    --> src/commands_workflow.rs:5404:9
      |
-5242 |     use crate::commands_writing::*;
+5404 |     use crate::commands_writing::*;
      |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 warning: unused import: `crate::commands_workflow::*`
-    --> src/commands_workflow.rs:5243:9
+    --> src/commands_workflow.rs:5405:9
      |
-5243 |     use crate::commands_workflow::*;
+5405 |     use crate::commands_workflow::*;
      |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 warning: unused import: `crate::commands_project::*`
-    --> src/commands_writing.rs:4267:9
+    --> src/commands_writing.rs:5156:9
      |
-4267 |     use crate::commands_project::*;
+5156 |     use crate::commands_project::*;
      |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 warning: unused import: `crate::commands_research::*`
-    --> src/commands_writing.rs:4268:9
+    --> src/commands_writing.rs:5157:9
      |
-4268 |     use crate::commands_research::*;
+5157 |     use crate::commands_research::*;
      |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 warning: unused import: `crate::commands_writing::*`
-    --> src/commands_writing.rs:4269:9
+    --> src/commands_writing.rs:5158:9
      |
-4269 |     use crate::commands_writing::*;
+5158 |     use crate::commands_writing::*;
      |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 warning: unused import: `crate::commands_workflow::*`
-    --> src/commands_writing.rs:4270:9
+    --> src/commands_writing.rs:5159:9
      |
-4270 |     use crate::commands_workflow::*;
+5159 |     use crate::commands_workflow::*;
      |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 warning: function `temp_sources_path` is never used
@@ -175,57 +175,22 @@ warning: function `temp_performance_path` is never used
   대기 답변 없음.
 
 → Phase A: 계획 수립...
-SESSION_PLAN.md 작성 완료. 계획을 멈추고 요약합니다.
+SESSION_PLAN.md를 작성했습니다.
 
----
+**Day 5 — 16:27 세션 계획 요약:**
 
-**Day 5, 16:13 세션 계획 완료.**
+| 순서 | 제목 | 핵심 |
+|---|---|---|
+| Task 1 | `/profile` — 기자 프로필 관리 | 이름·출입처·언론사 설정 → 기존 커맨드에 맥락 주입 |
+| Task 2 | `/rss` — RSS 피드 구독 | 실제 RSS를 curl로 가져오는 **최초의 실시간 데이터 커넥터** |
+| Task 3 | `/version` — 기사 버전 관리 | 초안 버전 이력·diff·복원 |
+| Task 4 | 저널 기록 | 세션 결과 기록 |
 
-자체 진단 결과:
-- 빌드/테스트 정상 (1142 tests 전부 통과)
-- 97개 커맨드, 35k 라인, 버그 없음
-- 커뮤니티 이슈 없음
+**테마: "실전 연결과 개인화"** — 98개 AI 프롬프트 래퍼를 실제 데이터와 기자 개인 맥락에 연결하는 전환점.
 
-4개 태스크 계획:
-
-| # | 태스크 | 핵심 가치 |
-|---|--------|----------|
-| 1 | `/template` — 정형 기사 템플릿 | 분기실적·인사·부고 등 반복 기사를 빠르게 생산 |
-| 2 | `/dashboard` 로컬 집계 강화 | AI 호출 전 실데이터 기반 현황 파악 |
-| 3 | `/newsapi` — 네이버 뉴스 API | 실제 뉴스 데이터로 리서치 품질 향상 |
-| 4 | 저널 엔트리 | 세션 기록 |
-
-전략 방향: "기능 추가"에서 "실제 데이터 연동과 실용성 강화"로 전환. 구현은 하지 않았습니다 — 계획만 작성 완료.
+커뮤니티 이슈는 오늘 없습니다.
 
 → Phase B: 구현...
   계획된 태스크: 4개
 
   ── Task 1 / 4 ──
-완료. `/template` 정형 기사 템플릿 시스템 구현:
-
-- **내장 템플릿 5종** 하드코딩: `earnings`(분기실적), `personnel`(인사발령), `obituary`(부고), `election`(선거개표), `weather`(날씨)
-- **`resolve_template()`**: 내장 → 사용자 순서로 탐색하는 통합 해결 함수
-- **`list`**: 내장/사용자 구분 표시
-- **`show`**: 내장 템플릿에 `[내장]` 태그 표시
-- **`remove`**: 내장 템플릿 삭제 차단
-- **`use`**: 내장 템플릿도 AI 기사 생성에 사용 가능
-- **테스트 8건 추가**: 내장 존재 확인, 내용 검증, `resolve_template` 동작, `is_builtin` 체크 등
-    Task 1: 검증 OK
-
-  ── Task 2 / 4 ──
-완료. `/dashboard`에 로컬 데이터 집계 기능을 추가했습니다:
-
-**추가된 집계 함수 (각각 독립 유닛으로 테스트 가능):**
-- `count_files_for_date` — 오늘 작성된 draft/research 파일 수
-- `count_imminent_deadlines` — 3일 이내 임박 마감 건수
-- `count_pending_followups` — 미처리 후속보도 수  
-- `top_performance_articles` — 성과 상위 3개 기사 (views+comments+shares 합산)
-- `count_unresolved_corrections` — 미해결 정정 건수
-- `gather_dashboard_stats` — 위 전체를 `DashboardStats` 구조체로 통합
-
-**대시보드 출력에 "📊 오늘의 활동 집계" 섹션이 새로 표시됩니다.**
-
-**테스트 14개 추가** — 빈 디렉토리, 존재하지 않는 디렉토리, 데이터 있는 경우 모두 커버.
-    Task 2: 검증 OK
-
-  ── Task 3 / 4 ──
