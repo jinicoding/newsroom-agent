@@ -825,6 +825,11 @@ pub async fn run_repl(
                     .await;
                 continue;
             }
+            s if s == "/quality" || s.starts_with("/quality ") => {
+                commands::handle_quality(agent, input, &mut session_total, &agent_config.model)
+                    .await;
+                continue;
+            }
             s if s == "/pipeline" || s.starts_with("/pipeline ") => {
                 if let Some(prompt) = commands::handle_pipeline(input) {
                     if !prompt.is_empty() {

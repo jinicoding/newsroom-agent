@@ -114,6 +114,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/wire",
     "/correction",
     "/pipeline",
+    "/quality",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -777,8 +778,8 @@ pub use crate::commands_research::{
 pub use crate::commands_writing::{
     handle_anonymize, handle_archive, handle_article, handle_checklist, handle_correction,
     handle_draft, handle_export, handle_headline, handle_improve, handle_legal,
-    handle_multiformat, handle_proofread, handle_publish, handle_quote, handle_readability,
-    handle_rewrite, handle_stats, handle_summary, handle_translate,
+    handle_multiformat, handle_proofread, handle_publish, handle_quality, handle_quote,
+    handle_readability, handle_rewrite, handle_stats, handle_summary, handle_translate,
 };
 
 // Workflow & management handlers

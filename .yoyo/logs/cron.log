@@ -1402,3 +1402,13 @@ Day 5 16:00 세션 계획 요약:
   계획된 태스크: 4개
 
   ── Task 1 / 4 ──
+`/pipeline` 커맨드 구현 완료. 커밋: `00f460f`
+
+구현 내용:
+- **`src/commands_workflow.rs`**: `PipelineDef` 구조체, 파이프라인 파싱/저장/로드/목록/실행 프롬프트 빌드 함수, `handle_pipeline()` 핸들러
+- **`src/commands.rs`**: `KNOWN_COMMANDS`에 `/pipeline` 등록, `PIPELINE_SUBCOMMANDS` 탭 완성, re-export, 도움말 추가
+- **`src/repl.rs`**: 디스패치 추가 (`/note`·`/contact`와 동일한 `Option<String>` 반환 패턴)
+
+서브커맨드: `save`, `run`, `list`, `show`, `remove` — save/list/show/remove는 AI 호출 없이 로컬 동작, run은 AI 프롬프트를 반환하여 파이프라인 순차 실행. 테스트 9건 모두 통과.
+
+  ── Task 2 / 4 ──

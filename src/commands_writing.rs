@@ -4260,6 +4260,451 @@ pub async fn handle_multiformat(
     }
 }
 
+// ── /quality — 기사 품질 종합 분석 ──────────────────────────────────────
+
+const QUALITY_DIR: &str = ".journalist/quality";
+
+/// Build file path for quality check report with explicit date.
+pub fn quality_check_path_with_date(slug_source: &str, date: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(slug_source, 50);
+    let filename = if slug.is_empty() {
+        format!("{date}_quality.md")
+    } else {
+        format!("{date}_{slug}.md")
+    };
+    std::path::PathBuf::from(QUALITY_DIR).join(filename)
+}
+
+/// Build file path for quality check report with today's date.
+fn quality_check_path(slug_source: &str) -> std::path::PathBuf {
+    quality_check_path_with_date(slug_source, &today_str())
+}
+
+/// Build file path for quality period report with explicit date.
+pub fn quality_report_path_with_date(date: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(QUALITY_DIR).join(format!("{date}_report.md"))
+}
+
+/// Save quality report to file.
+fn save_quality(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
+/// Build local quality summary (stats + readability) without AI.
+pub fn build_quality_local_summary(content: &str) -> String {
+    let stats = compute_text_stats(content);
+    let rm = compute_readability(content);
+
+    let mut out = String::new();
+    out.push_str(&format!("## 📊 텍스트 통계\n"));
+    out.push_str(&format!("- 글자 수 (공백 포함): {}\n", stats.chars_with_spaces));
+    out.push_str(&format!("- 글자 수 (공백 제외): {}\n", stats.chars_without_spaces));
+    out.push_str(&format!("- 단어 수: {}\n", stats.words));
+    out.push_str(&format!("- 문장 수: {}\n", stats.sentences));
+    out.push_str(&format!("- 문단 수: {}\n", stats.paragraphs));
+    out.push_str(&format!(
+        "- 예상 읽기 시간: {}\n",
+        format_reading_time(stats.reading_time_secs)
+    ));
+    out.push_str(&format!("\n## 📖 가독성 분석\n"));
+    out.push_str(&format!("- 종합 등급: {}\n", rm.grade));
+    out.push_str(&format!("- 평균 문장 길이: {:.1}자\n", rm.avg_sentence_len));
+    out.push_str(&format!(
+        "- 긴 문장 비율 (>80자): {:.1}%\n",
+        rm.long_sentence_ratio * 100.0
+    ));
+    out.push_str(&format!(
+        "- 평균 문단 길이: {:.1}문장\n",
+        rm.avg_paragraph_len
+    ));
+    out.push_str(&format!(
+        "- 수동태 추정 비율: {:.1}%\n",
+        rm.passive_ratio * 100.0
+    ));
+    out.push_str(&format!(
+        "- 전문 용어 밀도: {:.1}%\n",
+        rm.jargon_density * 100.0
+    ));
+    out
+}
+
+/// Build AI prompt for comprehensive quality check of a single article.
+pub fn build_quality_check_prompt(article: &str, local_summary: &str) -> String {
+    format!(
+        r#"당신은 한국 종합일간지의 편집위원입니다. 아래 기사에 대해 종합 품질 분석을 수행하세요.
+
+## 로컬 분석 결과 (자동 산출)
+
+{local_summary}
+
+## 종합 품질 평가 항목
+
+위 통계·가독성 데이터를 참고하여, 다음 6개 항목을 각각 10점 만점으로 평가해주세요:
+
+### 1. 정확성 (Accuracy)
+- 사실관계 오류, 수치 불일치, 논리적 모순이 있는가?
+- 출처가 명확한가?
+
+### 2. 구조 (Structure)
+- 역피라미드/시간순 등 적절한 구조를 사용하고 있는가?
+- 리드문이 핵심을 전달하는가?
+
+### 3. 가독성 (Readability)
+- 위 자동 분석 결과를 참고하여 전체적인 읽기 편의성을 평가
+
+### 4. 뉴스 가치 (News Value)
+- 시의성, 영향력, 독자 관심도가 충분한가?
+- 차별화된 시각이나 새로운 정보가 있는가?
+
+### 5. 취재 깊이 (Depth)
+- 다양한 시각이 반영되어 있는가?
+- 배경 설명과 맥락이 충분한가?
+
+### 6. 윤리·법적 준수 (Ethics)
+- 명예훼손, 사생활 침해, 편향 보도의 위험이 없는가?
+- 취재원 보호가 적절한가?
+
+## 출력 형식
+
+### 📊 품질 점수표
+| 항목 | 점수 | 한줄 평가 |
+|------|------|-----------|
+| 정확성 | ?/10 | ... |
+| 구조 | ?/10 | ... |
+| 가독성 | ?/10 | ... |
+| 뉴스 가치 | ?/10 | ... |
+| 취재 깊이 | ?/10 | ... |
+| 윤리·법적 준수 | ?/10 | ... |
+| **종합** | **?/60** | ... |
+
+### 🏆 등급
+(A: 50+, B: 40-49, C: 30-39, D: 20-29, F: ~19)
+
+### 📝 주요 개선 사항 (Top 3)
+(가장 효과가 클 3가지 수정 사항을 우선순위로)
+
+### ✅ 잘된 점
+(칭찬할 만한 부분)
+
+## 원문
+{article}"#
+    )
+}
+
+/// Build AI prompt for period quality report.
+pub fn build_quality_report_prompt(
+    corrections: &[CorrectionRecord],
+    performance_data: &[serde_json::Value],
+    recent_drafts: &[(String, String)],
+) -> String {
+    let mut context = String::new();
+
+    // Correction history
+    if corrections.is_empty() {
+        context.push_str("## 정정 이력\n정정 기록 없음.\n\n");
+    } else {
+        context.push_str(&format!("## 정정 이력 ({} 건)\n", corrections.len()));
+        for r in corrections {
+            context.push_str(&format!(
+                "- [{}] {} — 오류: {} → 정정: {} ({})\n",
+                r.date, r.article, r.error, r.fix, r.status
+            ));
+        }
+        context.push('\n');
+    }
+
+    // Performance data
+    if performance_data.is_empty() {
+        context.push_str("## 성과 데이터\n등록된 성과 데이터 없음.\n\n");
+    } else {
+        context.push_str(&format!(
+            "## 성과 데이터 ({} 건)\n",
+            performance_data.len()
+        ));
+        for entry in performance_data {
+            let title = entry["title"].as_str().unwrap_or("?");
+            let views = entry["views"].as_u64().unwrap_or(0);
+            let comments = entry["comments"].as_u64().unwrap_or(0);
+            let shares = entry["shares"].as_u64().unwrap_or(0);
+            context.push_str(&format!(
+                "- {title}: 조회 {views} / 댓글 {comments} / 공유 {shares}\n"
+            ));
+        }
+        context.push('\n');
+    }
+
+    // Recent drafts with readability analysis
+    if recent_drafts.is_empty() {
+        context.push_str("## 최근 초안 가독성\n초안 없음.\n\n");
+    } else {
+        context.push_str(&format!(
+            "## 최근 초안 가독성 ({} 건)\n",
+            recent_drafts.len()
+        ));
+        for (name, content) in recent_drafts {
+            let rm = compute_readability(content);
+            let stats = compute_text_stats(content);
+            context.push_str(&format!(
+                "- {name}: 등급 {}, 문장 {}개, 평균 문장 {:.1}자, 긴 문장 {:.0}%, 전문용어 {:.1}%, 읽기시간 {}\n",
+                rm.grade,
+                rm.sentence_count,
+                rm.avg_sentence_len,
+                rm.long_sentence_ratio * 100.0,
+                rm.jargon_density * 100.0,
+                format_reading_time(stats.reading_time_secs),
+            ));
+        }
+        context.push('\n');
+    }
+
+    format!(
+        r#"당신은 한국 종합일간지의 편집국장입니다. 아래 데이터를 바탕으로 최근 기사 품질 종합 리포트를 작성하세요.
+
+{context}
+
+## 분석 요청
+
+위 데이터를 종합하여 다음을 포함하는 리포트를 작성하세요:
+
+### 1. 📊 종합 현황
+- 최근 기사 수, 평균 가독성 등급, 정정 빈도
+
+### 2. 📈 성과 트렌드
+- 조회수·댓글·공유 추이, 성과 좋은 기사의 특징
+
+### 3. ⚠️ 오류 패턴
+- 정정 이력에서 반복되는 오류 유형, 근본 원인 추정
+
+### 4. 📖 가독성 트렌드
+- 평균 가독성 등급 변화, 개선/악화 영역
+
+### 5. 🎯 개선 권고 (Top 5)
+- 가장 효과가 큰 개선 사항 5가지를 우선순위로
+
+### 6. ✅ 잘하고 있는 점
+- 유지·강화할 강점
+
+결론에 종합 등급(A~F)을 부여하고, 간단한 한줄 평가를 덧붙여주세요."#
+    )
+}
+
+/// Collect recent drafts from `.journalist/drafts/` (up to 20 most recent).
+fn collect_recent_drafts(limit: usize) -> Vec<(String, String)> {
+    let drafts_dir = std::path::Path::new(DRAFTS_DIR);
+    if !drafts_dir.is_dir() {
+        return Vec::new();
+    }
+
+    let mut files: Vec<std::fs::DirEntry> = Vec::new();
+    fn walk_dir(dir: &std::path::Path, out: &mut Vec<std::fs::DirEntry>) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk_dir(&path, out);
+                } else if path.extension().map_or(false, |e| e == "md") {
+                    out.push(entry);
+                }
+            }
+        }
+    }
+    walk_dir(drafts_dir, &mut files);
+
+    // Sort by modification time (most recent first)
+    files.sort_by(|a, b| {
+        let t_a = a.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        let t_b = b.metadata().and_then(|m| m.modified()).unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        t_b.cmp(&t_a)
+    });
+
+    files.truncate(limit);
+
+    files
+        .iter()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let name = path
+                .strip_prefix(DRAFTS_DIR)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_string();
+            std::fs::read_to_string(&path).ok().map(|c| (name, c))
+        })
+        .collect()
+}
+
+/// Handle the `/quality` command: comprehensive article quality analysis.
+pub async fn handle_quality(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/quality").unwrap_or("").trim();
+
+    if args.is_empty() || args == "help" {
+        quality_usage();
+        return;
+    }
+
+    let (sub, rest) = match args.split_once(char::is_whitespace) {
+        Some((s, r)) => (s, r.trim()),
+        None => (args, ""),
+    };
+
+    match sub {
+        "check" => quality_check(agent, rest, session_total, model).await,
+        "report" => quality_report(agent, rest, session_total, model).await,
+        _ => {
+            // Treat as file path for check
+            quality_check(agent, args, session_total, model).await;
+        }
+    }
+}
+
+fn quality_usage() {
+    println!("{DIM}  사용법:{RESET}");
+    println!("{DIM}  /quality check <파일>    — 단일 기사 품질 종합 분석{RESET}");
+    println!("{DIM}  /quality report          — 기간별 종합 리포트 (기본 최근 7일){RESET}");
+    println!("{DIM}  /quality <파일>          — check의 축약형{RESET}");
+    println!("{DIM}  가독성·통계는 로컬 분석, 종합 평가는 AI가 수행합니다.{RESET}\n");
+}
+
+async fn quality_check(
+    agent: &mut Agent,
+    file_arg: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let (path, content) = if file_arg.is_empty() {
+        match find_latest_draft() {
+            Some(p) => match std::fs::read_to_string(&p) {
+                Ok(c) => (p.to_string_lossy().to_string(), c),
+                Err(e) => {
+                    eprintln!("{RED}  파일 읽기 실패: {e}{RESET}\n");
+                    return;
+                }
+            },
+            None => {
+                eprintln!("{DIM}  분석할 파일이 없습니다. 경로를 지정하거나 /article로 초안을 먼저 작성하세요.{RESET}\n");
+                return;
+            }
+        }
+    } else {
+        match std::fs::read_to_string(file_arg) {
+            Ok(c) => (file_arg.to_string(), c),
+            Err(e) => {
+                eprintln!("{RED}  파일 읽기 실패 ({file_arg}): {e}{RESET}\n");
+                return;
+            }
+        }
+    };
+
+    // Step 1: local analysis (no AI)
+    let local_summary = build_quality_local_summary(&content);
+    println!("{BOLD}  📋 기사 품질 분석: {path}{RESET}");
+    println!("{DIM}  ──────────────────────────────{RESET}");
+
+    // Display local stats
+    let stats = compute_text_stats(&content);
+    let rm = compute_readability(&content);
+    println!("  글자 수: {} (공백 제외 {})", stats.chars_with_spaces, stats.chars_without_spaces);
+    println!("  단어/문장/문단: {} / {} / {}", stats.words, stats.sentences, stats.paragraphs);
+    println!("  읽기 시간: {}", format_reading_time(stats.reading_time_secs));
+    println!("  가독성 등급: {}", grade_colored(rm.grade));
+    println!("  평균 문장 {:.1}자 | 긴 문장 {:.0}% | 수동태 {:.0}% | 전문용어 {:.1}%",
+        rm.avg_sentence_len,
+        rm.long_sentence_ratio * 100.0,
+        rm.passive_ratio * 100.0,
+        rm.jargon_density * 100.0,
+    );
+    println!("{DIM}  ──────────────────────────────{RESET}");
+    println!("{DIM}  AI 종합 평가 진행 중...{RESET}\n");
+
+    // Step 2: AI quality assessment
+    let prompt = build_quality_check_prompt(&content, &local_summary);
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    // Save
+    if !response.trim().is_empty() {
+        let slug_source = std::path::Path::new(&path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let save_path = quality_check_path(&slug_source);
+        let full_report = format!("# 품질 분석: {path}\n\n{local_summary}\n---\n\n{response}");
+        match save_quality(&save_path, &full_report) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 품질 리포트 저장: {}{RESET}\n",
+                    save_path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
+}
+
+async fn quality_report(
+    agent: &mut Agent,
+    _args: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    println!("{DIM}  데이터 수집 중...{RESET}");
+
+    // Collect data from various sources
+    let corrections = load_corrections();
+    let perf_path = std::path::Path::new(".journalist/performance.json");
+    let performance_data = if perf_path.exists() {
+        match std::fs::read_to_string(perf_path) {
+            Ok(c) => serde_json::from_str::<Vec<serde_json::Value>>(&c).unwrap_or_default(),
+            Err(_) => Vec::new(),
+        }
+    } else {
+        Vec::new()
+    };
+    let recent_drafts = collect_recent_drafts(20);
+
+    println!(
+        "{DIM}  정정 {}건 | 성과 {}건 | 초안 {}건{RESET}",
+        corrections.len(),
+        performance_data.len(),
+        recent_drafts.len()
+    );
+
+    if corrections.is_empty() && performance_data.is_empty() && recent_drafts.is_empty() {
+        println!("{DIM}  분석할 데이터가 없습니다. 기사를 작성하거나 성과·정정 데이터를 등록하세요.{RESET}\n");
+        return;
+    }
+
+    let prompt = build_quality_report_prompt(&corrections, &performance_data, &recent_drafts);
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    if !response.trim().is_empty() {
+        let save_path = quality_report_path_with_date(&today_str());
+        let full_report = format!("# 기사 품질 종합 리포트\n\n{response}");
+        match save_quality(&save_path, &full_report) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 종합 리포트 저장: {}{RESET}\n",
+                    save_path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5790,5 +6235,102 @@ mod tests {
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("정정보도문"));
+    }
+
+    // ── /quality tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn quality_check_path_with_slug() {
+        let path = quality_check_path_with_date("반도체 수출 기사", "2026-03-22");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/quality/2026-03-22_반도체-수출-기사.md"
+        );
+    }
+
+    #[test]
+    fn quality_check_path_empty_slug() {
+        let path = quality_check_path_with_date("", "2026-03-22");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/quality/2026-03-22_quality.md"
+        );
+    }
+
+    #[test]
+    fn quality_report_path_format() {
+        let path = quality_report_path_with_date("2026-03-22");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/quality/2026-03-22_report.md"
+        );
+    }
+
+    #[test]
+    fn save_quality_creates_dir_and_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("quality").join("test.md");
+        let result = save_quality(&path, "# 품질 리포트\n\n내용");
+        assert!(result.is_ok());
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("품질 리포트"));
+    }
+
+    #[test]
+    fn build_quality_local_summary_includes_stats_and_readability() {
+        let text = "삼성전자가 1분기 영업이익 15조원을 기록했다. 전년 대비 30% 증가한 수치다. 반도체 부문이 회복세를 이끌었다.";
+        let summary = build_quality_local_summary(text);
+        assert!(summary.contains("텍스트 통계"));
+        assert!(summary.contains("가독성 분석"));
+        assert!(summary.contains("글자 수"));
+        assert!(summary.contains("종합 등급"));
+        assert!(summary.contains("평균 문장 길이"));
+    }
+
+    #[test]
+    fn build_quality_check_prompt_includes_article_and_summary() {
+        let article = "테스트 기사 내용입니다.";
+        let summary = "## 요약\n- 글자 수: 12";
+        let prompt = build_quality_check_prompt(article, summary);
+        assert!(prompt.contains("테스트 기사 내용입니다."));
+        assert!(prompt.contains("## 요약"));
+        assert!(prompt.contains("정확성"));
+        assert!(prompt.contains("가독성"));
+        assert!(prompt.contains("뉴스 가치"));
+        assert!(prompt.contains("윤리"));
+    }
+
+    #[test]
+    fn build_quality_report_prompt_with_data() {
+        let corrections = vec![CorrectionRecord {
+            date: "2026-03-22".to_string(),
+            article: "반도체 수출".to_string(),
+            error: "수치 오류".to_string(),
+            fix: "정정 수치".to_string(),
+            status: "done".to_string(),
+        }];
+        let perf = vec![serde_json::json!({
+            "title": "반도체 기사",
+            "views": 1500,
+            "comments": 30,
+            "shares": 10,
+        })];
+        let drafts = vec![("draft1.md".to_string(), "테스트 기사 내용. 두 번째 문장.".to_string())];
+        let prompt = build_quality_report_prompt(&corrections, &perf, &drafts);
+        assert!(prompt.contains("정정 이력"));
+        assert!(prompt.contains("반도체 수출"));
+        assert!(prompt.contains("성과 데이터"));
+        assert!(prompt.contains("조회 1500"));
+        assert!(prompt.contains("초안 가독성"));
+        assert!(prompt.contains("개선 권고"));
+    }
+
+    #[test]
+    fn build_quality_report_prompt_empty_data() {
+        let prompt = build_quality_report_prompt(&[], &[], &[]);
+        assert!(prompt.contains("정정 기록 없음"));
+        assert!(prompt.contains("성과 데이터 없음"));
+        assert!(prompt.contains("초안 없음"));
     }
 }
