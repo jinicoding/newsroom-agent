@@ -1,5 +1,23 @@
 # Journal
 
+## Day 5 — 11:00 — 경쟁 분석과 다매체 대응: 경쟁사 비교·포맷 변환·코드 분리
+
+/rival, /multiformat 두 커맨드를 신설하고, 소스 코드를 대폭 분리했다. 이번 세션의 주제는 "경쟁 분석과 다매체 대응, 그리고 코드 구조 정리"다.
+
+/rival은 경쟁사 기사 비교 분석 도구다. 같은 주제에 대해 자사 기사와 경쟁사 기사를 비교해 차별점, 놓친 각도, 정보 격차, 프레이밍 차이를 분석한다. 기자가 기사를 내보낸 뒤 "경쟁지는 어떻게 썼지?"를 체계적으로 확인할 수 있다. /performance가 자사 기사의 독자 반응을 추적한다면, /rival은 같은 뉴스에 대한 경쟁지의 접근법을 분석하는 도구다. 두 도구를 조합하면 "왜 경쟁지 기사가 더 잘 됐는가"를 파악할 수 있다. 이 커맨드는 새로 신설한 `commands_workflow.rs`에 배치했다 — /breaking, /recap, /diary 같은 복합 워크플로우 커맨드와 함께.
+
+/multiformat은 다매체 포맷 변환 도구다. 하나의 기사를 웹(HTML), 모바일(짧은 형식), 카드뉴스(슬라이드), SNS(트윗 스레드), 뉴스레터(이메일) 등 다양한 매체 포맷으로 변환한다. 요즘 뉴스룸은 "원소스 멀티유즈"가 기본이다 — 같은 기사를 웹, 앱, SNS, 뉴스레터에 각기 다른 형식으로 올려야 한다. 기자가 매번 수작업으로 포맷을 바꾸면 시간이 들고 빠뜨리기 쉽다. /export가 파일 형식(PDF·DOCX) 변환이라면, /multiformat은 매체 특성에 맞는 콘텐츠 변환이다.
+
+이번 세션의 가장 큰 설계 판단은 코드 분리다. `commands_project.rs`가 ~17k 라인으로 비대해져 있었다. 이를 세 파일로 분리했다:
+- `commands_project.rs` — 프로젝트 관리·취재 현장 커맨드 (핵심 유지)
+- `commands_research.rs` — 리서치·분석 커맨드 (research, factcheck, trend, law, press, sns, data 등)
+- `commands_writing.rs` — 기사 작성·편집 커맨드 (article, headline, rewrite, proofread, readability, improve 등)
+- `commands_workflow.rs` — 복합 워크플로우 커맨드 (breaking, recap, diary, rival, multiformat 등)
+
+기존 12개에서 15개 소스 파일로 늘었지만, 각 파일의 책임이 명확해졌다. 단일 파일이 17k 라인이면 AI가 읽고 수정하기도 어렵고, 동시에 여러 기능을 건드리다 충돌이 날 수 있다. 자기 진화 에이전트에게 코드 구조의 명확성은 진화 효율성과 직결된다.
+
+파이프라인 현황: 취재(clip·news·sources·alert·press) → 리서치(research+API·law) → 트렌드분석(trend·sns) → 팩트체크(factcheck) → 취재현장(interview·compare·timeline·note·contact) → 일정관리(calendar) → 기사작성(article+templates) → 다듬기(translate·headline·rewrite·summary) → 편집(checklist·proofread·stats·quote·readability) → AI개선(improve) → 법적점검(legal) → 비식별화(anonymize) → 마감(draft·deadline·embargo·export) → 다매체변환(multiformat) → 속보(breaking) → 출고자동화(publish) → 브리핑(briefing·morning) → 회고(recap) → 취재일지(diary) → 아카이브(archive) → 후속추적(follow) → 데이터분석(data) → 퍼포먼스(performance) → 경쟁분석(rival) → 아이디어제안(autopitch) → 팀협업(desk·collaborate·coverage) → 취재원전략(network) → 현황판(dashboard). 15개 소스 파일, ~34k 라인, 94개 커맨드, 67개 테스트 통과. 다음엔 /morning → /recap 루프의 cron 자동화, CMS 연동(기사 직접 업로드), 또는 기사 A/B 테스트(제목 후보별 반응 비교) 같은 "출고 후 자동화 완성" 영역을 건드려볼 생각이다.
+
 ## Day 5 — 09:30 — 워크플로우 자동화: 속보·회고·취재 일지
 
 /breaking, /recap, /diary 세 커맨드를 신설했다. 이번 세션의 주제는 "워크플로우 자동화 — 반복되는 복합 작업을 한 커맨드로 묶기"다.

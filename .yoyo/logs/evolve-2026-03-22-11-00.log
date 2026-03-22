@@ -44,3 +44,12 @@ SESSION_PLAN.md 작성 완료.
 - 테스트 12개: 인자 파싱, 프롬프트 생성, 파일 경로, 결과 저장
 
   ── Task 3 / 4 ──
+구현 완료. `/multiformat` 커맨드가 추가되었습니다:
+
+- **4가지 포맷**: `broadcast` (방송 원고), `online` (온라인 기사), `card` (카드뉴스 5장), `brief` (3줄 요약)
+- **사용법**: `/multiformat article.md --format broadcast`
+- **저장**: `.journalist/multiformat/날짜_파일명_포맷.md`
+- **탭 완성**: `--format` 및 포맷명 자동완성 지원
+- **테스트 13건**: 인자 파싱, 포맷별 프롬프트 생성, 저장 경로, 빈 입력/미지 포맷 처리 모두 통과
+
+  ── Task 4 / 4 ──
