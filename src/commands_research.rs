@@ -1281,6 +1281,239 @@ pub async fn handle_news(
     }
 }
 
+// ── /wire — 통신사 속보 모니터링 ──────────────────────────────────────
+
+/// RSS feed URLs for major Korean wire services.
+const WIRE_FEEDS: &[(&str, &str)] = &[
+    ("연합뉴스", "https://www.yna.co.kr/rss/news.xml"),
+    ("뉴시스", "https://newsis.com/rss/all_rss.xml"),
+    ("뉴스1", "https://www.news1.kr/rss/latest"),
+];
+
+// Thread-local storage for the last wire results (for `/wire save`).
+thread_local! {
+    static LAST_WIRE_RESULTS: std::cell::RefCell<Vec<NewsItem>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Parse RSS XML content into a list of `NewsItem`.
+/// Extracts `<title>`, `<link>`, `<description>`, and `<pubDate>` from each `<item>`.
+pub fn parse_rss_items(xml: &str) -> Vec<NewsItem> {
+    let mut results = Vec::new();
+    let mut search_from = 0;
+
+    while let Some(item_start) = xml[search_from..].find("<item>").or_else(|| xml[search_from..].find("<item ")) {
+        let abs_start = search_from + item_start;
+        let item_end = match xml[abs_start..].find("</item>") {
+            Some(pos) => abs_start + pos + 7,
+            None => break,
+        };
+        let item_xml = &xml[abs_start..item_end];
+
+        let title = xml_extract_tag(item_xml, "title").unwrap_or_default();
+        let link = xml_extract_tag(item_xml, "link").unwrap_or_default();
+        let description = xml_extract_tag(item_xml, "description").unwrap_or_default();
+        let pub_date = xml_extract_tag(item_xml, "pubDate").unwrap_or_default();
+
+        if !title.is_empty() || !link.is_empty() {
+            results.push(NewsItem {
+                title: strip_html_tags(&title).trim().to_string(),
+                link: link.trim().to_string(),
+                description: strip_html_tags(&description).trim().to_string(),
+                pub_date: pub_date.trim().to_string(),
+            });
+        }
+
+        search_from = item_end;
+    }
+    results
+}
+
+/// Extract text content between `<tag>...</tag>` or `<tag><![CDATA[...]]></tag>`.
+fn xml_extract_tag(xml: &str, tag: &str) -> Option<String> {
+    let open = format!("<{}", tag);
+    let close = format!("</{}>", tag);
+    let start_pos = xml.find(&open)?;
+    // Skip past the opening tag (handle attributes)
+    let after_open = &xml[start_pos + open.len()..];
+    let content_start = after_open.find('>')? + 1;
+    let content = &after_open[content_start..];
+    let end_pos = content.find(&close)?;
+    let raw = &content[..end_pos];
+
+    // Handle CDATA sections
+    let raw = raw.trim();
+    if let Some(cdata) = raw.strip_prefix("<![CDATA[") {
+        if let Some(end) = cdata.find("]]>") {
+            return Some(cdata[..end].to_string());
+        }
+    }
+    Some(raw.to_string())
+}
+
+/// Fetch RSS feed from a single URL.
+fn fetch_rss_feed(name: &str, url: &str) -> Result<Vec<NewsItem>, String> {
+    let output = std::process::Command::new("curl")
+        .args(["-sL", "--max-time", "10", "-A", "Mozilla/5.0", url])
+        .output()
+        .map_err(|e| format!("{name}: curl 실행 실패: {e}"))?;
+
+    if !output.status.success() {
+        return Err(format!("{name}: HTTP 요청 실패"));
+    }
+    let body = String::from_utf8_lossy(&output.stdout).to_string();
+    let mut items = parse_rss_items(&body);
+    // Tag each item with the source name in the description prefix
+    for item in &mut items {
+        if !item.description.is_empty() {
+            item.description = format!("[{name}] {}", item.description);
+        } else {
+            item.description = format!("[{name}]");
+        }
+    }
+    Ok(items)
+}
+
+/// Fetch wire news from all configured RSS feeds.
+fn fetch_wire_news(keyword: Option<&str>, max_items: usize) -> Vec<NewsItem> {
+    let mut all_items = Vec::new();
+    for &(name, url) in WIRE_FEEDS {
+        match fetch_rss_feed(name, url) {
+            Ok(items) => all_items.extend(items),
+            Err(e) => {
+                eprintln!("  {DIM}{e}{RESET}");
+            }
+        }
+    }
+
+    // Filter by keyword if provided
+    if let Some(kw) = keyword {
+        let kw_lower = kw.to_lowercase();
+        let keywords: Vec<&str> = kw_lower.split_whitespace().collect();
+        all_items.retain(|item| {
+            let title_lower = item.title.to_lowercase();
+            let desc_lower = item.description.to_lowercase();
+            keywords.iter().all(|k| title_lower.contains(k) || desc_lower.contains(k))
+        });
+    }
+
+    all_items.truncate(max_items);
+    all_items
+}
+
+/// Display wire news results.
+fn display_wire_results(results: &[NewsItem]) {
+    println!();
+    for (i, item) in results.iter().enumerate() {
+        println!(
+            "  {BOLD}{YELLOW}[{}]{RESET} {BOLD}{}{RESET}",
+            i + 1,
+            item.title
+        );
+        if !item.pub_date.is_empty() {
+            println!("     {DIM}{}{RESET}", item.pub_date);
+        }
+        if !item.description.is_empty() {
+            let desc = if item.description.len() > 120 {
+                format!("{}…", &item.description[..item.description.char_indices().nth(120).map(|(i, _)| i).unwrap_or(item.description.len())])
+            } else {
+                item.description.clone()
+            };
+            println!("     {DIM}{desc}{RESET}");
+        }
+        if !item.link.is_empty() {
+            println!("     {DIM}{}{RESET}", item.link);
+        }
+        println!();
+    }
+}
+
+/// Handle the `/wire` command: wire service breaking news monitoring via RSS.
+pub fn handle_wire(input: &str) {
+    let args = input.strip_prefix("/wire").unwrap_or("").trim();
+
+    if args == "help" {
+        println!("{DIM}  사용법: /wire              최신 속보 (최대 20건){RESET}");
+        println!("{DIM}          /wire <키워드>     키워드 필터링{RESET}");
+        println!("{DIM}          /wire save <번호>  기사를 클립으로 저장{RESET}");
+        println!("{DIM}  피드:   연합뉴스, 뉴시스, 뉴스1{RESET}");
+        println!("{DIM}  비교:   /news는 키워드 검색, /wire는 실시간 속보 피드{RESET}\n");
+        return;
+    }
+
+    // Handle /wire save <number>
+    if let Some(save_args) = args.strip_prefix("save") {
+        let save_args = save_args.trim();
+        let num: usize = match save_args.parse() {
+            Ok(n) if n >= 1 => n,
+            _ => {
+                eprintln!("{RED}  유효한 번호를 입력하세요 (예: /wire save 1){RESET}\n");
+                return;
+            }
+        };
+        LAST_WIRE_RESULTS.with(|results| {
+            let results = results.borrow();
+            if results.is_empty() {
+                eprintln!("{RED}  먼저 /wire 로 속보를 조회하세요.{RESET}\n");
+                return;
+            }
+            if num > results.len() {
+                eprintln!(
+                    "{RED}  번호 범위 초과: 1~{} 사이의 번호를 입력하세요.{RESET}\n",
+                    results.len()
+                );
+                return;
+            }
+            let item = &results[num - 1];
+            let date = today_str();
+            let path = news_clip_path(item, &date);
+            let content = format!(
+                "# {}\n\n- 날짜: {}\n- 링크: {}\n- 출처: {}\n\n{}\n",
+                item.title,
+                item.pub_date,
+                item.link,
+                item.description.split(']').next().unwrap_or("").trim_start_matches('['),
+                item.description
+            );
+            match save_clip(&path, &item.link, &content) {
+                Ok(_) => {
+                    println!(
+                        "{GREEN}  ✓ 저장: {}{RESET}\n",
+                        path.display()
+                    );
+                }
+                Err(e) => {
+                    eprintln!("{RED}  저장 실패: {e}{RESET}\n");
+                }
+            }
+        });
+        return;
+    }
+
+    // Fetch wire news
+    let keyword = if args.is_empty() { None } else { Some(args) };
+    let label = keyword.unwrap_or("전체");
+    println!("{DIM}  통신사 속보 조회 중... ({label}){RESET}");
+
+    let results = fetch_wire_news(keyword, 20);
+    if results.is_empty() {
+        if keyword.is_some() {
+            println!("{DIM}  '{label}'에 해당하는 속보가 없습니다.{RESET}\n");
+        } else {
+            println!("{DIM}  속보 피드를 가져올 수 없습니다. 네트워크를 확인하세요.{RESET}\n");
+        }
+        return;
+    }
+
+    println!("{DIM}  ── 통신사 속보 ({} 건) ──{RESET}", results.len());
+    display_wire_results(&results);
+    println!("{DIM}  💡 /wire save <번호> 로 기사를 클립에 저장할 수 있습니다.{RESET}\n");
+
+    // Store for /wire save
+    LAST_WIRE_RESULTS.with(|cell| {
+        *cell.borrow_mut() = results;
+    });
+}
+
 // ── /alert — 키워드 뉴스 모니터링 ──────────────────────────────────────
 
 const ALERTS_FILE: &str = ".journalist/alerts.json";
@@ -5149,5 +5382,104 @@ mod tests {
     #[test]
     fn contacts_dir_constant() {
         assert_eq!(CONTACTS_DIR, ".journalist/contacts");
+    }
+
+    // ── /wire tests ──
+
+    #[test]
+    fn parse_rss_items_basic() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+<channel>
+<title>Test Feed</title>
+<item>
+<title>속보: 반도체 수출 증가</title>
+<link>https://example.com/1</link>
+<description>반도체 수출이 크게 증가했다</description>
+<pubDate>Sun, 22 Mar 2026 14:00:00 +0900</pubDate>
+</item>
+<item>
+<title>경제 뉴스</title>
+<link>https://example.com/2</link>
+<description>경제 관련 소식</description>
+<pubDate>Sun, 22 Mar 2026 13:00:00 +0900</pubDate>
+</item>
+</channel>
+</rss>"#;
+        let items = parse_rss_items(xml);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].title, "속보: 반도체 수출 증가");
+        assert_eq!(items[0].link, "https://example.com/1");
+        assert_eq!(items[0].description, "반도체 수출이 크게 증가했다");
+        assert!(items[0].pub_date.contains("22 Mar 2026"));
+        assert_eq!(items[1].title, "경제 뉴스");
+    }
+
+    #[test]
+    fn parse_rss_items_cdata() {
+        let xml = r#"<rss><channel>
+<item>
+<title><![CDATA[CDATA 제목 테스트]]></title>
+<link>https://example.com/cdata</link>
+<description><![CDATA[<b>HTML 포함</b> 설명]]></description>
+<pubDate>Sun, 22 Mar 2026 12:00:00 +0900</pubDate>
+</item>
+</channel></rss>"#;
+        let items = parse_rss_items(xml);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "CDATA 제목 테스트");
+        // HTML inside CDATA should be stripped
+        assert_eq!(items[0].description, "HTML 포함 설명");
+    }
+
+    #[test]
+    fn parse_rss_items_empty() {
+        let xml = r#"<rss><channel><title>Empty</title></channel></rss>"#;
+        let items = parse_rss_items(xml);
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn parse_rss_items_missing_fields() {
+        let xml = r#"<rss><channel>
+<item>
+<title>제목만 있음</title>
+</item>
+</channel></rss>"#;
+        let items = parse_rss_items(xml);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "제목만 있음");
+        assert!(items[0].link.is_empty());
+        assert!(items[0].description.is_empty());
+    }
+
+    #[test]
+    fn xml_extract_tag_basic() {
+        assert_eq!(
+            xml_extract_tag("<title>Hello</title>", "title"),
+            Some("Hello".to_string())
+        );
+    }
+
+    #[test]
+    fn xml_extract_tag_cdata() {
+        assert_eq!(
+            xml_extract_tag("<title><![CDATA[World]]></title>", "title"),
+            Some("World".to_string())
+        );
+    }
+
+    #[test]
+    fn xml_extract_tag_missing() {
+        assert_eq!(xml_extract_tag("<foo>bar</foo>", "title"), None);
+    }
+
+    #[test]
+    fn wire_feeds_configured() {
+        assert!(WIRE_FEEDS.len() >= 3);
+        for &(name, url) in WIRE_FEEDS {
+            assert!(!name.is_empty());
+            assert!(url.starts_with("https://"));
+        }
     }
 }

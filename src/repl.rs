@@ -659,6 +659,10 @@ pub async fn run_repl(
                     .await;
                 continue;
             }
+            s if s == "/wire" || s.starts_with("/wire ") => {
+                commands::handle_wire(input);
+                continue;
+            }
             s if s == "/stats" || s.starts_with("/stats ") => {
                 commands::handle_stats(input);
                 continue;
