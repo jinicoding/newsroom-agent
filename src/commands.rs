@@ -113,6 +113,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/multiformat",
     "/wire",
     "/correction",
+    "/pipeline",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -196,6 +197,8 @@ pub const NOTE_SUBCOMMANDS: &[&str] = &["add", "list", "search", "export"];
 /// Breaking subcommand names for `/breaking <Tab>` completion.
 pub const BREAKING_SUBCOMMANDS: &[&str] = &["update", "list"];
 
+pub const PIPELINE_SUBCOMMANDS: &[&str] = &["save", "run", "list", "show", "remove"];
+
 /// Return context-aware argument completions for a given command and partial argument.
 ///
 /// `cmd` is the slash command (e.g. "/model"), `partial_arg` is what the user has typed
@@ -226,6 +229,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/network" => filter_candidates(NETWORK_SUBCOMMANDS, &partial_lower),
         "/note" => filter_candidates(NOTE_SUBCOMMANDS, &partial_lower),
         "/breaking" => filter_candidates(BREAKING_SUBCOMMANDS, &partial_lower),
+        "/pipeline" => filter_candidates(PIPELINE_SUBCOMMANDS, &partial_lower),
         "/multiformat" => {
             if partial_arg.starts_with("--format ") {
                 let fmt_part = &partial_arg[9..];
@@ -478,6 +482,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /collaborate [cmd] 공동취재 메모 공유 (start|note|list|view|close)\n",
+    );
+    out.push_str(
+        "  /pipeline [cmd]    커맨드 자동 연쇄 실행 (save|run|list|show|remove)\n",
     );
     out.push('\n');
 
@@ -779,7 +786,7 @@ pub use crate::commands_workflow::{
     handle_autopitch, handle_breaking, handle_briefing, handle_calendar, handle_collaborate,
     handle_compare, handle_coverage, handle_dashboard, handle_data, handle_deadline,
     handle_desk, handle_diary, handle_embargo, handle_interview, handle_morning,
-    handle_performance, handle_recap, handle_rival, handle_timeline,
+    handle_performance, handle_pipeline, handle_recap, handle_rival, handle_timeline,
 };
 
 // Session-related handlers

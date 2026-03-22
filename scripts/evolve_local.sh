@@ -73,16 +73,112 @@ echo "" | tee -a "$LOG_FILE"
 # 세션 시작 SHA 기록
 SESSION_START_SHA=$(git rev-parse HEAD)
 
+# Security nonce for content boundary markers
+BOUNDARY_NONCE=$(python3 -c "import os; print(os.urandom(16).hex())" 2>/dev/null || echo "fallback-$(date +%s)")
+BOUNDARY_BEGIN="[BOUNDARY-${BOUNDARY_NONCE}-BEGIN]"
+BOUNDARY_END="[BOUNDARY-${BOUNDARY_NONCE}-END]"
+
 # ── Step 2: GitHub 이슈 가져오기 ──
 ISSUES_FILE="ISSUES_TODAY.md"
-echo "→ GitHub 이슈 확인..." | tee -a "$LOG_FILE"
-if command -v gh &>/dev/null && [ -f scripts/format_issues.py ]; then
-    gh issue list --repo "$REPO" --state open --label "agent-input" --limit 20 \
-        --json number,title,body,labels,reactionGroups,author,comments \
-        > /tmp/issues_raw.json 2>/dev/null || echo "[]" > /tmp/issues_raw.json
-    python3 scripts/format_issues.py /tmp/issues_raw.json "$DAY" > "$ISSUES_FILE" 2>/dev/null || echo "### No issues" > "$ISSUES_FILE"
-    ISSUE_COUNT=$(grep -c '^### Issue' "$ISSUES_FILE" 2>/dev/null || echo 0)
-    echo "  이슈 ${ISSUE_COUNT}개 로드." | tee -a "$LOG_FILE"
+SELF_ISSUES=""
+HELP_ISSUES=""
+PENDING_REPLIES=""
+
+if command -v gh &>/dev/null; then
+    # 2a: agent-input 이슈 (커뮤니티 요청)
+    echo "→ GitHub 이슈 확인..." | tee -a "$LOG_FILE"
+    if [ -f scripts/format_issues.py ]; then
+        gh issue list --repo "$REPO" --state open --label "agent-input" --limit 20 \
+            --json number,title,body,labels,reactionGroups,author,comments \
+            > /tmp/issues_raw.json 2>/dev/null || echo "[]" > /tmp/issues_raw.json
+        python3 scripts/format_issues.py /tmp/issues_raw.json "$DAY" > "$ISSUES_FILE" 2>/dev/null || echo "### No issues" > "$ISSUES_FILE"
+        ISSUE_COUNT=$(grep -c '^### Issue' "$ISSUES_FILE" 2>/dev/null || echo 0)
+        echo "  커뮤니티 이슈 ${ISSUE_COUNT}개 로드." | tee -a "$LOG_FILE"
+    else
+        echo "### No issues" > "$ISSUES_FILE"
+    fi
+
+    # 2b: agent-self 이슈 (에이전트 자체 백로그)
+    echo "→ self 이슈 확인..." | tee -a "$LOG_FILE"
+    SELF_ISSUES=$(gh issue list --repo "$REPO" --state open \
+        --label "agent-self" --limit 5 \
+        --json number,title,body \
+        --jq '.[] | "'"$BOUNDARY_BEGIN"'\n### Issue #\(.number)\n**Title:** \(.title)\n\(.body)\n'"$BOUNDARY_END"'\n"' 2>/dev/null \
+        | python3 -c "import sys,re; print(re.sub(r'<!--.*?-->','',sys.stdin.read(),flags=re.DOTALL))" 2>/dev/null || true)
+    if [ -n "$SELF_ISSUES" ]; then
+        SELF_COUNT=$(echo "$SELF_ISSUES" | grep -c '^### Issue' 2>/dev/null || echo 0)
+        echo "  self 이슈 ${SELF_COUNT}개 로드." | tee -a "$LOG_FILE"
+    else
+        echo "  self 이슈 없음." | tee -a "$LOG_FILE"
+    fi
+
+    # 2c: agent-help-wanted 이슈 (인간에게 도움 요청)
+    echo "→ help-wanted 이슈 확인..." | tee -a "$LOG_FILE"
+    HELP_ISSUES=$(gh issue list --repo "$REPO" --state open \
+        --label "agent-help-wanted" --limit 5 \
+        --json number,title,body,comments \
+        --jq '.[] | "'"$BOUNDARY_BEGIN"'\n### Issue #\(.number)\n**Title:** \(.title)\n\(.body)\n\(if (.comments | length) > 0 then "⚠️ Human replied:\n" + (.comments | map(.body) | join("\n---\n")) else "No replies yet." end)\n'"$BOUNDARY_END"'\n"' 2>/dev/null \
+        | python3 -c "import sys,re; print(re.sub(r'<!--.*?-->','',sys.stdin.read(),flags=re.DOTALL))" 2>/dev/null || true)
+    if [ -n "$HELP_ISSUES" ]; then
+        HELP_COUNT=$(echo "$HELP_ISSUES" | grep -c '^### Issue' 2>/dev/null || echo 0)
+        echo "  help-wanted 이슈 ${HELP_COUNT}개 로드." | tee -a "$LOG_FILE"
+    else
+        echo "  help-wanted 이슈 없음." | tee -a "$LOG_FILE"
+    fi
+
+    # 2d: 대기 중인 답변 스캔 (에이전트가 댓글 남긴 후 인간이 답변한 이슈)
+    echo "→ 대기 답변 스캔..." | tee -a "$LOG_FILE"
+    REPLY_ISSUES=$(gh issue list --repo "$REPO" --state open \
+        --label "agent-input,agent-help-wanted,agent-self" \
+        --limit 30 \
+        --json number,title,comments \
+        2>/dev/null || true)
+
+    if [ -n "$REPLY_ISSUES" ]; then
+        PENDING_REPLIES=$(echo "$REPLY_ISSUES" | python3 -c "
+import json, sys
+
+data = json.load(sys.stdin)
+results = []
+for issue in data:
+    comments = issue.get('comments', [])
+    if not comments:
+        continue
+
+    last_yoyo_idx = -1
+    for i, c in enumerate(comments):
+        author = (c.get('author') or {}).get('login', '')
+        if author in ('yoyo-evolve[bot]', 'yoyo-evolve'):
+            last_yoyo_idx = i
+
+    if last_yoyo_idx == -1:
+        continue
+
+    human_replies = []
+    for c in comments[last_yoyo_idx + 1:]:
+        author = (c.get('author') or {}).get('login', '')
+        if author not in ('yoyo-evolve[bot]', 'yoyo-evolve'):
+            body = c.get('body', '')[:300]
+            human_replies.append(f'@{author}: {body}')
+
+    if human_replies:
+        num = issue['number']
+        title = issue['title']
+        replies_text = chr(10).join(human_replies[-2:])
+        results.append(f'### Issue #{num}\n**Title:** {title}\nSomeone replied to you:\n{replies_text}\n---')
+
+print(chr(10).join(results))
+" 2>/dev/null || true)
+    fi
+
+    REPLY_COUNT=$(echo "$PENDING_REPLIES" | grep -c '^### Issue' 2>/dev/null || true)
+    REPLY_COUNT="${REPLY_COUNT:-0}"
+    if [ "$REPLY_COUNT" -gt 0 ]; then
+        echo "  대기 답변 ${REPLY_COUNT}개." | tee -a "$LOG_FILE"
+    else
+        echo "  대기 답변 없음." | tee -a "$LOG_FILE"
+        PENDING_REPLIES=""
+    fi
 else
     echo "### No issues" > "$ISSUES_FILE"
     echo "  gh CLI 없음 — 이슈 건너뜀." | tee -a "$LOG_FILE"

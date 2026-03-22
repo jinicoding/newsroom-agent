@@ -4948,6 +4948,286 @@ pub async fn handle_rival(
     }
 }
 
+// ── /pipeline ────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct PipelineDef {
+    pub name: String,
+    pub steps: Vec<String>,
+    pub created: String,
+}
+
+pub fn pipelines_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(".journalist/pipelines")
+}
+
+fn pipeline_path(name: &str) -> std::path::PathBuf {
+    pipelines_dir().join(format!("{name}.json"))
+}
+
+fn ensure_pipelines_dir() {
+    let dir = pipelines_dir();
+    if !dir.exists() {
+        let _ = std::fs::create_dir_all(&dir);
+    }
+}
+
+/// Parse pipeline step definitions from a string. Handles both quoted and unquoted steps.
+/// Example: `"research 반도체 수출" "factcheck" "article --type analysis 반도체"`
+pub fn parse_pipeline_steps(input: &str) -> Vec<String> {
+    let mut steps = Vec::new();
+    let mut chars = input.chars().peekable();
+
+    while let Some(&ch) = chars.peek() {
+        if ch.is_whitespace() {
+            chars.next();
+            continue;
+        }
+        if ch == '"' {
+            chars.next();
+            let mut step = String::new();
+            for c in chars.by_ref() {
+                if c == '"' {
+                    break;
+                }
+                step.push(c);
+            }
+            let trimmed = step.trim().to_string();
+            if !trimmed.is_empty() {
+                steps.push(trimmed);
+            }
+        } else {
+            let mut step = String::new();
+            while let Some(&c) = chars.peek() {
+                if c.is_whitespace() || c == '"' {
+                    break;
+                }
+                step.push(c);
+                chars.next();
+            }
+            let trimmed = step.trim().to_string();
+            if !trimmed.is_empty() {
+                steps.push(trimmed);
+            }
+        }
+    }
+
+    steps
+}
+
+pub fn save_pipeline_to_file(name: &str, steps: &[String]) -> std::io::Result<()> {
+    ensure_pipelines_dir();
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let def = PipelineDef {
+        name: name.to_string(),
+        steps: steps.to_vec(),
+        created: format_unix_timestamp(secs),
+    };
+    let json = serde_json::to_string_pretty(&def)?;
+    std::fs::write(pipeline_path(name), json)
+}
+
+pub fn load_pipeline_from_file(name: &str) -> Option<PipelineDef> {
+    let path = pipeline_path(name);
+    let content = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+pub fn list_pipelines() -> Vec<String> {
+    list_pipelines_in(&pipelines_dir())
+}
+
+pub fn list_pipelines_in(dir: &std::path::Path) -> Vec<String> {
+    let mut names = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if let Some(name) = entry
+                .file_name()
+                .to_string_lossy()
+                .strip_suffix(".json")
+            {
+                names.push(name.to_string());
+            }
+        }
+    }
+    names.sort();
+    names
+}
+
+/// Build a prompt for the AI to execute a pipeline's steps in sequence.
+pub fn build_pipeline_run_prompt(def: &PipelineDef) -> String {
+    let mut prompt = String::from(
+        "다음 파이프라인을 순서대로 실행해주세요. \
+         각 단계의 결과(특히 저장된 파일 경로)를 다음 단계의 입력으로 활용하세요.\n\n",
+    );
+    prompt.push_str(&format!("파이프라인: {}\n\n", def.name));
+    for (i, step) in def.steps.iter().enumerate() {
+        prompt.push_str(&format!("단계 {}: /{}\n", i + 1, step));
+    }
+    prompt.push_str("\n각 단계를 실행할 때:\n");
+    prompt.push_str("1. 해당 단계의 커맨드를 실행하듯 작업을 수행하세요\n");
+    prompt.push_str("2. 이전 단계에서 생성된 파일이 있으면 해당 파일을 참조하세요\n");
+    prompt.push_str("3. 각 단계 완료 후 결과를 간략히 요약하세요\n");
+    prompt.push_str("4. 모든 단계 완료 후 전체 파이프라인 실행 결과를 정리하세요\n");
+    prompt
+}
+
+/// Handle `/pipeline` command. Returns Some(prompt) for `run`, None for local subcommands.
+pub fn handle_pipeline(input: &str) -> Option<String> {
+    let args = input.strip_prefix("/pipeline").unwrap_or("").trim();
+
+    if args.is_empty() {
+        println!("{DIM}  사용법:");
+        println!("    /pipeline save <이름> <\"단계1\"> <\"단계2\"> ...");
+        println!("    /pipeline run <이름>");
+        println!("    /pipeline list");
+        println!("    /pipeline show <이름>");
+        println!("    /pipeline remove <이름>");
+        println!();
+        println!("  예시:");
+        println!(
+            "    /pipeline save 반도체속보 \"research 반도체 수출\" \"factcheck\" \"article --type analysis 반도체\""
+        );
+        println!("    /pipeline run 반도체속보{RESET}");
+        return None;
+    }
+
+    let subcmd = args.split_whitespace().next().unwrap_or("");
+    let rest = args[subcmd.len()..].trim();
+
+    match subcmd {
+        "save" => {
+            let mut parts = rest.splitn(2, char::is_whitespace);
+            let name = match parts.next() {
+                Some(n) if !n.is_empty() => n,
+                _ => {
+                    println!("{RED}  파이프라인 이름을 지정하세요.{RESET}");
+                    println!(
+                        "{DIM}  예: /pipeline save 반도체속보 \"research 반도체\" \"article\"{RESET}"
+                    );
+                    return None;
+                }
+            };
+            let steps_str = parts.next().unwrap_or("");
+            let steps = parse_pipeline_steps(steps_str);
+            if steps.is_empty() {
+                println!("{RED}  파이프라인 단계를 지정하세요.{RESET}");
+                println!(
+                    "{DIM}  예: /pipeline save {name} \"research 반도체\" \"factcheck\" \"article\"{RESET}"
+                );
+                return None;
+            }
+            match save_pipeline_to_file(name, &steps) {
+                Ok(_) => {
+                    println!(
+                        "{GREEN}  ✓ 파이프라인 '{name}' 저장 ({} 단계){RESET}",
+                        steps.len()
+                    );
+                    for (i, step) in steps.iter().enumerate() {
+                        println!("{DIM}    {}. /{}{RESET}", i + 1, step);
+                    }
+                    println!();
+                }
+                Err(e) => {
+                    eprintln!("{RED}  파이프라인 저장 실패: {e}{RESET}\n");
+                }
+            }
+            None
+        }
+        "list" => {
+            let names = list_pipelines();
+            if names.is_empty() {
+                println!("{DIM}  저장된 파이프라인이 없습니다.{RESET}\n");
+            } else {
+                println!("{BOLD}  📋 파이프라인 목록 ({} 개){RESET}", names.len());
+                for name in &names {
+                    if let Some(def) = load_pipeline_from_file(name) {
+                        println!("{DIM}    • {name} ({} 단계){RESET}", def.steps.len());
+                    } else {
+                        println!("{DIM}    • {name}{RESET}");
+                    }
+                }
+                println!();
+            }
+            None
+        }
+        "show" => {
+            if rest.is_empty() {
+                println!("{RED}  파이프라인 이름을 지정하세요.{RESET}\n");
+                return None;
+            }
+            match load_pipeline_from_file(rest) {
+                Some(def) => {
+                    println!("{BOLD}  🔗 파이프라인: {}{RESET}", def.name);
+                    println!("{DIM}    생성: {}{RESET}", def.created);
+                    println!("{DIM}    단계:{RESET}");
+                    for (i, step) in def.steps.iter().enumerate() {
+                        println!("      {}. /{}", i + 1, step);
+                    }
+                    println!();
+                }
+                None => {
+                    eprintln!(
+                        "{RED}  파이프라인 '{rest}'을(를) 찾을 수 없습니다.{RESET}\n"
+                    );
+                }
+            }
+            None
+        }
+        "remove" => {
+            if rest.is_empty() {
+                println!("{RED}  파이프라인 이름을 지정하세요.{RESET}\n");
+                return None;
+            }
+            let path = pipeline_path(rest);
+            if path.exists() {
+                match std::fs::remove_file(&path) {
+                    Ok(_) => println!("{GREEN}  ✓ 파이프라인 '{rest}' 삭제{RESET}\n"),
+                    Err(e) => eprintln!("{RED}  삭제 실패: {e}{RESET}\n"),
+                }
+            } else {
+                eprintln!(
+                    "{RED}  파이프라인 '{rest}'을(를) 찾을 수 없습니다.{RESET}\n"
+                );
+            }
+            None
+        }
+        "run" => {
+            if rest.is_empty() {
+                println!("{RED}  실행할 파이프라인 이름을 지정하세요.{RESET}\n");
+                return None;
+            }
+            match load_pipeline_from_file(rest) {
+                Some(def) => {
+                    println!(
+                        "{BOLD}  ▶ 파이프라인 '{rest}' 실행 ({} 단계){RESET}",
+                        def.steps.len()
+                    );
+                    for (i, step) in def.steps.iter().enumerate() {
+                        println!("{DIM}    {}. /{}{RESET}", i + 1, step);
+                    }
+                    println!();
+                    Some(build_pipeline_run_prompt(&def))
+                }
+                None => {
+                    eprintln!(
+                        "{RED}  파이프라인 '{rest}'을(를) 찾을 수 없습니다.{RESET}\n"
+                    );
+                    None
+                }
+            }
+        }
+        other => {
+            println!("{RED}  알 수 없는 하위 명령: {other}{RESET}");
+            println!("{DIM}  사용 가능: save, run, list, show, remove{RESET}\n");
+            None
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 
@@ -4961,6 +5241,27 @@ mod tests {
     use crate::commands_research::*;
     use crate::commands_writing::*;
     use crate::commands_workflow::*;
+
+    fn save_pipeline_to_dir(
+        dir: &std::path::Path,
+        name: &str,
+        steps: &[String],
+    ) -> std::io::Result<()> {
+        let _ = std::fs::create_dir_all(dir);
+        let def = PipelineDef {
+            name: name.to_string(),
+            steps: steps.to_vec(),
+            created: "2026-03-22T16:00:00".to_string(),
+        };
+        let json = serde_json::to_string_pretty(&def)?;
+        std::fs::write(dir.join(format!("{name}.json")), json)
+    }
+
+    fn load_pipeline_from_dir(dir: &std::path::Path, name: &str) -> Option<PipelineDef> {
+        let path = dir.join(format!("{name}.json"));
+        let content = std::fs::read_to_string(path).ok()?;
+        serde_json::from_str(&content).ok()
+    }
 
     fn temp_deadlines_path() -> (tempfile::TempDir, std::path::PathBuf) {
         let dir = tempfile::TempDir::new().unwrap();
@@ -6933,5 +7234,97 @@ mod tests {
         save_rival_result(&path, "분석 결과").unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert_eq!(content, "분석 결과");
+    }
+
+    // ── pipeline tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn pipeline_parse_steps_quoted() {
+        let steps =
+            parse_pipeline_steps("\"research 반도체 수출\" \"factcheck\" \"article --type analysis\"");
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0], "research 반도체 수출");
+        assert_eq!(steps[1], "factcheck");
+        assert_eq!(steps[2], "article --type analysis");
+    }
+
+    #[test]
+    fn pipeline_parse_steps_unquoted() {
+        let steps = parse_pipeline_steps("factcheck research article");
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0], "factcheck");
+        assert_eq!(steps[1], "research");
+        assert_eq!(steps[2], "article");
+    }
+
+    #[test]
+    fn pipeline_parse_steps_mixed() {
+        let steps = parse_pipeline_steps("\"research 반도체\" factcheck \"article --type analysis\"");
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0], "research 반도체");
+        assert_eq!(steps[1], "factcheck");
+        assert_eq!(steps[2], "article --type analysis");
+    }
+
+    #[test]
+    fn pipeline_parse_steps_empty() {
+        let steps = parse_pipeline_steps("");
+        assert!(steps.is_empty());
+    }
+
+    #[test]
+    fn pipeline_save_load_roundtrip() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let steps = vec![
+            "research 반도체".to_string(),
+            "factcheck".to_string(),
+            "article".to_string(),
+        ];
+        save_pipeline_to_dir(dir.path(), "test_pipe", &steps).unwrap();
+        let loaded = load_pipeline_from_dir(dir.path(), "test_pipe").unwrap();
+        assert_eq!(loaded.name, "test_pipe");
+        assert_eq!(loaded.steps, steps);
+    }
+
+    #[test]
+    fn pipeline_list_in_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        save_pipeline_to_dir(dir.path(), "alpha", &["research".to_string()]).unwrap();
+        save_pipeline_to_dir(dir.path(), "beta", &["factcheck".to_string()]).unwrap();
+        let names = list_pipelines_in(dir.path());
+        assert_eq!(names, vec!["alpha", "beta"]);
+    }
+
+    #[test]
+    fn pipeline_list_empty_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let names = list_pipelines_in(dir.path());
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn pipeline_load_nonexistent() {
+        let dir = tempfile::TempDir::new().unwrap();
+        assert!(load_pipeline_from_dir(dir.path(), "nope").is_none());
+    }
+
+    #[test]
+    fn pipeline_build_run_prompt() {
+        let def = PipelineDef {
+            name: "반도체속보".to_string(),
+            steps: vec![
+                "research 반도체".to_string(),
+                "factcheck".to_string(),
+                "article --type analysis".to_string(),
+            ],
+            created: "2026-03-22T16:00:00".to_string(),
+        };
+        let prompt = build_pipeline_run_prompt(&def);
+        assert!(prompt.contains("반도체속보"));
+        assert!(prompt.contains("/research 반도체"));
+        assert!(prompt.contains("/factcheck"));
+        assert!(prompt.contains("/article --type analysis"));
+        assert!(prompt.contains("단계 1"));
+        assert!(prompt.contains("단계 3"));
     }
 }
