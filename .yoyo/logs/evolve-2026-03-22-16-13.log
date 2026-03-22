@@ -201,3 +201,15 @@ SESSION_PLAN.md 작성 완료. 계획을 멈추고 요약합니다.
   계획된 태스크: 4개
 
   ── Task 1 / 4 ──
+완료. `/template` 정형 기사 템플릿 시스템 구현:
+
+- **내장 템플릿 5종** 하드코딩: `earnings`(분기실적), `personnel`(인사발령), `obituary`(부고), `election`(선거개표), `weather`(날씨)
+- **`resolve_template()`**: 내장 → 사용자 순서로 탐색하는 통합 해결 함수
+- **`list`**: 내장/사용자 구분 표시
+- **`show`**: 내장 템플릿에 `[내장]` 태그 표시
+- **`remove`**: 내장 템플릿 삭제 차단
+- **`use`**: 내장 템플릿도 AI 기사 생성에 사용 가능
+- **테스트 8건 추가**: 내장 존재 확인, 내용 검증, `resolve_template` 동작, `is_builtin` 체크 등
+    Task 1: 검증 OK
+
+  ── Task 2 / 4 ──

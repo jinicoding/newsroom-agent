@@ -2548,9 +2548,116 @@ fn time_diff_minutes(target: &str, now: &str) -> Option<i32> {
 
 // ── /dashboard ──────────────────────────────────────────────────────────
 
+/// Aggregated statistics for the dashboard data enrichment layer.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DashboardStats {
+    pub drafts_today: usize,
+    pub research_today: usize,
+    pub notes_today: usize,
+    pub imminent_deadlines: usize,
+    pub pending_followups: usize,
+    pub top_articles: Vec<(String, u64)>,
+    pub unresolved_corrections: usize,
+}
+
+/// Count files in `dir` whose name starts with `date_prefix` and has the given extension.
+pub fn count_files_for_date(
+    dir: &std::path::Path,
+    date_prefix: &str,
+    ext: &str,
+) -> usize {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return 0,
+    };
+    entries
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with(date_prefix) && name.ends_with(ext)
+        })
+        .count()
+}
+
+/// Count deadlines within `within_days` days from `today` (YYYY-MM-DD).
+fn count_imminent_deadlines(
+    deadlines: &[Deadline],
+    today: &str,
+    within_days: i64,
+) -> usize {
+    deadlines
+        .iter()
+        .filter(|d| {
+            // Extract date portion from datetime (e.g. "2026-03-22T15:00:00" → "2026-03-22")
+            let date_part = if d.datetime.len() >= 10 {
+                &d.datetime[..10]
+            } else {
+                &d.datetime
+            };
+            matches!(days_until(date_part, today), Some(d) if d >= 0 && d <= within_days)
+        })
+        .count()
+}
+
+/// Count follow-ups that are not done.
+pub fn count_pending_followups(followups: &[Followup]) -> usize {
+    followups.iter().filter(|f| !f.done).count()
+}
+
+/// Return top N articles by total score (views + comments + shares) from performance data.
+pub fn top_performance_articles(
+    perf_path: &std::path::Path,
+    n: usize,
+) -> Vec<(String, u64)> {
+    let data = load_performance_from(perf_path);
+    let mut scored: Vec<(String, u64)> = data
+        .iter()
+        .filter_map(|v| {
+            let title = v.get("title")?.as_str()?.to_string();
+            let views = v.get("views").and_then(|v| v.as_u64()).unwrap_or(0);
+            let comments = v.get("comments").and_then(|v| v.as_u64()).unwrap_or(0);
+            let shares = v.get("shares").and_then(|v| v.as_u64()).unwrap_or(0);
+            Some((title, views + comments + shares))
+        })
+        .collect();
+    scored.sort_by(|a, b| b.1.cmp(&a.1));
+    scored.truncate(n);
+    scored
+}
+
+/// Count corrections whose status is not "resolved".
+pub fn count_unresolved_corrections(
+    corrections: &[crate::commands_writing::CorrectionRecord],
+) -> usize {
+    corrections.iter().filter(|c| c.status != "resolved").count()
+}
+
+/// Gather all dashboard statistics from the filesystem.
+fn gather_dashboard_stats(
+    drafts_dir: &std::path::Path,
+    research_dir: &std::path::Path,
+    notes_file: &std::path::Path,
+    deadlines: &[Deadline],
+    followups: &[Followup],
+    perf_path: &std::path::Path,
+    corrections: &[crate::commands_writing::CorrectionRecord],
+    today: &str,
+) -> DashboardStats {
+    DashboardStats {
+        drafts_today: count_files_for_date(drafts_dir, today, ".md"),
+        research_today: count_files_for_date(research_dir, today, ".md"),
+        notes_today: load_notes_from(notes_file).len(),
+        imminent_deadlines: count_imminent_deadlines(deadlines, today, 3),
+        pending_followups: count_pending_followups(followups),
+        top_articles: top_performance_articles(perf_path, 3),
+        unresolved_corrections: count_unresolved_corrections(corrections),
+    }
+}
+
 /// Handle `/dashboard` — newsroom status board showing active items across all systems.
-/// No AI call; purely local JSON reads.
 pub fn handle_dashboard() {
+    let today = today_str();
     handle_dashboard_impl(
         &deadlines_path(),
         &embargoes_path(),
@@ -2558,6 +2665,11 @@ pub fn handle_dashboard() {
         &followups_path(),
         std::path::Path::new(COLLABORATE_DIR),
         &coverage_path(),
+        std::path::Path::new(DRAFTS_DIR),
+        std::path::Path::new(crate::commands_research::RESEARCH_DIR),
+        &notes_file_for_date(&today),
+        std::path::Path::new(PERFORMANCE_FILE),
+        &today,
     );
 }
 
@@ -2568,6 +2680,11 @@ fn handle_dashboard_impl(
     followups_path: &std::path::Path,
     collab_dir: &std::path::Path,
     coverage_path: &std::path::Path,
+    drafts_dir: &std::path::Path,
+    research_dir: &std::path::Path,
+    notes_file: &std::path::Path,
+    perf_path: &std::path::Path,
+    today: &str,
 ) {
     println!("\n{BOLD}  ══════════════════════════════════════{RESET}");
     println!("{BOLD}   📋 뉴스룸 현황판{RESET}");
@@ -2690,6 +2807,51 @@ fn handle_dashboard_impl(
             );
         }
         total_items += active_claims.len() as u32;
+    }
+
+    println!();
+
+    // 7. Data aggregation (오늘의 활동 집계)
+    let corrections = crate::commands_writing::load_corrections();
+    let stats = gather_dashboard_stats(
+        drafts_dir,
+        research_dir,
+        notes_file,
+        &deadlines,
+        &followups,
+        perf_path,
+        &corrections,
+        today,
+    );
+
+    println!("{BOLD}  ──────────────────────────────────────{RESET}");
+    println!("{BOLD}   📊 오늘의 활동 집계{RESET}");
+    println!("{BOLD}  ──────────────────────────────────────{RESET}\n");
+
+    println!(
+        "  📝 오늘 작성: draft {}, research {}, note {}",
+        stats.drafts_today, stats.research_today, stats.notes_today
+    );
+    if stats.imminent_deadlines > 0 {
+        println!("{YELLOW}  ⏰ 임박 마감 (3일 이내): {} 건{RESET}", stats.imminent_deadlines);
+    } else {
+        println!("{DIM}  ⏰ 임박 마감 (3일 이내): 없음{RESET}");
+    }
+    if stats.pending_followups > 0 {
+        println!("{MAGENTA}  🔄 미처리 후속보도: {} 건{RESET}", stats.pending_followups);
+    } else {
+        println!("{DIM}  🔄 미처리 후속보도: 없음{RESET}");
+    }
+    if stats.unresolved_corrections > 0 {
+        println!("{RED}  ⚠️  미해결 정정: {} 건{RESET}", stats.unresolved_corrections);
+    } else {
+        println!("{DIM}  ⚠️  미해결 정정: 없음{RESET}");
+    }
+    if !stats.top_articles.is_empty() {
+        println!("{GREEN}  🏆 성과 상위 기사:{RESET}");
+        for (i, (title, score)) in stats.top_articles.iter().enumerate() {
+            println!("     {}. {BOLD}{title}{RESET} (점수: {score})", i + 1);
+        }
     }
 
     println!();
@@ -6441,6 +6603,10 @@ mod tests {
         let followups = tmp.path().join("followups.json");
         let collab_dir = tmp.path().join("collab");
         let coverage = tmp.path().join("coverage.json");
+        let drafts_dir = tmp.path().join("drafts");
+        let research_dir = tmp.path().join("research");
+        let notes_file = tmp.path().join("notes.jsonl");
+        let perf_path = tmp.path().join("performance.json");
         // Should not panic with no files
         handle_dashboard_impl(
             &deadlines,
@@ -6449,6 +6615,11 @@ mod tests {
             &followups,
             &collab_dir,
             &coverage,
+            &drafts_dir,
+            &research_dir,
+            &notes_file,
+            &perf_path,
+            "2026-03-22",
         );
     }
 
@@ -6516,6 +6687,14 @@ mod tests {
         };
         save_collab_project_to(&proj, &collab_dir.join("공동취재1.json"));
 
+        // Create dirs for aggregation
+        let drafts_dir = tmp.path().join("drafts");
+        std::fs::create_dir_all(&drafts_dir).unwrap();
+        let research_dir = tmp.path().join("research");
+        std::fs::create_dir_all(&research_dir).unwrap();
+        let notes_file = tmp.path().join("notes.jsonl");
+        let perf_path = tmp.path().join("performance.json");
+
         // Should not panic with populated data
         handle_dashboard_impl(
             &deadlines_path,
@@ -6524,7 +6703,186 @@ mod tests {
             &followups_path,
             &collab_dir,
             &coverage_path,
+            &drafts_dir,
+            &research_dir,
+            &notes_file,
+            &perf_path,
+            "2026-03-22",
         );
+    }
+
+    // ── Dashboard aggregation unit tests ──────────────────────────────
+
+    #[test]
+    fn count_files_for_date_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(count_files_for_date(tmp.path(), "2026-03-22", ".md"), 0);
+    }
+
+    #[test]
+    fn count_files_for_date_nonexistent_dir() {
+        let path = std::path::Path::new("/tmp/nonexistent_dashboard_test_dir");
+        assert_eq!(count_files_for_date(path, "2026-03-22", ".md"), 0);
+    }
+
+    #[test]
+    fn count_files_for_date_with_matching_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("2026-03-22_article.md"), "draft").unwrap();
+        std::fs::write(tmp.path().join("2026-03-22_research.md"), "res").unwrap();
+        std::fs::write(tmp.path().join("2026-03-21_old.md"), "old").unwrap();
+        std::fs::write(tmp.path().join("2026-03-22_data.json"), "json").unwrap();
+        assert_eq!(count_files_for_date(tmp.path(), "2026-03-22", ".md"), 2);
+    }
+
+    #[test]
+    fn count_imminent_deadlines_empty() {
+        assert_eq!(count_imminent_deadlines(&[], "2026-03-22", 3), 0);
+    }
+
+    #[test]
+    fn count_imminent_deadlines_filters_correctly() {
+        let deadlines = vec![
+            Deadline { title: "오늘".to_string(), datetime: "2026-03-22T15:00:00".to_string() },
+            Deadline { title: "내일".to_string(), datetime: "2026-03-23T10:00:00".to_string() },
+            Deadline { title: "3일후".to_string(), datetime: "2026-03-25T10:00:00".to_string() },
+            Deadline { title: "4일후".to_string(), datetime: "2026-03-26T10:00:00".to_string() },
+            Deadline { title: "과거".to_string(), datetime: "2026-03-20T10:00:00".to_string() },
+        ];
+        // Within 3 days: 03-22 (0), 03-23 (1), 03-25 (3) = 3 items
+        assert_eq!(count_imminent_deadlines(&deadlines, "2026-03-22", 3), 3);
+    }
+
+    #[test]
+    fn count_pending_followups_empty() {
+        assert_eq!(count_pending_followups(&[]), 0);
+    }
+
+    #[test]
+    fn count_pending_followups_filters_done() {
+        let followups = vec![
+            Followup { topic: "a".into(), due: None, done: false, created_at: "".into() },
+            Followup { topic: "b".into(), due: None, done: true, created_at: "".into() },
+            Followup { topic: "c".into(), due: None, done: false, created_at: "".into() },
+        ];
+        assert_eq!(count_pending_followups(&followups), 2);
+    }
+
+    #[test]
+    fn top_performance_articles_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("perf.json");
+        assert!(top_performance_articles(&path, 3).is_empty());
+    }
+
+    #[test]
+    fn top_performance_articles_sorts_and_limits() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("perf.json");
+        let data = serde_json::json!([
+            {"title": "기사A", "views": 100, "comments": 10, "shares": 5},
+            {"title": "기사B", "views": 500, "comments": 50, "shares": 20},
+            {"title": "기사C", "views": 200, "comments": 30, "shares": 10},
+            {"title": "기사D", "views": 50, "comments": 5, "shares": 1}
+        ]);
+        std::fs::write(&path, serde_json::to_string(&data).unwrap()).unwrap();
+        let top = top_performance_articles(&path, 3);
+        assert_eq!(top.len(), 3);
+        assert_eq!(top[0].0, "기사B");
+        assert_eq!(top[0].1, 570);
+        assert_eq!(top[1].0, "기사C");
+        assert_eq!(top[2].0, "기사A");
+    }
+
+    #[test]
+    fn count_unresolved_corrections_empty() {
+        assert_eq!(count_unresolved_corrections(&[]), 0);
+    }
+
+    #[test]
+    fn count_unresolved_corrections_filters_resolved() {
+        use crate::commands_writing::CorrectionRecord;
+        let corrections = vec![
+            CorrectionRecord { date: "".into(), article: "a".into(), error: "".into(), fix: "".into(), status: "pending".into() },
+            CorrectionRecord { date: "".into(), article: "b".into(), error: "".into(), fix: "".into(), status: "resolved".into() },
+            CorrectionRecord { date: "".into(), article: "c".into(), error: "".into(), fix: "".into(), status: "pending".into() },
+        ];
+        assert_eq!(count_unresolved_corrections(&corrections), 2);
+    }
+
+    #[test]
+    fn gather_dashboard_stats_empty_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stats = gather_dashboard_stats(
+            &tmp.path().join("drafts"),
+            &tmp.path().join("research"),
+            &tmp.path().join("notes.jsonl"),
+            &[],
+            &[],
+            &tmp.path().join("perf.json"),
+            &[],
+            "2026-03-22",
+        );
+        assert_eq!(stats, DashboardStats::default());
+    }
+
+    #[test]
+    fn gather_dashboard_stats_with_data() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Create drafts
+        let drafts = tmp.path().join("drafts");
+        std::fs::create_dir_all(&drafts).unwrap();
+        std::fs::write(drafts.join("2026-03-22_test.md"), "x").unwrap();
+
+        // Create research
+        let research = tmp.path().join("research");
+        std::fs::create_dir_all(&research).unwrap();
+        std::fs::write(research.join("2026-03-22_topic.md"), "y").unwrap();
+        std::fs::write(research.join("2026-03-22_topic2.md"), "z").unwrap();
+
+        // Notes
+        let notes = tmp.path().join("notes.jsonl");
+        std::fs::write(&notes, "{\"content\":\"n\",\"timestamp\":\"t\"}\n").unwrap();
+
+        // Deadlines
+        let deadlines = vec![
+            Deadline { title: "임박".into(), datetime: "2026-03-23T10:00:00".into() },
+        ];
+
+        // Followups
+        let followups = vec![
+            Followup { topic: "f".into(), due: None, done: false, created_at: "".into() },
+        ];
+
+        // Performance
+        let perf = tmp.path().join("perf.json");
+        std::fs::write(&perf, r#"[{"title":"top","views":100,"comments":10,"shares":5}]"#).unwrap();
+
+        // Corrections
+        use crate::commands_writing::CorrectionRecord;
+        let corrections = vec![
+            CorrectionRecord { date: "".into(), article: "a".into(), error: "".into(), fix: "".into(), status: "pending".into() },
+        ];
+
+        let stats = gather_dashboard_stats(
+            &drafts,
+            &research,
+            &notes,
+            &deadlines,
+            &followups,
+            &perf,
+            &corrections,
+            "2026-03-22",
+        );
+        assert_eq!(stats.drafts_today, 1);
+        assert_eq!(stats.research_today, 2);
+        assert_eq!(stats.notes_today, 1);
+        assert_eq!(stats.imminent_deadlines, 1);
+        assert_eq!(stats.pending_followups, 1);
+        assert_eq!(stats.top_articles.len(), 1);
+        assert_eq!(stats.top_articles[0].0, "top");
+        assert_eq!(stats.unresolved_corrections, 1);
     }
 
     #[test]
