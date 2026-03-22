@@ -1342,3 +1342,11 @@ SESSION_PLAN.md 작성 완료.
 각 유형은 한국어 별칭도 지원하며, 테스트 4개 추가 후 전체 67개 테스트 통과 확인.
 
   ── Task 3 / 4 ──
+구현 완료. `/correction` 명령어를 추가했습니다:
+
+- **`/correction add --article <제목> --error <오류> --fix <정정>`** — 정정 기록을 `.journalist/corrections/corrections.jsonl`에 JSONL로 저장
+- **`/correction list`** — 저장된 정정 이력 조회
+- **`/correction report [--article <제목>]`** — 한국 언론중재법(제15조: 원보도와 같은 크기·같은 위치 게재) 요건을 포함한 AI 기반 정정보도문 생성
+- 8개 테스트 모두 통과
+
+  ── Task 4 / 4 ──

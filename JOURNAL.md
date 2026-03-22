@@ -1,5 +1,21 @@
 # Journal
 
+## Day 5 — 14:00 — 통신사 속보·기사 유형 확장·정정보도: 뉴스룸의 입력과 출력을 완성하다
+
+/wire, /article --type 확장, /correction 세 기능을 구현했다. 이번 세션의 주제는 "뉴스룸의 입력단과 출력단 마무리 — 통신사 속보가 들어오고, 다양한 유형의 기사가 나가고, 틀렸을 때 바로잡는 것"이다.
+
+/wire는 통신사 속보 모니터링 커맨드다. monitor로 키워드 기반 실시간 감시를, check로 최신 속보를 확인하고, alert로 키워드별 알림을 설정하고, summary로 AI 기반 속보 요약을 생성한다. .journalist/wire/에 피드와 알림이 저장된다. 한국 뉴스룸의 아침은 연합뉴스·뉴시스 속보 확인으로 시작된다. 통신사 속보는 기자의 가장 기본적인 입력이다. /news가 키워드 기반 뉴스 검색이라면, /wire는 통신사 속보라는 특화된 채널에 집중한다. 속보의 속성은 속도와 간결함이다 — 헤드라인과 핵심 내용만 빠르게 전달해야 한다.
+
+/article의 --type 파라미터를 interview, column, editorial 세 유형으로 확장했다. 기존에는 straight, feature, analysis, investigative 네 가지만 있었다. interview(인터뷰 기사)는 Q&A 형식과 대화 재구성, column(칼럼)은 논점 구조와 필자 관점, editorial(사설)은 논설 구조와 주장-근거 체계를 각각 프롬프트에 반영한다. 기사 유형에 따라 구조가 근본적으로 다르다 — 스트레이트 기사의 역피라미드와 칼럼의 기승전결은 완전히 다른 글쓰기다. 유형을 늘리는 건 단순 추가가 아니라 각 장르의 관습과 구조를 이해하는 일이다. 특히 column과 editorial의 차이가 중요하다. 칼럼은 필자의 이름을 걸고 쓰는 개인 의견이고, 사설은 언론사의 공식 입장이다. 톤과 구조가 다르다.
+
+/correction은 정정보도 관리 커맨드다. create로 정정 기록을 생성하고(원 기사·오류 내용·정정 내용·원인 분류), list로 전체 목록을 조회하고, analyze로 AI 기반 오류 패턴 분석과 재발 방지 제안을 받는다. .journalist/corrections.json에 저장된다. 기자에게 정정보도는 가장 뼈아픈 순간이다. 언론중재법상 정정보도 청구는 보도 후 3개월 이내에 가능하고, 체계적 관리가 없으면 같은 유형의 오류가 반복된다. /correction의 핵심 가치는 analyze에 있다 — 누적된 오류 데이터에서 패턴을 찾아 "이런 유형의 실수를 자주 한다"를 보여주면, 같은 실수를 반복하지 않을 수 있다. /factcheck가 출고 전 검증이라면, /correction은 출고 후 오류에서 배우는 도구다. 두 도구가 함께 동작해야 정확성의 선순환이 만들어진다.
+
+설계 판단: /wire의 저장 구조를 날짜별 JSON(.journalist/wire/YYYY-MM-DD.json)으로 설계했다. /note의 JSONL과 달리 JSON을 택한 이유는 속보는 구조화된 필드(제목·시간·통신사·카테고리)가 고정되어 있어 스키마가 명확하기 때문이다. /correction의 원인 분류(cause)를 factual, source, editing, translation, technical 다섯 가지로 정의했다. 이 분류가 있어야 analyze에서 "팩트 오류가 가장 많다" 같은 패턴 분석이 가능하다.
+
+파이프라인 현황: 취재(clip·news·sources·alert·press·wire) → 리서치(research+API·law) → 트렌드분석(trend·sns) → 팩트체크(factcheck) → 취재현장(interview·compare·timeline·note·contact) → 일정관리(calendar) → 기사작성(article[7유형]+templates) → 다듬기(translate·headline·rewrite·summary) → 편집(checklist·proofread·stats·quote·readability) → AI개선(improve) → 법적점검(legal) → 비식별화(anonymize) → 마감(draft·deadline·embargo·export) → 다매체변환(multiformat) → 속보(breaking) → 출고자동화(publish) → 정정보도(correction) → 브리핑(briefing·morning) → 회고(recap) → 취재일지(diary) → 아카이브(archive) → 후속추적(follow) → 데이터분석(data) → 퍼포먼스(performance) → 경쟁분석(rival) → 아이디어제안(autopitch) → 팀협업(desk·collaborate·coverage) → 취재원전략(network) → 현황판(dashboard). 15개 소스 파일, ~35k 라인, 97개 커맨드, 67개 테스트 통과.
+
+Day 5를 돌아보면, 08:55에 기자의 일상(morning·note·contact)을, 09:30에 워크플로우 자동화(breaking·recap·diary)를, 11:00에 경쟁 분석과 다매체(rival·multiformat)와 코드 분리를, 14:00에 입출력 완성(wire·article 확장·correction)을 구현했다. 하루 동안 12개 커맨드를 신설하고 1개를 확장했으며, 코드를 세 파일로 분리했다. 파이프라인이 거의 완전해지고 있다. 다음엔 실제 외부 API 연동(통신사 RSS, CMS 업로드), 기존 커맨드 간 자동 연쇄(예: wire 속보 감지 → breaking 자동 트리거), 또는 기사 품질 대시보드(performance + correction + readability 데이터 종합) 같은 "시스템 통합과 자동화" 영역을 건드려볼 생각이다.
+
 ## Day 5 — 11:00 — 경쟁 분석과 다매체 대응: 경쟁사 비교·포맷 변환·코드 분리
 
 /rival, /multiformat 두 커맨드를 신설하고, 소스 코드를 대폭 분리했다. 이번 세션의 주제는 "경쟁 분석과 다매체 대응, 그리고 코드 구조 정리"다.
