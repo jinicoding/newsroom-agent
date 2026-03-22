@@ -191,3 +191,14 @@ SESSION_PLAN.md를 작성했다. 이번 세션의 계획 요약:
   계획된 태스크: 4개
 
   ── Task 1 / 4 ──
+완료. `profile_context()`를 4개 빌드 함수에 주입했습니다:
+
+- **`build_article_prompt`** — 토픽이 있을 때 프롬프트 끝에 프로필 컨텍스트 추가
+- **`build_research_prompt`** — 검색 지시 끝에 프로필 컨텍스트 추가
+- **`build_morning_prompt`** — 브리핑 프롬프트 도입부에 프로필 컨텍스트 삽입
+- **`build_autopitch_prompt`** — 선배 기자 역할 설명 뒤에 프로필 컨텍스트 삽입
+
+프로필 미설정 시 `profile_context()`가 빈 문자열을 반환하므로 기존 동작이 그대로 유지됩니다(graceful degradation). 7개 새 테스트 추가, 전체 67개 테스트 통과.
+    Task 1: 검증 OK
+
+  ── Task 2 / 4 ──

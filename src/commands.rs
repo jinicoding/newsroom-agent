@@ -430,7 +430,7 @@ pub fn help_text() -> String {
         "  /timeline <주제>         주제에 관한 시간순 이벤트 타임라인 생성\n",
     );
     out.push_str(
-        "  /translate [text|--file <path>]  외신 기사 번역·현지화 (한국 독자용)\n",
+        "  /translate [lang] [text|--file <path>] [--glossary <path>]  기사 번역 (방향 지정·용어사전)\n",
     );
     out.push_str(
         "  /headline [text|--file <path>]   헤드라인 후보 5~7개 생성 (스트레이트/분석/피처/클릭유도)\n",

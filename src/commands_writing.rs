@@ -229,60 +229,176 @@ pub async fn handle_checklist(
 
 const TRANSLATE_DIR: &str = ".journalist/translate";
 
-/// Parse `/translate` arguments: extract `--file <path>` and inline text.
-/// Returns `(Option<file_path>, remaining_text)`.
-pub fn parse_translate_args(args: &str) -> (Option<String>, String) {
+/// Parsed translate arguments.
+pub struct TranslateArgs {
+    pub file_path: Option<String>,
+    pub glossary_path: Option<String>,
+    pub target_lang: Option<String>,
+    pub inline_text: String,
+}
+
+/// Recognized language codes for translation direction.
+const TRANSLATE_LANG_CODES: &[&str] = &["ko", "en", "ja", "zh", "es", "fr", "de", "ru", "pt"];
+
+/// Parse `/translate` arguments: extract language code, `--file <path>`, `--glossary <path>`, and inline text.
+pub fn parse_translate_args(args: &str) -> TranslateArgs {
     let args = args.trim();
-    if let Some(rest) = args.strip_prefix("--file") {
-        let rest = rest.trim_start();
-        if rest.is_empty() {
-            return (None, String::new());
-        }
-        let mut path_end = rest.len();
-        for (i, ch) in rest.char_indices() {
-            if ch.is_whitespace() {
-                path_end = i;
-                break;
+    let mut file_path: Option<String> = None;
+    let mut glossary_path: Option<String> = None;
+    let mut target_lang: Option<String> = None;
+    let mut remaining_parts: Vec<&str> = Vec::new();
+
+    let mut iter = args.split_whitespace().peekable();
+    while let Some(token) = iter.next() {
+        if token == "--file" {
+            if let Some(path) = iter.next() {
+                file_path = Some(path.to_string());
             }
+        } else if token == "--glossary" {
+            if let Some(path) = iter.next() {
+                glossary_path = Some(path.to_string());
+            }
+        } else if target_lang.is_none()
+            && remaining_parts.is_empty()
+            && TRANSLATE_LANG_CODES.contains(&token.to_lowercase().as_str())
+        {
+            target_lang = Some(token.to_lowercase());
+        } else {
+            remaining_parts.push(token);
         }
-        let file_path = rest[..path_end].to_string();
-        let remaining = rest[path_end..].trim().to_string();
-        (Some(file_path), remaining)
-    } else {
-        (None, args.to_string())
+    }
+
+    TranslateArgs {
+        file_path,
+        glossary_path,
+        target_lang,
+        inline_text: remaining_parts.join(" "),
     }
 }
 
-/// Build the prompt for `/translate`: localize foreign news for Korean readers.
-pub fn build_translate_prompt(article: &str) -> Option<String> {
+/// Default glossary file path.
+const GLOSSARY_PATH: &str = ".journalist/glossary.json";
+
+/// A glossary: list of (source_term, target_term) pairs.
+pub type Glossary = [(String, String)];
+
+/// Load glossary from a JSON file. Expected format:
+/// `{"기준금리": "base rate", "양적완화": "quantitative easing", ...}`
+/// or `[{"source": "기준금리", "target": "base rate"}, ...]`
+/// Returns empty vec on any error (missing file, bad format).
+pub fn load_glossary(path: &str) -> Vec<(String, String)> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    // Try as object: {"term": "translation", ...}
+    if let Ok(map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&content) {
+        return map
+            .into_iter()
+            .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
+            .collect();
+    }
+    Vec::new()
+}
+
+/// Format glossary entries as a markdown table for the prompt.
+pub fn format_glossary_for_prompt(glossary: &Glossary) -> String {
+    if glossary.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(
+        "\n## 전문용어 사전 (반드시 이 번역을 사용하세요)\n\n\
+         | 원문 | 지정 번역 |\n\
+         |------|----------|\n",
+    );
+    for (source, target) in glossary {
+        out.push_str(&format!("| {source} | {target} |\n"));
+    }
+    out
+}
+
+/// Language label for display and prompt.
+fn lang_label(code: &str) -> &str {
+    match code {
+        "ko" => "한국어",
+        "en" => "English",
+        "ja" => "日本語",
+        "zh" => "中文",
+        "es" => "Español",
+        "fr" => "Français",
+        "de" => "Deutsch",
+        "ru" => "Русский",
+        "pt" => "Português",
+        _ => code,
+    }
+}
+
+/// Build the prompt for `/translate`.
+/// - `target_lang`: target language code (None defaults to "ko" for Korean localization)
+/// - `glossary`: term pairs that must be used consistently
+pub fn build_translate_prompt(
+    article: &str,
+    target_lang: Option<&str>,
+    glossary: &Glossary,
+) -> Option<String> {
     if article.trim().is_empty() {
         return None;
     }
-    Some(format!(
-        "아래 외신 기사를 **한국 독자**를 위해 번역·현지화해주세요.\n\n\
-         ## 번역 지침\n\n\
-         1. **단순 직역이 아닌 현지화 번역**: 한국 독자가 맥락을 이해할 수 있도록 배경 설명을 추가하세요.\n\
-         2. **고유명사 현지화**: 인물명은 한글 표기(원어 병기), 기관명은 통용 한글명 사용.\n\
-         3. **단위 변환**: 달러→원화 환산(괄호 병기), 마일→킬로미터, 화씨→섭씨 등.\n\
-         4. **한국 관련성 부각**: 한국 경제·사회에 미치는 영향이 있다면 별도 문단으로 추가.\n\
-         5. **문체**: 한국 신문 기사체(경어체, 역피라미드 구조) 사용.\n\
-         6. **출처 표기**: 원문 매체명과 기자명을 기사 끝에 명시.\n\n\
-         ## 출력 형식\n\n\
-         ```\n\
-         # [번역 제목]\n\n\
-         [번역된 기사 본문]\n\n\
-         ## 한국 독자 참고사항\n\
-         (한국과의 관련성, 추가 맥락 설명)\n\n\
-         ## 주요 용어\n\
-         | 원문 | 번역 | 설명 |\n\
-         |------|------|------|\n\n\
-         ---\n\
-         원문: [매체명], [기자명]\n\
-         ```\n\n\
-         ---\n\n\
-         ## 원문 기사\n\n\
-         {article}"
-    ))
+    let target = target_lang.unwrap_or("ko");
+    let glossary_section = format_glossary_for_prompt(glossary);
+
+    if target == "ko" {
+        // Korean localization mode (original behavior, enhanced with glossary)
+        Some(format!(
+            "아래 외신 기사를 **한국 독자**를 위해 번역·현지화해주세요.\n\n\
+             ## 번역 지침\n\n\
+             1. **단순 직역이 아닌 현지화 번역**: 한국 독자가 맥락을 이해할 수 있도록 배경 설명을 추가하세요.\n\
+             2. **고유명사 현지화**: 인물명은 한글 표기(원어 병기), 기관명은 통용 한글명 사용.\n\
+             3. **단위 변환**: 달러→원화 환산(괄호 병기), 마일→킬로미터, 화씨→섭씨 등.\n\
+             4. **한국 관련성 부각**: 한국 경제·사회에 미치는 영향이 있다면 별도 문단으로 추가.\n\
+             5. **문체**: 한국 신문 기사체(경어체, 역피라미드 구조) 사용.\n\
+             6. **출처 표기**: 원문 매체명과 기자명을 기사 끝에 명시.\n\
+             {glossary_section}\n\
+             ## 출력 형식\n\n\
+             ```\n\
+             # [번역 제목]\n\n\
+             [번역된 기사 본문]\n\n\
+             ## 한국 독자 참고사항\n\
+             (한국과의 관련성, 추가 맥락 설명)\n\n\
+             ## 주요 용어\n\
+             | 원문 | 번역 | 설명 |\n\
+             |------|------|------|\n\n\
+             ---\n\
+             원문: [매체명], [기자명]\n\
+             ```\n\n\
+             ---\n\n\
+             ## 원문 기사\n\n\
+             {article}"
+        ))
+    } else {
+        // General translation mode (e.g., ko→en, ko→ja)
+        let target_label = lang_label(target);
+        Some(format!(
+            "아래 텍스트를 **{target_label}**로 번역해주세요.\n\n\
+             ## 번역 지침\n\n\
+             1. **정확한 의미 전달**: 원문의 뉘앙스와 맥락을 살려 자연스럽게 번역하세요.\n\
+             2. **전문용어 일관성**: 업계 표준 용어를 사용하세요.\n\
+             3. **문체 유지**: 원문이 기사체이면 기사체로, 보도자료이면 보도자료 문체로 번역.\n\
+             4. **고유명사**: 현지 표기법을 따르되, 필요 시 원어를 괄호로 병기.\n\
+             {glossary_section}\n\
+             ## 출력 형식\n\n\
+             ```\n\
+             # [Translated Title]\n\n\
+             [Translated text]\n\n\
+             ## Key Terms\n\
+             | Original | Translation | Note |\n\
+             |----------|-------------|------|\n\
+             ```\n\n\
+             ---\n\n\
+             ## 원문\n\n\
+             {article}"
+        ))
+    }
 }
 
 /// Build the translate file path using today's date.
@@ -309,7 +425,7 @@ fn save_translate(path: &std::path::Path, content: &str) -> Result<(), std::io::
     std::fs::write(path, content)
 }
 
-/// Handle the `/translate` command: translate and localize foreign articles for Korean readers.
+/// Handle the `/translate` command: translate and localize articles with direction and glossary support.
 pub async fn handle_translate(
     agent: &mut Agent,
     input: &str,
@@ -317,20 +433,20 @@ pub async fn handle_translate(
     model: &str,
 ) {
     let args = input.strip_prefix("/translate").unwrap_or("").trim();
-    let (file_path, inline_text) = parse_translate_args(args);
+    let parsed = parse_translate_args(args);
 
     // Read article from file or inline
-    let article = if let Some(ref path) = file_path {
+    let article = if let Some(ref path) = parsed.file_path {
         match std::fs::read_to_string(path) {
             Ok(content) => {
                 println!(
                     "{DIM}  파일 읽기: {path} ({} bytes){RESET}",
                     content.len()
                 );
-                if inline_text.is_empty() {
+                if parsed.inline_text.is_empty() {
                     content
                 } else {
-                    format!("{content}\n\n{inline_text}")
+                    format!("{content}\n\n{}", parsed.inline_text)
                 }
             }
             Err(e) => {
@@ -339,17 +455,46 @@ pub async fn handle_translate(
             }
         }
     } else {
-        inline_text
+        parsed.inline_text.clone()
     };
 
-    let prompt = match build_translate_prompt(&article) {
+    // Load glossary: explicit --glossary flag takes priority, otherwise auto-load default
+    let glossary_file = parsed
+        .glossary_path
+        .as_deref()
+        .unwrap_or(GLOSSARY_PATH);
+    let glossary = load_glossary(glossary_file);
+    if !glossary.is_empty() {
+        println!(
+            "{DIM}  용어사전 로드: {glossary_file} ({} 항목){RESET}",
+            glossary.len()
+        );
+    }
+
+    // Show target language direction
+    if let Some(ref lang) = parsed.target_lang {
+        println!(
+            "{DIM}  번역 방향: → {}{RESET}",
+            lang_label(lang)
+        );
+    }
+
+    let prompt = match build_translate_prompt(
+        &article,
+        parsed.target_lang.as_deref(),
+        &glossary,
+    ) {
         Some(p) => p,
         None => {
-            println!("{DIM}  사용법: /translate <외신 기사 텍스트>{RESET}");
-            println!("{DIM}  또는:   /translate --file <경로>{RESET}");
-            println!("{DIM}  예시:   /translate --file reuters_article.txt{RESET}");
+            println!("{DIM}  사용법: /translate [언어코드] <텍스트>{RESET}");
+            println!("{DIM}  또는:   /translate [언어코드] --file <경로>{RESET}");
+            println!("{DIM}  옵션:   --glossary <경로>  전문용어 사전 파일{RESET}");
+            println!("{DIM}  예시:   /translate en 한국은행 기준금리 인상{RESET}");
+            println!("{DIM}          /translate ko --file reuters.txt{RESET}");
+            println!("{DIM}          /translate en --glossary terms.json 기사내용{RESET}");
+            println!("{DIM}  언어코드: ko(한국어), en(영어), ja(일본어), zh(중국어) 등{RESET}");
             println!(
-                "{DIM}  외신 기사를 한국 독자용으로 번역·현지화합니다.{RESET}\n"
+                "{DIM}  기본: .journalist/glossary.json 자동 로드{RESET}\n"
             );
             return;
         }
@@ -360,7 +505,7 @@ pub async fn handle_translate(
 
     // Save translation to .journalist/translate/
     if !response.trim().is_empty() {
-        let slug_source = if let Some(ref path) = file_path {
+        let slug_source = if let Some(ref path) = parsed.file_path {
             std::path::Path::new(path)
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_string())
@@ -5247,35 +5392,68 @@ mod tests {
 
     #[test]
     fn parse_translate_args_inline_text() {
-        let (file, text) = parse_translate_args("The Federal Reserve raised rates.");
-        assert!(file.is_none());
-        assert_eq!(text, "The Federal Reserve raised rates.");
+        let parsed = parse_translate_args("The Federal Reserve raised rates.");
+        assert!(parsed.file_path.is_none());
+        assert!(parsed.target_lang.is_none());
+        assert!(parsed.glossary_path.is_none());
+        assert_eq!(parsed.inline_text, "The Federal Reserve raised rates.");
     }
 
     #[test]
     fn parse_translate_args_file_flag() {
-        let (file, text) = parse_translate_args("--file article.txt");
-        assert_eq!(file.as_deref(), Some("article.txt"));
-        assert!(text.is_empty());
+        let parsed = parse_translate_args("--file article.txt");
+        assert_eq!(parsed.file_path.as_deref(), Some("article.txt"));
+        assert!(parsed.inline_text.is_empty());
     }
 
     #[test]
     fn parse_translate_args_file_with_extra_text() {
-        let (file, text) = parse_translate_args("--file article.txt additional context");
-        assert_eq!(file.as_deref(), Some("article.txt"));
-        assert_eq!(text, "additional context");
+        let parsed = parse_translate_args("--file article.txt additional context");
+        assert_eq!(parsed.file_path.as_deref(), Some("article.txt"));
+        assert_eq!(parsed.inline_text, "additional context");
     }
 
     #[test]
     fn parse_translate_args_empty() {
-        let (file, text) = parse_translate_args("");
-        assert!(file.is_none());
-        assert!(text.is_empty());
+        let parsed = parse_translate_args("");
+        assert!(parsed.file_path.is_none());
+        assert!(parsed.inline_text.is_empty());
+    }
+
+    #[test]
+    fn parse_translate_args_with_lang_code() {
+        let parsed = parse_translate_args("en 한국은행 기준금리 인상");
+        assert_eq!(parsed.target_lang.as_deref(), Some("en"));
+        assert!(parsed.file_path.is_none());
+        assert_eq!(parsed.inline_text, "한국은행 기준금리 인상");
+    }
+
+    #[test]
+    fn parse_translate_args_lang_and_file() {
+        let parsed = parse_translate_args("ko --file reuters.txt");
+        assert_eq!(parsed.target_lang.as_deref(), Some("ko"));
+        assert_eq!(parsed.file_path.as_deref(), Some("reuters.txt"));
+        assert!(parsed.inline_text.is_empty());
+    }
+
+    #[test]
+    fn parse_translate_args_glossary_flag() {
+        let parsed = parse_translate_args("en --glossary terms.json 기사내용");
+        assert_eq!(parsed.target_lang.as_deref(), Some("en"));
+        assert_eq!(parsed.glossary_path.as_deref(), Some("terms.json"));
+        assert_eq!(parsed.inline_text, "기사내용");
+    }
+
+    #[test]
+    fn parse_translate_args_uppercase_lang_normalized() {
+        let parsed = parse_translate_args("EN some text");
+        assert_eq!(parsed.target_lang.as_deref(), Some("en"));
+        assert_eq!(parsed.inline_text, "some text");
     }
 
     #[test]
     fn build_translate_prompt_basic() {
-        let prompt = build_translate_prompt("The Fed raised rates by 25bp.");
+        let prompt = build_translate_prompt("The Fed raised rates by 25bp.", None, &[]);
         assert!(prompt.is_some());
         let p = prompt.unwrap();
         assert!(p.contains("The Fed raised rates by 25bp."));
@@ -5285,8 +5463,66 @@ mod tests {
 
     #[test]
     fn build_translate_prompt_empty_returns_none() {
-        assert!(build_translate_prompt("").is_none());
-        assert!(build_translate_prompt("   ").is_none());
+        assert!(build_translate_prompt("", None, &[]).is_none());
+        assert!(build_translate_prompt("   ", None, &[]).is_none());
+    }
+
+    #[test]
+    fn build_translate_prompt_to_english() {
+        let prompt =
+            build_translate_prompt("한국은행이 기준금리를 인상했다.", Some("en"), &[]);
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert!(p.contains("English"));
+        assert!(!p.contains("한국 독자"));
+    }
+
+    #[test]
+    fn build_translate_prompt_with_glossary() {
+        let glossary = vec![
+            ("기준금리".to_string(), "base rate".to_string()),
+            ("양적완화".to_string(), "quantitative easing".to_string()),
+        ];
+        let prompt = build_translate_prompt("기준금리 인상", Some("en"), &glossary);
+        let p = prompt.unwrap();
+        assert!(p.contains("전문용어 사전"));
+        assert!(p.contains("기준금리"));
+        assert!(p.contains("base rate"));
+        assert!(p.contains("양적완화"));
+        assert!(p.contains("quantitative easing"));
+    }
+
+    #[test]
+    fn load_glossary_from_json_object() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("glossary.json");
+        std::fs::write(
+            &path,
+            r#"{"기준금리": "base rate", "양적완화": "quantitative easing"}"#,
+        )
+        .unwrap();
+        let glossary = load_glossary(path.to_str().unwrap());
+        assert_eq!(glossary.len(), 2);
+        assert!(glossary.iter().any(|(k, v)| k == "기준금리" && v == "base rate"));
+    }
+
+    #[test]
+    fn load_glossary_missing_file_returns_empty() {
+        let glossary = load_glossary("/nonexistent/glossary.json");
+        assert!(glossary.is_empty());
+    }
+
+    #[test]
+    fn format_glossary_empty_returns_empty() {
+        assert!(format_glossary_for_prompt(&[]).is_empty());
+    }
+
+    #[test]
+    fn format_glossary_produces_table() {
+        let glossary = vec![("원문".to_string(), "translation".to_string())];
+        let result = format_glossary_for_prompt(&glossary);
+        assert!(result.contains("전문용어 사전"));
+        assert!(result.contains("| 원문 | translation |"));
     }
 
     #[test]
