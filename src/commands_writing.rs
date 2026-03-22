@@ -2459,6 +2459,323 @@ pub async fn handle_legal(
     }
 }
 
+// ── /correction — 정정보도 관리 ────────────────────────────────────────
+
+const CORRECTIONS_DIR: &str = ".journalist/corrections";
+const CORRECTIONS_FILE: &str = ".journalist/corrections/corrections.jsonl";
+
+/// A single correction record stored as JSONL.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct CorrectionRecord {
+    pub date: String,
+    pub article: String,
+    pub error: String,
+    pub fix: String,
+    pub status: String,
+}
+
+/// Handle the `/correction` command: manage correction reports (정정보도).
+pub async fn handle_correction(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/correction").unwrap_or("").trim();
+
+    if args.is_empty() || args == "help" {
+        correction_usage();
+        return;
+    }
+
+    if args == "list" {
+        correction_list();
+        return;
+    }
+
+    if args.starts_with("add") {
+        let add_args = args.strip_prefix("add").unwrap_or("").trim();
+        correction_add(add_args);
+        return;
+    }
+
+    if args.starts_with("report") {
+        let report_args = args.strip_prefix("report").unwrap_or("").trim();
+        correction_report(agent, report_args, session_total, model).await;
+        return;
+    }
+
+    println!("{DIM}  알 수 없는 하위 명령: {args}{RESET}");
+    correction_usage();
+}
+
+fn correction_usage() {
+    println!("{DIM}  사용법:{RESET}");
+    println!("{DIM}  /correction add --article <제목> --error <오류 내용> --fix <정정 내용>{RESET}");
+    println!("{DIM}  /correction list                — 정정 이력 조회{RESET}");
+    println!("{DIM}  /correction report [--article <제목>] — AI 기반 정정보도문 생성{RESET}");
+    println!(
+        "{DIM}  정정보도 기록을 관리합니다. 한국 언론중재법에 따른 정정보도문을 생성합니다.{RESET}\n"
+    );
+}
+
+/// Parse `--key value` pairs from add args.
+pub fn parse_correction_add_args(args: &str) -> (String, String, String) {
+    let mut article = String::new();
+    let mut error = String::new();
+    let mut fix = String::new();
+
+    let parts: Vec<&str> = args.splitn(7, ' ').collect();
+    let mut i = 0;
+    while i < parts.len() {
+        match parts[i] {
+            "--article" => {
+                if i + 1 < parts.len() {
+                    article = parts[i + 1].to_string();
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            "--error" => {
+                if i + 1 < parts.len() {
+                    error = parts[i + 1].to_string();
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            "--fix" => {
+                if i + 1 < parts.len() {
+                    fix = parts[i + 1].to_string();
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    (article, error, fix)
+}
+
+fn correction_add(args: &str) {
+    let (article, error, fix) = parse_correction_add_args(args);
+
+    if article.is_empty() || error.is_empty() || fix.is_empty() {
+        println!(
+            "{RED}  --article, --error, --fix 모두 필수입니다.{RESET}"
+        );
+        println!("{DIM}  예: /correction add --article \"제목\" --error \"오류 내용\" --fix \"정정 내용\"{RESET}\n");
+        return;
+    }
+
+    let record = CorrectionRecord {
+        date: today_str(),
+        article,
+        error,
+        fix,
+        status: "pending".to_string(),
+    };
+
+    if let Err(e) = append_correction(&record) {
+        eprintln!("{RED}  정정 기록 저장 실패: {e}{RESET}\n");
+        return;
+    }
+
+    println!(
+        "{GREEN}  ✓ 정정 기록 추가: {} — {}{RESET}\n",
+        record.article, record.error
+    );
+}
+
+/// Append a correction record to the JSONL file.
+pub fn append_correction(record: &CorrectionRecord) -> Result<(), std::io::Error> {
+    let dir = std::path::Path::new(CORRECTIONS_DIR);
+    std::fs::create_dir_all(dir)?;
+
+    let json = serde_json::to_string(record).map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::Other, e)
+    })?;
+
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(CORRECTIONS_FILE)?;
+    writeln!(file, "{json}")?;
+    Ok(())
+}
+
+/// Load all correction records from the JSONL file.
+pub fn load_corrections() -> Vec<CorrectionRecord> {
+    let path = std::path::Path::new(CORRECTIONS_FILE);
+    if !path.exists() {
+        return Vec::new();
+    }
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect()
+}
+
+fn correction_list() {
+    let records = load_corrections();
+    if records.is_empty() {
+        println!("{DIM}  저장된 정정 기록이 없습니다.{RESET}\n");
+        return;
+    }
+    println!("{DIM}  정정 기록 ({} 건):{RESET}", records.len());
+    for (i, r) in records.iter().enumerate() {
+        println!(
+            "  {}) [{}] {} — 오류: {} → 정정: {} ({})",
+            i + 1,
+            r.date,
+            r.article,
+            r.error,
+            r.fix,
+            r.status
+        );
+    }
+    println!();
+}
+
+/// Build the prompt for generating a correction report (정정보도문).
+pub fn build_correction_report_prompt(article_title: &str, records: &[CorrectionRecord]) -> String {
+    let records_text = records
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            format!(
+                "{}. 기사: {} | 날짜: {} | 오류: {} | 정정: {}",
+                i + 1,
+                r.article,
+                r.date,
+                r.error,
+                r.fix
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        "아래 정정 기록을 바탕으로 정정보도문을 작성해주세요.\n\n\
+         ## 정정 기록\n{records_text}\n\n\
+         ## 작성 기준 (한국 언론중재법)\n\
+         정정보도는 다음 규정을 반드시 준수해야 합니다:\n\n\
+         1. **게재 위치·크기**: 원보도와 같은 크기, 같은 위치에 게재 (언론중재법 제15조)\n\
+         2. **게재 시한**: 청구를 받은 날로부터 3일 이내(일간) 또는 다음 발행일(주간 이상)에 게재\n\
+         3. **정정보도문 형식**:\n\
+            - 제목: \"[정정보도] 〈원보도 제목〉 관련\"\n\
+            - 원보도 일자, 매체, 제목 명시\n\
+            - 오류 내용과 정정 내용을 명확히 구분하여 기술\n\
+            - 사과 또는 유감 표명 포함\n\
+         4. **반론보도와 구분**: 정정보도는 사실의 오류를 바로잡는 것, \
+            반론보도는 피해자의 입장을 전달하는 것\n\
+         5. **재발 방지**: 해당 오류의 원인과 재발 방지 대책 언급\n\n\
+         {}\
+         정정보도문을 완성된 형태로 작성해주세요. \
+         위 법적 요건을 모두 반영하고, 언론사 실무에서 바로 사용할 수 있는 수준으로 작성하세요.",
+        if !article_title.is_empty() {
+            format!("대상 기사 제목: \"{article_title}\"\n\n")
+        } else {
+            String::new()
+        }
+    )
+}
+
+async fn correction_report(
+    agent: &mut Agent,
+    args: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let records = load_corrections();
+    if records.is_empty() {
+        println!("{DIM}  정정 기록이 없습니다. 먼저 /correction add로 기록을 추가하세요.{RESET}\n");
+        return;
+    }
+
+    // Parse optional --article filter
+    let article_filter = if let Some(rest) = args.strip_prefix("--article") {
+        rest.trim().to_string()
+    } else {
+        args.to_string()
+    };
+
+    let filtered: Vec<CorrectionRecord> = if article_filter.is_empty() {
+        records
+    } else {
+        records
+            .into_iter()
+            .filter(|r| r.article.contains(&article_filter))
+            .collect()
+    };
+
+    if filtered.is_empty() {
+        println!(
+            "{DIM}  \"{article_filter}\"에 해당하는 정정 기록이 없습니다.{RESET}\n"
+        );
+        return;
+    }
+
+    let prompt = build_correction_report_prompt(&article_filter, &filtered);
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    // Save the correction report
+    if !response.trim().is_empty() {
+        let slug = topic_to_slug(
+            if article_filter.is_empty() {
+                "correction"
+            } else {
+                &article_filter
+            },
+            50,
+        );
+        let path = correction_report_path_with_date(&slug, &today_str());
+        match save_correction_report(&path, &response) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 정정보도문 저장: {}{RESET}\n",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  정정보도문 저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
+}
+
+/// Build correction report file path with explicit date (for testing).
+pub fn correction_report_path_with_date(slug: &str, date: &str) -> std::path::PathBuf {
+    let filename = if slug.is_empty() {
+        format!("{date}_correction.md")
+    } else {
+        format!("{date}_{slug}.md")
+    };
+    std::path::PathBuf::from(CORRECTIONS_DIR).join(filename)
+}
+
+fn save_correction_report(
+    path: &std::path::Path,
+    content: &str,
+) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
 // ── /archive — 출고 기사 아카이브 시스템 ────────────────────────────────
 
 const ARCHIVE_DIR: &str = ".journalist/archive";
@@ -5370,5 +5687,108 @@ mod tests {
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("방송 원고"));
+    }
+
+    // ── /correction tests ──────────────────────────────────────────────
+
+    #[test]
+    fn parse_correction_add_args_all_flags() {
+        let (article, error, fix) =
+            parse_correction_add_args("--article 제목 --error 오류 --fix 정정");
+        assert_eq!(article, "제목");
+        assert_eq!(error, "오류");
+        assert_eq!(fix, "정정");
+    }
+
+    #[test]
+    fn parse_correction_add_args_missing_flags() {
+        let (article, error, fix) = parse_correction_add_args("--article 제목");
+        assert_eq!(article, "제목");
+        assert!(error.is_empty());
+        assert!(fix.is_empty());
+    }
+
+    #[test]
+    fn parse_correction_add_args_empty() {
+        let (article, error, fix) = parse_correction_add_args("");
+        assert!(article.is_empty());
+        assert!(error.is_empty());
+        assert!(fix.is_empty());
+    }
+
+    #[test]
+    fn append_and_load_corrections() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file_path = dir.path().join("corrections.jsonl");
+
+        let record = CorrectionRecord {
+            date: "2026-03-22".to_string(),
+            article: "테스트 기사".to_string(),
+            error: "잘못된 수치".to_string(),
+            fix: "올바른 수치".to_string(),
+            status: "pending".to_string(),
+        };
+
+        // Write directly to temp file
+        let json = serde_json::to_string(&record).unwrap();
+        std::fs::write(&file_path, format!("{json}\n")).unwrap();
+
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        let records: Vec<CorrectionRecord> = content
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].article, "테스트 기사");
+        assert_eq!(records[0].error, "잘못된 수치");
+        assert_eq!(records[0].fix, "올바른 수치");
+        assert_eq!(records[0].status, "pending");
+    }
+
+    #[test]
+    fn correction_report_path_with_slug() {
+        let path = correction_report_path_with_date("테스트-기사", "2026-03-22");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/corrections/2026-03-22_테스트-기사.md"
+        );
+    }
+
+    #[test]
+    fn correction_report_path_empty_slug() {
+        let path = correction_report_path_with_date("", "2026-03-22");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/corrections/2026-03-22_correction.md"
+        );
+    }
+
+    #[test]
+    fn build_correction_report_prompt_includes_law() {
+        let records = vec![CorrectionRecord {
+            date: "2026-03-22".to_string(),
+            article: "반도체 수출".to_string(),
+            error: "수치 오류".to_string(),
+            fix: "정정된 수치".to_string(),
+            status: "pending".to_string(),
+        }];
+        let prompt = build_correction_report_prompt("반도체 수출", &records);
+        assert!(prompt.contains("언론중재법"));
+        assert!(prompt.contains("원보도와 같은 크기"));
+        assert!(prompt.contains("정정보도문"));
+        assert!(prompt.contains("반도체 수출"));
+        assert!(prompt.contains("수치 오류"));
+    }
+
+    #[test]
+    fn save_correction_report_creates_dir_and_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("corrections").join("test.md");
+        let result = save_correction_report(&path, "# 정정보도문\n\n내용");
+        assert!(result.is_ok());
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("정정보도문"));
     }
 }

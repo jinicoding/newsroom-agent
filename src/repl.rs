@@ -697,6 +697,11 @@ pub async fn run_repl(
                     .await;
                 continue;
             }
+            s if s == "/correction" || s.starts_with("/correction ") => {
+                commands::handle_correction(agent, input, &mut session_total, &agent_config.model)
+                    .await;
+                continue;
+            }
             s if s == "/embargo" || s.starts_with("/embargo ") => {
                 commands::handle_embargo(input);
                 continue;
