@@ -38,18 +38,18 @@ ANTHROPIC_API_KEY=sk-... ./scripts/evolve.sh
 
 The agent looks for project instructions in order: `YOYO.md` → `CLAUDE.md` → `.yoyo/instructions.md`. `YOYO.md` is the canonical name; `CLAUDE.md` is a compatibility alias.
 
-### Source (`src/`) — 12 files
+### Source (`src/`) — 12 files, ~30k lines
 
 **Kernel layer** (agent core + interaction):
-- `main.rs` — agent initialization, provider setup, streaming event handling, REPL dispatch
-- `repl.rs` — rustyline-based interactive loop with tab-completion (slash commands, file paths, command arguments)
-- `cli.rs` — CLI argument parsing, config file support, multi-provider abstraction, permission patterns
+- `main.rs` — agent initialization, multi-provider setup (11 providers: Anthropic/OpenAI/Google/Ollama/OpenRouter/xAI/Groq/DeepSeek/Mistral/Cerebras/Custom), streaming event handling, REPL dispatch. `GuardedTool` wrapper enforces `--allow`/`--deny` directory restrictions on file tools
+- `repl.rs` — rustyline-based interactive loop with tab-completion (slash commands, file paths, command arguments, model names, provider names)
+- `cli.rs` — CLI argument parsing, config file support (`.yoyo.toml` / `~/.config/yoyo/config.toml`), `DirectoryRestrictions` struct for path-based permission patterns
 - `prompt.rs` — streaming execution with automatic retries, exponential backoff, error classification
 
-**Command dispatcher** (47 slash commands split by domain):
-- `commands.rs` — central hub: `KNOWN_COMMANDS` registry, auto-compact trigger, tab-completion routing, common handlers
+**Command dispatcher** (66 slash commands split by domain):
+- `commands.rs` — central hub: `KNOWN_COMMANDS` registry (66 entries), auto-compact trigger, tab-completion routing, common handlers
 - `commands_git.rs` — `/diff`, `/commit` (AI-generated conventional commits), `/pr`, `/review`, `/undo`
-- `commands_project.rs` — `/health`, `/fix`, `/test`, `/lint`, `/init`, `/docs`, `/find`, `/tree`, `/index`, `/article`, `/research`, `/sources`, `/factcheck`
+- `commands_project.rs` (~16k lines, largest file) — journalism-specific commands (`/article`, `/research`, `/sources`, `/factcheck`, `/briefing`, `/interview`, `/timeline`, `/headline`, `/rewrite`, `/draft`, `/proofread`, `/legal`, `/embargo`, `/anonymize`, `/performance`, `/network`, `/autopitch`, etc.) plus dev commands (`/health`, `/fix`, `/test`, `/lint`, `/init`, `/docs`, `/find`, `/tree`, `/index`)
 - `commands_session.rs` — `/save`, `/load`, `/compact`, `/search`, `/mark`/`/jump`, `/spawn` (subagents)
 
 **Support modules**:
@@ -58,7 +58,7 @@ The agent looks for project instructions in order: `YOYO.md` → `CLAUDE.md` →
 - `docs.rs` — docs.rs crate documentation fetcher: HTML parsing, item extraction (struct/enum/trait/fn/module)
 - `format.rs` — ANSI colors (respects NO_COLOR), syntax highlighting, token/cost formatting
 
-Uses `yoagent::Agent` with `AnthropicProvider`, `default_tools()`, and an optional `SkillSet`. Context window is 200k tokens with auto-compact at 80%.
+Uses `yoagent::Agent` with `AnthropicProvider` (default), `default_tools()`, and an optional `SkillSet`. Context window is 200k tokens with auto-compact at 80%. Provider switchable mid-session via `/provider`.
 
 ### Evolution loop (`scripts/evolve.sh`)
 
@@ -99,6 +99,16 @@ Two-layer architecture — append-only JSONL archives (source of truth, never co
 ### Documentation (`docs/`)
 
 mdbook source in `docs/src/`, config in `docs/book.toml`. Output goes to `site/book/` (gitignored). Journal homepage (`site/index.html`) built by `scripts/build_site.py`. Both deployed by the Pages workflow.
+
+### Local scripts (`scripts/`)
+
+- `evolve.sh` / `evolve_local.sh` — full 3-phase evolution pipeline (immutable, do not modify)
+- `daily_diary.sh` — daily journal entry generation
+- `social.sh` / `social_local.sh` — GitHub discussions → social learning ingestion
+- `synthesize_local.sh` — local run of memory archive → active context compression
+- `yoyo_context.sh` — central context loader, exports `$YOYO_CONTEXT` for evolution agents
+- `build_site.py` — journal homepage builder (immutable)
+- `format_issues.py` / `format_discussions.py` — GitHub data formatters (immutable)
 
 ### CI/CD Workflows (`.github/workflows/`)
 

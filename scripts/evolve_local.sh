@@ -77,8 +77,10 @@ SESSION_START_SHA=$(git rev-parse HEAD)
 ISSUES_FILE="ISSUES_TODAY.md"
 echo "→ GitHub 이슈 확인..." | tee -a "$LOG_FILE"
 if command -v gh &>/dev/null && [ -f scripts/format_issues.py ]; then
-    ISSUES_RAW=$(gh issue list --repo "$REPO" --state open --label "agent-input" --json number,title,body,labels,reactionGroups --limit 20 2>/dev/null || echo "[]")
-    echo "$ISSUES_RAW" | python3 scripts/format_issues.py > "$ISSUES_FILE" 2>/dev/null || echo "### No issues" > "$ISSUES_FILE"
+    gh issue list --repo "$REPO" --state open --label "agent-input" --limit 20 \
+        --json number,title,body,labels,reactionGroups,author,comments \
+        > /tmp/issues_raw.json 2>/dev/null || echo "[]" > /tmp/issues_raw.json
+    python3 scripts/format_issues.py /tmp/issues_raw.json "$DAY" > "$ISSUES_FILE" 2>/dev/null || echo "### No issues" > "$ISSUES_FILE"
     ISSUE_COUNT=$(grep -c '^### Issue' "$ISSUES_FILE" 2>/dev/null || echo 0)
     echo "  이슈 ${ISSUE_COUNT}개 로드." | tee -a "$LOG_FILE"
 else

@@ -11808,6 +11808,405 @@ fn morning_print_help() {
     println!("{DIM}    /morning help         도움말{RESET}\n");
 }
 
+// ── /note ────────────────────────────────────────────────────────────────
+
+const NOTES_DIR: &str = ".journalist/notes";
+
+/// A single reporter note entry stored as one JSONL line.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+struct Note {
+    content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    topic: Option<String>,
+    timestamp: String,
+}
+
+fn notes_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(NOTES_DIR)
+}
+
+/// Return today's JSONL notes file path: `.journalist/notes/YYYY-MM-DD.jsonl`
+fn notes_file_for_date(date: &str) -> std::path::PathBuf {
+    notes_dir().join(format!("{date}.jsonl"))
+}
+
+/// Load all notes from a single JSONL file.
+fn load_notes_from(path: &std::path::Path) -> Vec<Note> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect()
+}
+
+/// Append a single note to a JSONL file.
+fn append_note_to(note: &Note, path: &std::path::Path) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let line = serde_json::to_string(note).unwrap_or_default();
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .unwrap_or_else(|_| panic!("Failed to open {}", path.display()));
+    let _ = writeln!(file, "{line}");
+}
+
+/// Load all notes across all date files, sorted by timestamp ascending.
+fn load_all_notes() -> Vec<Note> {
+    load_all_notes_from(&notes_dir())
+}
+
+fn load_all_notes_from(dir: &std::path::Path) -> Vec<Note> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+    let mut all: Vec<Note> = Vec::new();
+    let mut files: Vec<std::path::PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "jsonl"))
+        .collect();
+    files.sort();
+    for f in files {
+        all.extend(load_notes_from(&f));
+    }
+    all
+}
+
+/// Handle `/note` command with subcommands: add, list, search, export.
+pub fn handle_note(input: &str) -> Option<String> {
+    let args = input.strip_prefix("/note").unwrap_or("").trim();
+
+    if args.is_empty() || args == "help" || args == "--help" {
+        print_note_usage();
+        return None;
+    }
+
+    let (sub, rest) = match args.split_once(char::is_whitespace) {
+        Some((s, r)) => (s, r.trim()),
+        None => (args, ""),
+    };
+
+    match sub {
+        "add" => {
+            handle_note_add(rest);
+            None
+        }
+        "list" => {
+            handle_note_list(rest);
+            None
+        }
+        "search" => {
+            handle_note_search(rest);
+            None
+        }
+        "export" => Some(handle_note_export(rest)),
+        _ => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {sub}{RESET}");
+            print_note_usage();
+            None
+        }
+    }
+}
+
+fn print_note_usage() {
+    println!("{DIM}  사용법:");
+    println!("    /note add <메모>                              빠른 메모 저장");
+    println!(
+        "    /note add --source 홍길동 --topic 반도체 \"내용\"  취재원·주제 태그 포함"
+    );
+    println!("    /note list                                    최근 노트 시간순 목록");
+    println!("    /note list --topic 반도체                     주제별 필터링");
+    println!("    /note search <키워드>                         키워드 검색");
+    println!("    /note export <주제>                           주제별 노트 정리 (AI){RESET}\n");
+}
+
+/// Parse add arguments: optional --source, --topic flags, and the remaining content.
+fn parse_note_add_args(args: &str) -> (String, Option<String>, Option<String>) {
+    let mut source: Option<String> = None;
+    let mut topic: Option<String> = None;
+    let mut remaining = args.to_string();
+
+    // Extract --source value
+    if let Some(pos) = remaining.find("--source") {
+        let before = remaining[..pos].to_string();
+        let after = remaining[pos + 8..].trim_start().to_string();
+        let (val, rest) = extract_flag_value(&after);
+        source = if val.is_empty() { None } else { Some(val) };
+        remaining = format!("{before} {rest}").trim().to_string();
+    }
+
+    // Extract --topic value
+    if let Some(pos) = remaining.find("--topic") {
+        let before = remaining[..pos].to_string();
+        let after = remaining[pos + 7..].trim_start().to_string();
+        let (val, rest) = extract_flag_value(&after);
+        topic = if val.is_empty() { None } else { Some(val) };
+        remaining = format!("{before} {rest}").trim().to_string();
+    }
+
+    // Strip surrounding quotes from content
+    let content = remaining
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string();
+
+    (content, source, topic)
+}
+
+/// Extract a flag value: takes the next word (or quoted string) and returns (value, rest).
+fn extract_flag_value(s: &str) -> (String, String) {
+    let s = s.trim();
+    if s.is_empty() {
+        return (String::new(), String::new());
+    }
+
+    // Check if the value is the next --flag (no value provided)
+    if s.starts_with("--") {
+        return (String::new(), s.to_string());
+    }
+
+    // Quoted value
+    if s.starts_with('"') {
+        if let Some(end) = s[1..].find('"') {
+            let val = s[1..=end].to_string();
+            let rest = s[end + 2..].trim().to_string();
+            return (val, rest);
+        }
+    }
+
+    // Unquoted: take until next whitespace or --flag
+    let mut end = s.len();
+    for (i, c) in s.char_indices() {
+        if c.is_whitespace() {
+            end = i;
+            break;
+        }
+    }
+    let val = s[..end].to_string();
+    let rest = s[end..].trim().to_string();
+    (val, rest)
+}
+
+fn handle_note_add(args: &str) {
+    if args.is_empty() {
+        eprintln!("{RED}  사용법: /note add <메모 내용>{RESET}\n");
+        return;
+    }
+
+    let (content, source, topic) = parse_note_add_args(args);
+
+    if content.is_empty() {
+        eprintln!("{RED}  메모 내용을 입력하세요.{RESET}\n");
+        return;
+    }
+
+    let now = {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let date = format_unix_timestamp(secs);
+        date.replace(' ', "T").to_string() + ":00"
+    };
+
+    let today = today_date_string();
+    let note = Note {
+        content: content.clone(),
+        source: source.clone(),
+        topic: topic.clone(),
+        timestamp: now,
+    };
+
+    let path = notes_file_for_date(&today);
+    append_note_to(&note, &path);
+
+    let mut meta = String::new();
+    if let Some(ref s) = source {
+        meta.push_str(&format!(" [취재원: {s}]"));
+    }
+    if let Some(ref t) = topic {
+        meta.push_str(&format!(" [주제: {t}]"));
+    }
+    println!("{GREEN}  📝 메모 저장: {content}{meta}{RESET}\n");
+}
+
+fn handle_note_list(args: &str) {
+    let topic_filter = if let Some(pos) = args.find("--topic") {
+        let after = args[pos + 7..].trim();
+        if after.is_empty() {
+            None
+        } else {
+            let (val, _) = extract_flag_value(after);
+            if val.is_empty() { None } else { Some(val) }
+        }
+    } else {
+        None
+    };
+
+    let notes = load_all_notes();
+
+    let filtered: Vec<&Note> = if let Some(ref t) = topic_filter {
+        let t_lower = t.to_lowercase();
+        notes
+            .iter()
+            .filter(|n| {
+                n.topic
+                    .as_ref()
+                    .is_some_and(|nt| nt.to_lowercase().contains(&t_lower))
+            })
+            .collect()
+    } else {
+        notes.iter().collect()
+    };
+
+    if filtered.is_empty() {
+        let suffix = topic_filter
+            .as_ref()
+            .map(|t| format!(" (주제: {t})"))
+            .unwrap_or_default();
+        println!("{DIM}  저장된 노트가 없습니다{suffix}.{RESET}\n");
+        return;
+    }
+
+    let label = topic_filter
+        .as_ref()
+        .map(|t| format!(" (주제: {t})"))
+        .unwrap_or_default();
+    println!("{BOLD}  📓 취재 노트{label}{RESET}");
+    println!("{DIM}  ──────────────────────────────{RESET}");
+
+    for (i, note) in filtered.iter().enumerate() {
+        let num = i + 1;
+        let ts = &note.timestamp;
+        let mut meta = String::new();
+        if let Some(ref s) = note.source {
+            meta.push_str(&format!(" [{s}]"));
+        }
+        if let Some(ref t) = note.topic {
+            meta.push_str(&format!(" #{t}"));
+        }
+        println!("  {DIM}{ts}{RESET} {GREEN}#{num}{RESET}{meta} {}", note.content);
+    }
+    println!();
+}
+
+fn handle_note_search(query: &str) {
+    if query.is_empty() {
+        eprintln!("{RED}  검색어를 입력하세요: /note search <키워드>{RESET}\n");
+        return;
+    }
+
+    let query_lower = query.to_lowercase();
+    let notes = load_all_notes();
+
+    let matches: Vec<&Note> = notes
+        .iter()
+        .filter(|n| {
+            n.content.to_lowercase().contains(&query_lower)
+                || n.source
+                    .as_ref()
+                    .is_some_and(|s| s.to_lowercase().contains(&query_lower))
+                || n.topic
+                    .as_ref()
+                    .is_some_and(|t| t.to_lowercase().contains(&query_lower))
+        })
+        .collect();
+
+    if matches.is_empty() {
+        println!("{DIM}  \"{query}\" 검색 결과가 없습니다.{RESET}\n");
+        return;
+    }
+
+    println!(
+        "{BOLD}  🔍 \"{query}\" 검색 결과 ({} 건){RESET}",
+        matches.len()
+    );
+    println!("{DIM}  ──────────────────────────────{RESET}");
+
+    for (i, note) in matches.iter().enumerate() {
+        let num = i + 1;
+        let ts = &note.timestamp;
+        let mut meta = String::new();
+        if let Some(ref s) = note.source {
+            meta.push_str(&format!(" [{s}]"));
+        }
+        if let Some(ref t) = note.topic {
+            meta.push_str(&format!(" #{t}"));
+        }
+        println!("  {DIM}{ts}{RESET} {GREEN}#{num}{RESET}{meta} {}", note.content);
+    }
+    println!();
+}
+
+/// Build an export prompt — returns the prompt string for AI processing.
+/// The caller (repl.rs) should run this through the AI.
+fn handle_note_export(topic: &str) -> String {
+    if topic.is_empty() {
+        eprintln!("{RED}  주제를 지정하세요: /note export <주제>{RESET}\n");
+        return String::new();
+    }
+
+    let topic_lower = topic.to_lowercase();
+    let notes = load_all_notes();
+
+    let matches: Vec<&Note> = notes
+        .iter()
+        .filter(|n| {
+            n.topic
+                .as_ref()
+                .is_some_and(|t| t.to_lowercase().contains(&topic_lower))
+                || n.content.to_lowercase().contains(&topic_lower)
+        })
+        .collect();
+
+    if matches.is_empty() {
+        println!("{DIM}  \"{topic}\" 관련 노트가 없습니다.{RESET}\n");
+        return String::new();
+    }
+
+    println!(
+        "{DIM}  📤 \"{topic}\" 관련 노트 {} 건을 정리합니다...{RESET}",
+        matches.len()
+    );
+
+    let mut collected = String::new();
+    for note in &matches {
+        let source_tag = note
+            .source
+            .as_ref()
+            .map(|s| format!(" (취재원: {s})"))
+            .unwrap_or_default();
+        collected.push_str(&format!(
+            "- [{}]{source_tag}: {}\n",
+            note.timestamp, note.content
+        ));
+    }
+
+    format!(
+        "다음은 \"{topic}\" 주제 관련 취재 노트입니다. 이 노트들을 기사 작성에 활용할 수 있도록 \
+         체계적으로 정리해주세요.\n\n\
+         ## 정리 요청사항:\n\
+         1. 시간순으로 핵심 내용 요약\n\
+         2. 취재원별 발언 정리\n\
+         3. 기사에 활용할 수 있는 핵심 팩트 추출\n\
+         4. 추가 취재가 필요한 사항\n\n\
+         ## 취재 노트:\n{collected}"
+    )
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -16467,5 +16866,328 @@ mod tests {
         assert!(prompt.contains("데스크 지시 대기 건"));
         assert!(prompt.contains("오늘의 주요 이슈"));
         assert!(prompt.contains("오늘의 추천 액션"));
+    }
+
+    // ── /note tests ──
+
+    fn temp_notes_dir() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let notes_dir = dir.path().join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+        (dir, notes_dir)
+    }
+
+    #[test]
+    fn note_struct_jsonl_roundtrip() {
+        let note = Note {
+            content: "삼성 신규 라인 4월 가동".to_string(),
+            source: Some("홍길동".to_string()),
+            topic: Some("반도체".to_string()),
+            timestamp: "2026-03-22T10:00:00".to_string(),
+        };
+        let json = serde_json::to_string(&note).unwrap();
+        let parsed: Note = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.content, "삼성 신규 라인 4월 가동");
+        assert_eq!(parsed.source, Some("홍길동".to_string()));
+        assert_eq!(parsed.topic, Some("반도체".to_string()));
+        assert_eq!(parsed.timestamp, "2026-03-22T10:00:00");
+    }
+
+    #[test]
+    fn note_struct_optional_fields() {
+        let note = Note {
+            content: "간단 메모".to_string(),
+            source: None,
+            topic: None,
+            timestamp: "2026-03-22T10:00:00".to_string(),
+        };
+        let json = serde_json::to_string(&note).unwrap();
+        // Optional fields should be skipped
+        assert!(!json.contains("source"));
+        assert!(!json.contains("topic"));
+        let parsed: Note = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.source, None);
+        assert_eq!(parsed.topic, None);
+    }
+
+    #[test]
+    fn note_append_and_load() {
+        let (_dir, notes_dir) = temp_notes_dir();
+        let path = notes_dir.join("2026-03-22.jsonl");
+
+        let note1 = Note {
+            content: "첫번째 메모".to_string(),
+            source: None,
+            topic: None,
+            timestamp: "2026-03-22T09:00:00".to_string(),
+        };
+        let note2 = Note {
+            content: "두번째 메모".to_string(),
+            source: Some("김기자".to_string()),
+            topic: Some("경제".to_string()),
+            timestamp: "2026-03-22T10:00:00".to_string(),
+        };
+
+        append_note_to(&note1, &path);
+        append_note_to(&note2, &path);
+
+        let loaded = load_notes_from(&path);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].content, "첫번째 메모");
+        assert_eq!(loaded[1].content, "두번째 메모");
+        assert_eq!(loaded[1].source, Some("김기자".to_string()));
+        assert_eq!(loaded[1].topic, Some("경제".to_string()));
+    }
+
+    #[test]
+    fn note_load_missing_file() {
+        let path = std::path::PathBuf::from("/tmp/nonexistent_notes_xyz.jsonl");
+        let loaded = load_notes_from(&path);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn note_load_all_across_dates() {
+        let (_dir, notes_dir) = temp_notes_dir();
+
+        let note_day1 = Note {
+            content: "1일 메모".to_string(),
+            source: None,
+            topic: None,
+            timestamp: "2026-03-21T09:00:00".to_string(),
+        };
+        let note_day2 = Note {
+            content: "2일 메모".to_string(),
+            source: None,
+            topic: Some("정치".to_string()),
+            timestamp: "2026-03-22T09:00:00".to_string(),
+        };
+
+        append_note_to(&note_day1, &notes_dir.join("2026-03-21.jsonl"));
+        append_note_to(&note_day2, &notes_dir.join("2026-03-22.jsonl"));
+
+        let all = load_all_notes_from(&notes_dir);
+        assert_eq!(all.len(), 2);
+        // Files sorted by name, so day1 comes first
+        assert_eq!(all[0].content, "1일 메모");
+        assert_eq!(all[1].content, "2일 메모");
+    }
+
+    #[test]
+    fn parse_note_add_args_simple() {
+        let (content, source, topic) = parse_note_add_args("간단한 메모입니다");
+        assert_eq!(content, "간단한 메모입니다");
+        assert_eq!(source, None);
+        assert_eq!(topic, None);
+    }
+
+    #[test]
+    fn parse_note_add_args_with_flags() {
+        let (content, source, topic) =
+            parse_note_add_args("--source 홍길동 --topic 반도체 \"삼성 신규 라인\"");
+        assert_eq!(content, "삼성 신규 라인");
+        assert_eq!(source, Some("홍길동".to_string()));
+        assert_eq!(topic, Some("반도체".to_string()));
+    }
+
+    #[test]
+    fn parse_note_add_args_flags_after_content() {
+        let (content, source, topic) =
+            parse_note_add_args("김OO 과장: 다음 주 발표 예정");
+        assert_eq!(content, "김OO 과장: 다음 주 발표 예정");
+        assert_eq!(source, None);
+        assert_eq!(topic, None);
+    }
+
+    #[test]
+    fn parse_note_add_args_quoted_content() {
+        let (content, source, topic) =
+            parse_note_add_args("\"다음 주 발표 예정\"");
+        assert_eq!(content, "다음 주 발표 예정");
+        assert_eq!(source, None);
+        assert_eq!(topic, None);
+    }
+
+    #[test]
+    fn extract_flag_value_basic() {
+        let (val, rest) = extract_flag_value("홍길동 나머지");
+        assert_eq!(val, "홍길동");
+        assert_eq!(rest, "나머지");
+    }
+
+    #[test]
+    fn extract_flag_value_empty() {
+        let (val, rest) = extract_flag_value("");
+        assert!(val.is_empty());
+        assert!(rest.is_empty());
+    }
+
+    #[test]
+    fn extract_flag_value_next_flag() {
+        let (val, rest) = extract_flag_value("--topic 반도체");
+        assert!(val.is_empty());
+        assert_eq!(rest, "--topic 반도체");
+    }
+
+    #[test]
+    fn note_search_matches_content_source_topic() {
+        let (_dir, notes_dir) = temp_notes_dir();
+        let path = notes_dir.join("2026-03-22.jsonl");
+
+        append_note_to(
+            &Note {
+                content: "삼성 신규 라인 4월 가동".to_string(),
+                source: Some("홍길동".to_string()),
+                topic: Some("반도체".to_string()),
+                timestamp: "2026-03-22T10:00:00".to_string(),
+            },
+            &path,
+        );
+        append_note_to(
+            &Note {
+                content: "환율 동향 분석".to_string(),
+                source: None,
+                topic: Some("경제".to_string()),
+                timestamp: "2026-03-22T11:00:00".to_string(),
+            },
+            &path,
+        );
+
+        let all = load_all_notes_from(&notes_dir);
+
+        // Search by content
+        let matches: Vec<&Note> = all
+            .iter()
+            .filter(|n| n.content.to_lowercase().contains("삼성"))
+            .collect();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].content, "삼성 신규 라인 4월 가동");
+
+        // Search by source
+        let matches: Vec<&Note> = all
+            .iter()
+            .filter(|n| {
+                n.source
+                    .as_ref()
+                    .is_some_and(|s| s.to_lowercase().contains("홍길동"))
+            })
+            .collect();
+        assert_eq!(matches.len(), 1);
+
+        // Search by topic
+        let matches: Vec<&Note> = all
+            .iter()
+            .filter(|n| {
+                n.topic
+                    .as_ref()
+                    .is_some_and(|t| t.to_lowercase().contains("경제"))
+            })
+            .collect();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].content, "환율 동향 분석");
+    }
+
+    #[test]
+    fn note_export_prompt_contains_notes() {
+        let (_dir, notes_dir) = temp_notes_dir();
+        let path = notes_dir.join("2026-03-22.jsonl");
+        append_note_to(
+            &Note {
+                content: "삼성 4월 가동".to_string(),
+                source: Some("김과장".to_string()),
+                topic: Some("반도체".to_string()),
+                timestamp: "2026-03-22T10:00:00".to_string(),
+            },
+            &path,
+        );
+
+        let notes = load_all_notes_from(&notes_dir);
+        let matches: Vec<&Note> = notes
+            .iter()
+            .filter(|n| {
+                n.topic
+                    .as_ref()
+                    .is_some_and(|t| t.to_lowercase().contains("반도체"))
+                    || n.content.to_lowercase().contains("반도체")
+            })
+            .collect();
+        assert_eq!(matches.len(), 1);
+
+        // Build the export prompt manually (same logic as handle_note_export)
+        let mut collected = String::new();
+        for note in &matches {
+            let source_tag = note
+                .source
+                .as_ref()
+                .map(|s| format!(" (취재원: {s})"))
+                .unwrap_or_default();
+            collected.push_str(&format!(
+                "- [{}]{source_tag}: {}\n",
+                note.timestamp, note.content
+            ));
+        }
+        assert!(collected.contains("삼성 4월 가동"));
+        assert!(collected.contains("김과장"));
+    }
+
+    #[test]
+    fn note_topic_filter() {
+        let (_dir, notes_dir) = temp_notes_dir();
+        let path = notes_dir.join("2026-03-22.jsonl");
+
+        append_note_to(
+            &Note {
+                content: "A 노트".to_string(),
+                source: None,
+                topic: Some("반도체".to_string()),
+                timestamp: "2026-03-22T09:00:00".to_string(),
+            },
+            &path,
+        );
+        append_note_to(
+            &Note {
+                content: "B 노트".to_string(),
+                source: None,
+                topic: Some("경제".to_string()),
+                timestamp: "2026-03-22T10:00:00".to_string(),
+            },
+            &path,
+        );
+        append_note_to(
+            &Note {
+                content: "C 노트".to_string(),
+                source: None,
+                topic: Some("반도체".to_string()),
+                timestamp: "2026-03-22T11:00:00".to_string(),
+            },
+            &path,
+        );
+
+        let all = load_all_notes_from(&notes_dir);
+        let filtered: Vec<&Note> = all
+            .iter()
+            .filter(|n| {
+                n.topic
+                    .as_ref()
+                    .is_some_and(|t| t.to_lowercase().contains("반도체"))
+            })
+            .collect();
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(filtered[0].content, "A 노트");
+        assert_eq!(filtered[1].content, "C 노트");
+    }
+
+    #[test]
+    fn notes_dir_constant() {
+        assert_eq!(NOTES_DIR, ".journalist/notes");
+    }
+
+    #[test]
+    fn note_command_in_known_commands() {
+        use crate::commands::KNOWN_COMMANDS;
+        assert!(
+            KNOWN_COMMANDS.contains(&"/note"),
+            "/note should be in KNOWN_COMMANDS"
+        );
     }
 }
