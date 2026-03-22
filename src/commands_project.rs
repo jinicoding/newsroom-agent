@@ -1513,6 +1513,11 @@ pub fn build_article_prompt(
             }
         }
 
+        let ctx = profile_context();
+        if !ctx.is_empty() {
+            prompt.push_str(&ctx);
+        }
+
         (prompt, true)
     }
 }
@@ -1598,7 +1603,6 @@ fn format_profile(profile: &serde_json::Map<String, serde_json::Value>) -> Strin
 
 /// Build a context string from the profile for injection into prompts.
 /// Used by /article, /briefing, /morning etc. to personalize output.
-#[allow(dead_code)]
 pub fn profile_context() -> String {
     let profile = load_profile();
     if profile.is_empty() {
@@ -2302,6 +2306,23 @@ mod tests {
     fn profile_context_empty() {
         // When no profile file exists, context should be empty
         assert_eq!(PROFILE_FILE, ".journalist/profile.json");
+    }
+
+    #[test]
+    fn article_prompt_without_profile() {
+        // When no profile exists, build_article_prompt should still work
+        let (prompt, has_research) = build_article_prompt("반도체 수출", &[], None);
+        assert!(has_research);
+        assert!(prompt.contains("반도체 수출"));
+        assert!(prompt.contains("스트레이트"));
+    }
+
+    #[test]
+    fn article_prompt_empty_topic() {
+        // Empty topic should return help text, no profile injection
+        let (prompt, has_research) = build_article_prompt("", &[], None);
+        assert!(!has_research);
+        assert!(prompt.contains("어떤 주제로 기사를 작성하시겠습니까"));
     }
 
     #[test]

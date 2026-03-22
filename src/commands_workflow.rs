@@ -3724,8 +3724,9 @@ pub fn build_autopitch_prompt(beat: Option<&str>, data: &str) -> String {
         Some(b) => format!("\n\n출입처/분야: {b}\n이 분야에 특화된 기사 아이디어를 중심으로 제안하세요."),
         None => String::new(),
     };
+    let ctx = profile_context();
     format!(
-        "당신은 한국 신문사의 선배 기자입니다. 아래 취재 데이터를 분석하고 기사 아이디어를 제안하세요.{beat_context}
+        "당신은 한국 신문사의 선배 기자입니다.{ctx} 아래 취재 데이터를 분석하고 기사 아이디어를 제안하세요.{beat_context}
 
 다음 세 가지 카테고리로 각 2-3개씩 제안해주세요:
 
@@ -3927,8 +3928,9 @@ pub fn collect_morning_data() -> String {
 
 /// Build the prompt for the morning briefing AI call.
 pub fn build_morning_prompt(data: &str) -> String {
+    let ctx = profile_context();
     format!(
-        "당신은 한국 신문사 기자의 아침 브리핑 비서입니다. \
+        "당신은 한국 신문사 기자의 아침 브리핑 비서입니다.{ctx} \
 아래 데이터를 바탕으로 오늘 하루 업무를 시작하기 위한 종합 아침 브리핑을 작성하세요.
 
 다음 항목을 포함하세요:
@@ -7684,5 +7686,27 @@ mod tests {
         assert!(prompt.contains("/article --type analysis"));
         assert!(prompt.contains("단계 1"));
         assert!(prompt.contains("단계 3"));
+    }
+
+    #[test]
+    fn morning_prompt_contains_data() {
+        let prompt = build_morning_prompt("오늘 일정: 기자간담회 14:00");
+        assert!(prompt.contains("기자간담회"));
+        assert!(prompt.contains("아침 브리핑"));
+    }
+
+    #[test]
+    fn autopitch_prompt_with_beat() {
+        let prompt = build_autopitch_prompt(Some("경제"), "최근 취재 데이터");
+        assert!(prompt.contains("경제"));
+        assert!(prompt.contains("최근 취재 데이터"));
+        assert!(prompt.contains("미발굴 각도"));
+    }
+
+    #[test]
+    fn autopitch_prompt_without_beat() {
+        let prompt = build_autopitch_prompt(None, "데이터");
+        assert!(!prompt.contains("출입처/분야:"));
+        assert!(prompt.contains("데이터"));
     }
 }

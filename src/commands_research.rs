@@ -187,6 +187,7 @@ pub fn build_news_context(items: &[NewsItem]) -> String {
 /// Build the full research prompt, optionally injecting news API results.
 pub fn build_research_prompt(topic: &str, news_context: &str) -> String {
     let encoded = topic.replace(' ', "+");
+    let ctx = profile_context();
     format!(
         "다음 주제에 대해 웹 리서치를 수행해주세요: {topic}\n\n\
          다음 단계를 따라주세요:\n\
@@ -197,7 +198,7 @@ pub fn build_research_prompt(topic: &str, news_context: &str) -> String {
             - **주요 출처** — 신뢰할 수 있는 출처 목록\n\
             - **쟁점** — 다른 시각이나 논란\n\
             - **추가 취재 제안** — 더 파고들 수 있는 방향\n\n\
-         모든 정보에 출처를 명시하고, 확인되지 않은 내용은 명확히 표시하세요.{news_context}",
+         모든 정보에 출처를 명시하고, 확인되지 않은 내용은 명확히 표시하세요.{news_context}{ctx}",
     )
 }
 
@@ -6006,5 +6007,13 @@ mod tests {
     fn rss_command_recognized() {
         use crate::commands::KNOWN_COMMANDS;
         assert!(KNOWN_COMMANDS.contains(&"/rss"));
+    }
+
+    #[test]
+    fn research_prompt_contains_topic() {
+        let prompt = build_research_prompt("반도체 수출", "");
+        assert!(prompt.contains("반도체 수출"));
+        assert!(prompt.contains("반도체+수출"));
+        assert!(prompt.contains("핵심 사실"));
     }
 }
