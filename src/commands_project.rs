@@ -12854,6 +12854,305 @@ fn print_breaking_list() {
     println!();
 }
 
+// ── /recap ──────────────────────────────────────────────────────────────
+
+const RECAP_DIR: &str = ".journalist/recap";
+
+/// Collect today's journalist data for the daily recap.
+///
+/// Gathers: notes, contacts, calendar (done/undone), drafts modified today,
+/// deadline status changes, and desk assignment status.
+pub fn collect_recap_data() -> String {
+    let mut sections = Vec::new();
+    let today = today_date_string();
+
+    // 1. Notes written today
+    let notes_file = notes_file_for_date(&today);
+    let notes = load_notes_from(&notes_file);
+    if !notes.is_empty() {
+        let mut s = format!("## 오늘 작성한 메모 ({today}, {}건)\n", notes.len());
+        for n in &notes {
+            let tags = [
+                n.source.as_deref().map(|s| format!("[취재원: {s}]")),
+                n.topic.as_deref().map(|t| format!("[주제: {t}]")),
+            ];
+            let tag_str: String = tags.iter().flatten().cloned().collect::<Vec<_>>().join(" ");
+            if tag_str.is_empty() {
+                s.push_str(&format!("- {}\n", n.content));
+            } else {
+                s.push_str(&format!("- {} {tag_str}\n", n.content));
+            }
+        }
+        sections.push(s);
+    } else {
+        sections.push(format!("## 오늘 작성한 메모 ({today})\n메모 없음\n"));
+    }
+
+    // 2. Contacts logged today
+    let all_contacts = load_all_contact_logs();
+    let today_contacts: Vec<&ContactLog> = all_contacts
+        .iter()
+        .filter(|c| c.timestamp.starts_with(&today))
+        .collect();
+    if !today_contacts.is_empty() {
+        let mut s = format!(
+            "## 오늘 접촉한 취재원 ({}건)\n",
+            today_contacts.len()
+        );
+        for c in &today_contacts {
+            s.push_str(&format!("- {} — {}\n", c.name, c.summary));
+        }
+        sections.push(s);
+    } else {
+        sections.push("## 오늘 접촉한 취재원\n접촉 기록 없음\n".to_string());
+    }
+
+    // 3. Calendar: today's events with completion status
+    let calendar = load_calendar_from(&calendar_path());
+    let today_events: Vec<&CalendarEvent> =
+        calendar.iter().filter(|e| e.date == today).collect();
+    if !today_events.is_empty() {
+        let done_count = today_events.iter().filter(|e| e.done).count();
+        let total = today_events.len();
+        let mut s = format!("## 오늘 일정 (완료 {done_count}/{total})\n");
+        for ev in &today_events {
+            let mark = if ev.done { "✅" } else { "⬜" };
+            s.push_str(&format!("- {mark} {} {}\n", ev.time, ev.description));
+        }
+        sections.push(s);
+    } else {
+        sections.push("## 오늘 일정\n등록된 일정 없음\n".to_string());
+    }
+
+    // 4. Drafts modified today (check filesystem mtime)
+    let drafts_dir = std::path::Path::new(DRAFTS_DIR);
+    if drafts_dir.exists() {
+        let mut today_drafts: Vec<String> = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(drafts_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|ext| ext == "md") {
+                    if let Ok(meta) = path.metadata() {
+                        if let Ok(modified) = meta.modified() {
+                            let secs = modified
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs();
+                            let days = (secs / 86400) as i64;
+                            let (y, m, d) = epoch_days_to_ymd(days);
+                            let mod_date = format!("{y:04}-{m:02}-{d:02}");
+                            if mod_date == today {
+                                let name = path
+                                    .file_stem()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .to_string();
+                                today_drafts.push(name);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if !today_drafts.is_empty() {
+            today_drafts.sort();
+            let mut s = format!("## 오늘 작업한 초고 ({}건)\n", today_drafts.len());
+            for name in &today_drafts {
+                s.push_str(&format!("- {name}\n"));
+            }
+            sections.push(s);
+        } else {
+            sections.push("## 오늘 작업한 초고\n작업한 초고 없음\n".to_string());
+        }
+    } else {
+        sections.push("## 오늘 작업한 초고\n작업한 초고 없음\n".to_string());
+    }
+
+    // 5. Deadline status
+    let deadlines = load_deadlines_from(&deadlines_path());
+    let mut deadline_info: Vec<String> = Vec::new();
+    for dl in &deadlines {
+        let date_part = dl.datetime.split('T').next().unwrap_or(&dl.datetime);
+        if let Some(days) = days_until(date_part, &today) {
+            if days <= 3 && days >= -1 {
+                let status = if days < 0 {
+                    "⚠️ 기한 초과"
+                } else if days == 0 {
+                    "🔴 오늘 마감"
+                } else {
+                    "🟡 임박"
+                };
+                deadline_info.push(format!(
+                    "- {status} {} ({})",
+                    dl.title, dl.datetime
+                ));
+            }
+        }
+    }
+    if !deadline_info.is_empty() {
+        let mut s = String::from("## 마감 상태\n");
+        for info in &deadline_info {
+            s.push_str(&format!("{info}\n"));
+        }
+        sections.push(s);
+    } else {
+        sections.push("## 마감 상태\n임박한 마감 없음\n".to_string());
+    }
+
+    // 6. Desk assignment status
+    let desk = load_desk_from(&desk_path());
+    if !desk.is_empty() {
+        let completed: Vec<&DeskAssignment> = desk
+            .iter()
+            .filter(|a| a.status == DeskStatus::Done)
+            .collect();
+        let pending: Vec<&DeskAssignment> = desk
+            .iter()
+            .filter(|a| a.status == DeskStatus::Pending)
+            .collect();
+        let mut s = format!(
+            "## 데스크 지시 현황 (완료 {}, 대기 {})\n",
+            completed.len(),
+            pending.len()
+        );
+        for a in &completed {
+            s.push_str(&format!("- ✅ {}\n", a.content));
+        }
+        for a in &pending {
+            s.push_str(&format!("- ⬜ {}\n", a.content));
+        }
+        sections.push(s);
+    } else {
+        sections.push("## 데스크 지시 현황\n데스크 지시 없음\n".to_string());
+    }
+
+    sections.join("\n")
+}
+
+/// Build the prompt for the daily recap AI call.
+pub fn build_recap_prompt(data: &str) -> String {
+    format!(
+        "당신은 한국 신문사 기자의 하루 마감 회고 비서입니다. \
+아래 데이터를 바탕으로 오늘 하루를 정리하는 마감 회고를 작성하세요.
+
+다음 항목을 포함하세요:
+
+### 📝 오늘 한 일 요약
+오늘 수행한 취재 활동, 작성한 메모, 접촉한 취재원, 작업한 초고를 종합적으로 정리하세요.
+
+### ⏳ 미완료 사항 & 내일 이월 항목
+완료하지 못한 일정, 대기 중인 데스크 지시, 임박한 마감 등을 정리하세요.
+
+### 🏆 오늘의 취재 성과
+오늘 특별히 잘한 점이나 의미 있는 취재 진전을 짚어주세요. \
+성과가 작더라도 긍정적으로 평가하세요.
+
+### 🎯 내일 우선순위 제안
+위 모든 정보를 종합하여, 내일 가장 먼저 해야 할 일 3가지를 우선순위와 함께 제안하세요.
+
+간결하고 실용적으로 작성하세요. 기자가 퇴근 전 3분 안에 읽고 내일을 준비할 수 있어야 합니다.
+
+---
+
+{data}"
+    )
+}
+
+/// Save daily recap to `.journalist/recap/YYYY-MM-DD.md`.
+fn save_recap(content: &str) -> std::path::PathBuf {
+    let dir = std::path::Path::new(RECAP_DIR);
+    std::fs::create_dir_all(dir).ok();
+
+    let today = today_date_string();
+    let path = dir.join(format!("{today}.md"));
+    std::fs::write(&path, content).ok();
+    path
+}
+
+/// Handle the `/recap` command: daily wrap-up review.
+pub async fn handle_recap(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/recap").unwrap_or("").trim();
+
+    if args == "help" || args == "--help" {
+        recap_print_help();
+        return;
+    }
+
+    if args == "list" {
+        recap_print_list();
+        return;
+    }
+
+    println!("{DIM}  🌙 하루 마감 회고 준비 중...{RESET}");
+
+    let data = collect_recap_data();
+
+    println!("{DIM}  📊 데이터 수집 완료. AI 회고 생성 중...{RESET}");
+
+    let prompt = build_recap_prompt(&data);
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    if !response.trim().is_empty() {
+        let path = save_recap(&response);
+        println!(
+            "{DIM}  🌙 회고가 {}에 저장되었습니다.{RESET}\n",
+            path.display()
+        );
+    }
+}
+
+fn recap_print_help() {
+    println!("{DIM}  /recap — 하루 마감 회고{RESET}");
+    println!("{DIM}  퇴근 전 실행하면 오늘 하루를 자동 정리합니다.{RESET}");
+    println!("{DIM}  다음 정보를 종합하여 AI 회고를 생성합니다:{RESET}");
+    println!("{DIM}    • 오늘 작성한 메모 (notes){RESET}");
+    println!("{DIM}    • 오늘 접촉한 취재원 (contacts){RESET}");
+    println!("{DIM}    • 오늘 일정 완료 여부 (calendar){RESET}");
+    println!("{DIM}    • 오늘 작업한 초고 (drafts){RESET}");
+    println!("{DIM}    • 마감 상태 변화 (deadlines){RESET}");
+    println!("{DIM}    • 데스크 지시 처리 현황 (desk){RESET}");
+    println!("{DIM}  사용법:{RESET}");
+    println!("{DIM}    /recap              하루 마감 회고 실행{RESET}");
+    println!("{DIM}    /recap list         과거 회고 목록{RESET}");
+    println!("{DIM}    /recap help         도움말{RESET}\n");
+}
+
+fn recap_print_list() {
+    let dir = std::path::Path::new(RECAP_DIR);
+    if !dir.exists() {
+        println!("{DIM}  회고 기록이 없습니다.{RESET}\n");
+        return;
+    }
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "md"))
+        .collect();
+    files.sort();
+    files.reverse();
+    if files.is_empty() {
+        println!("{DIM}  회고 기록이 없습니다.{RESET}\n");
+        return;
+    }
+    println!("{DIM}  📋 과거 회고 목록 (최신순):{RESET}");
+    for (i, path) in files.iter().enumerate().take(20) {
+        let name = path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy();
+        println!("  {: >3}. {name}", i + 1);
+    }
+    println!();
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -18121,5 +18420,35 @@ mod tests {
         // This may or may not be empty depending on the test environment,
         // but at minimum it should not panic.
         let _ = files;
+    }
+
+    // ── /recap tests ──
+
+    #[test]
+    fn recap_dir_constant() {
+        assert_eq!(RECAP_DIR, ".journalist/recap");
+    }
+
+    #[test]
+    fn collect_recap_data_graceful_when_empty() {
+        // When no .journalist/ data files exist, should still return structured sections
+        let data = collect_recap_data();
+        assert!(data.contains("오늘 작성한 메모"));
+        assert!(data.contains("오늘 접촉한 취재원"));
+        assert!(data.contains("오늘 일정"));
+        assert!(data.contains("오늘 작업한 초고"));
+        assert!(data.contains("마감 상태"));
+        assert!(data.contains("데스크 지시 현황"));
+    }
+
+    #[test]
+    fn build_recap_prompt_contains_sections() {
+        let prompt = build_recap_prompt("테스트 데이터");
+        assert!(prompt.contains("테스트 데이터"));
+        assert!(prompt.contains("오늘 한 일 요약"));
+        assert!(prompt.contains("미완료 사항"));
+        assert!(prompt.contains("내일 이월"));
+        assert!(prompt.contains("취재 성과"));
+        assert!(prompt.contains("내일 우선순위 제안"));
     }
 }
