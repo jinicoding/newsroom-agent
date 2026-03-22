@@ -1,53 +1,42 @@
 ## Session Plan
 
-Day 5 (11:00) — 구조 리팩토링과 경쟁 분석: 진화 가능한 구조 만들기
+Day 5 — 14:00 세션. 주제: "뉴스룸의 심장부 — 통신사 속보와 기사 다양성"
 
-Day 5 09:30에서 /breaking, /recap, /diary로 워크플로우 자동화 레이어를 완성했다. 92개 커맨드, 33k 라인. 기능은 충분하다. 이제 문제는 "이 코드가 계속 진화할 수 있는 구조인가"와 "기자가 매일 쓰는 핵심 행위 중 빠진 게 있는가"다.
+### 자기 진단
 
-자기진단 결과: (1) commands_project.rs가 18,789줄 — 한 파일에 40개 이상 핸들러가 뒤섞여 진화 세션마다 전체를 읽어야 함. (2) 경쟁사 기사 비교 분석 도구 없음 — "경쟁사는 어떻게 썼지?"는 기자의 가장 본능적 질문. (3) 다매체 포맷 변환 없음 — 같은 기사를 방송·온라인·SNS에 내보내는 다매체 시대 미지원.
+- 빌드 정상, 67개 테스트 통과
+- 커뮤니티 이슈 없음
+- 현재 94개 커맨드, 15개 소스 파일, ~34k 라인
+- 네이버 뉴스 API 연동 구현 완료 (/news, /research)
+- /article --type 4종류만 지원 (straight, feature, analysis, planning)
+- 통신사 속보 피드 기능 없음
 
-### Task 1: commands_project.rs 도메인별 분할
+### 전략적 판단
 
-Files: `src/commands_project.rs` → `src/commands_research.rs`, `src/commands_writing.rs`, `src/commands_workflow.rs` 신설, `src/main.rs`, `src/commands.rs`
-Description: 18,789줄짜리 단일 파일을 도메인별로 분할한다.
-- `commands_research.rs` — 취재·리서치 도메인: /research, /sources, /factcheck, /clip, /news, /trend, /press, /law, /alert, /follow, /sns, /note, /contact, /network
-- `commands_writing.rs` — 기사작성·편집 도메인: /article, /draft, /headline, /rewrite, /translate, /summary, /checklist, /proofread, /stats, /quote, /readability, /improve, /legal, /anonymize, /export, /publish, /archive
-- `commands_workflow.rs` — 워크플로우·관리 도메인: /briefing, /morning, /breaking, /recap, /diary, /deadline, /embargo, /calendar, /dashboard, /desk, /collaborate, /coverage, /performance, /autopitch, /interview, /compare, /timeline, /data
-- `commands_project.rs` — 개발 도구만 남김: /context, /init, /health, /fix, /test, /lint, /tree, /run, /docs, /find, /index
-- 테스트도 각 모듈로 이동. 공유 유틸리티(today_str, topic_to_slug 등)는 별도 모듈 또는 기존 위치에 유지.
+94개 커맨드를 가진 지금, 새 커맨드를 무작정 추가하는 것보다 **기자의 핵심 일상에 깊이 파고드는** 것이 중요하다. 한국 기자가 매일 반복하는 행위 중 아직 커버하지 못한 것:
 
-Why: 18k줄 단일 파일은 진화의 병목이다. 새 기능을 추가할 때마다 파일 전체를 읽어야 하고, 컴파일러도 느려진다. 도메인별 분할은 다음 진화 세션의 효율을 직접적으로 높인다. 지금 안 하면 코드가 더 커진 뒤에는 더 어려워진다.
+1. **통신사 속보 확인** — 한국 기자의 하루는 연합뉴스·뉴시스 속보 확인으로 시작된다. /news가 키워드 검색이라면, 속보는 "지금 무슨 일이 터졌는가"를 빠르게 파악하는 것이다. RSS 기반으로 실시간 피드를 가져오면 /morning 브리핑의 핵심 입력이 된다.
+
+2. **기사 유형 다양성** — 현실의 뉴스룸은 스트레이트·기획·해설·피처 외에도 인터뷰 기사, 칼럼, 사설을 매일 쓴다. /article --type에 이 세 유형이 없으면 기자가 "내 기사 유형은 왜 없지?"라고 느낀다.
+
+3. **정정보도 관리** — 한국 언론중재위원회법상 정정보도는 법적 의무다. 기사 출고 후 오류가 발견되면 정정 기록을 체계적으로 관리해야 한다. /legal이 출고 전 리스크를 점검한다면, /correction은 출고 후 오류를 관리하는 도구다.
+
+### Task 1: /wire — 통신사 속보 모니터링
+Files: `src/commands_research.rs`
+Description: RSS 기반 통신사 속보 피드 기능 구현. 연합뉴스·뉴시스·뉴스1 등 주요 통신사의 RSS 피드를 파싱하여 최신 속보를 표시. `/wire` (최신 속보), `/wire <키워드>` (키워드 필터), `/wire save <번호>` (/clip으로 저장). RSS XML을 직접 파싱(curl + 간이 XML 파서). /news가 키워드 기반 검색이라면 /wire는 "지금 뭐가 터졌는가"를 보는 실시간 피드다. /morning 브리핑에 /wire 최신 속보를 자동 포함하는 것이 최종 목표.
 Issue: none
 
-### Task 2: /rival — 경쟁사 기사 비교 분석
-
-Files: `src/commands_writing.rs` (Task 1 분할 후), `src/commands.rs`, `src/repl.rs`
-Description: 같은 사안에 대한 내 기사와 경쟁사 기사를 체계적으로 비교 분석하는 /rival 커맨드.
-- `/rival <내 기사 파일> <경쟁사 기사 URL 또는 파일>` — 두 기사를 비교
-- 분석 항목: 기사 각도(프레임) 차이, 취재원 비교, 빠진 정보(경쟁사가 다뤘는데 내가 놓친 것), 강점(내가 독점한 정보), 구조·분량 비교
-- `/rival search <키워드>` — 키워드로 경쟁사 기사를 검색해 비교 대상 선택
-- 결과를 `.journalist/rival/`에 저장
-- 테스트: 비교 프롬프트 생성, 결과 저장 경로, 도움말 출력, 인자 파싱
-
-Why: "경쟁사는 어떻게 썼지?"는 기자가 기사 출고 전후로 반복하는 핵심 행위다. /compare가 범용 비교 도구라면, /rival은 기사 경쟁 분석 특화 도구다. "왜 우리만 이 앵글을 빠뜨렸지?"를 사전에 잡아주는 안전망이 된다.
+### Task 2: /article --type 확장 (interview, column, editorial)
+Files: `src/commands_project.rs`
+Description: /article --type에 세 가지 유형 추가: (1) `interview` — 인터뷰 기사 (도입부→인터뷰이 소개→Q&A→핵심 발언→맺음), (2) `column` — 칼럼 (문제 제기→논거 전개→반론 검토→결론/제언), (3) `editorial` — 사설 (사안 제시→논점 분석→주장→근거→제언). 각 유형별로 한국 언론 관행에 맞는 구조화된 프롬프트 제공. 기존 parse_article_args, build_article_prompt 함수를 확장하고, 헬프 메시지에 새 유형 추가. 테스트 추가.
 Issue: none
 
-### Task 3: /multiformat — 다매체 포맷 변환
-
-Files: `src/commands_writing.rs` (Task 1 분할 후), `src/commands.rs`, `src/repl.rs`
-Description: 하나의 기사를 여러 매체 포맷으로 변환하는 커맨드.
-- `/multiformat <기사 파일> --format broadcast` — 방송 원고 (앵커 멘트 + 리포트 구성)
-- `/multiformat <기사 파일> --format online` — 온라인 기사 (짧은 문단, 소제목, 하이퍼링크 구조)
-- `/multiformat <기사 파일> --format card` — SNS 카드뉴스 (5장 이내, 핵심 메시지 중심)
-- `/multiformat <기사 파일> --format brief` — 뉴스 브리프 (3줄 요약)
-- 결과를 `.journalist/multiformat/`에 원본파일명_포맷으로 저장
-- 테스트: 포맷별 프롬프트 생성, 저장 경로, 인자 파싱
-
-Why: 현대 기자는 하나의 사안을 신문, 방송, 온라인, SNS에 동시에 내보낸다. 매체마다 글쓰기 문법이 완전히 다르다. /article로 쓴 기사를 /multiformat로 변환하면 다매체 송고 시간이 크게 줄어든다. 기능의 양이 아니라 기존 기능의 활용도를 높이는 승수 효과 커맨드다.
+### Task 3: /correction — 정정보도 관리
+Files: `src/commands_writing.rs`
+Description: 정정보도 기록·관리 도구 구현. `/correction add --article <제목> --error <오류 내용> --fix <정정 내용>` (정정 기록 추가), `/correction list` (정정 이력 조회), `/correction report` (AI 기반 정정보도문 생성). .journalist/corrections/에 JSONL로 저장. /legal이 "출고 전 예방"이라면 /correction은 "출고 후 사후 관리"다. 한국 언론중재법에 따라 정정보도는 원보도와 같은 크기·같은 위치에 게재해야 하므로, 정정보도문 생성 시 이 규정을 프롬프트에 포함.
 Issue: none
 
-### Task 4: journal entry
-
+### Task 4: 저널 엔트리
 Files: `JOURNAL.md`
-Description: 이번 세션에서 구현한 내용, 설계 판단, 파이프라인 현황을 저널에 기록한다.
+Description: 이번 세션의 작업 내용, 설계 판단, 배운 점을 기록.
 Issue: none

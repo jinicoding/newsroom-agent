@@ -1423,7 +1423,10 @@ pub fn build_article_prompt(
              - `straight` — 스트레이트 (역피라미드, 기본값)\n\
              - `feature` — 피처 (도입부+에피소드+본문+맺음)\n\
              - `analysis` — 해설 (배경+분석+전망)\n\
-             - `planning` — 기획 (문제제기+현황+원인+대안)"
+             - `planning` — 기획 (문제제기+현황+원인+대안)\n\
+             - `interview` — 인터뷰 (도입부+인터뷰이 소개+Q&A+핵심 발언+맺음)\n\
+             - `column` — 칼럼 (문제 제기+논거 전개+반론 검토+결론/제언)\n\
+             - `editorial` — 사설 (사안 제시+논점 분석+주장+근거+제언)"
                 .to_string(),
             false,
         )
@@ -1451,6 +1454,28 @@ pub fn build_article_prompt(
                  5. **인용** — 관계자·전문가 코멘트 위치 표시 (\"[이름/직함] 인용 필요\")\n\
                  6. **맺음** — 정리 및 향후 과제 (1문단)"
             }
+            "interview" | "인터뷰" => {
+                "1. **도입부** — 인터뷰 배경과 만남의 상황 묘사 (1-2문단)\n\
+                 2. **인터뷰이 소개** — 인물 약력, 현재 직함, 전문 분야 (1문단)\n\
+                 3. **Q&A** — 핵심 질문과 답변 5-7개 (질문은 굵게, 답변은 일반체)\n\
+                 4. **핵심 발언** — 가장 인상적인 발언 1-2개 인용 블록으로 강조\n\
+                 5. **맺음** — 인터뷰 소감, 향후 계획 또는 전망 (1문단)"
+            }
+            "column" | "칼럼" => {
+                "1. **문제 제기** — 독자의 관심을 끄는 도입, 이슈의 핵심 질문 (1-2문단)\n\
+                 2. **논거 전개** — 주장을 뒷받침하는 근거, 사례, 데이터 (2-3문단)\n\
+                 3. **반론 검토** — 예상되는 반론과 이에 대한 재반박 (1-2문단)\n\
+                 4. **결론/제언** — 필자의 최종 입장과 독자에게 던지는 메시지 (1문단)\n\
+                 ※ 칼럼은 필자의 관점이 드러나는 글입니다. 1인칭 사용 가능."
+            }
+            "editorial" | "사설" => {
+                "1. **사안 제시** — 다루는 사안의 개요와 시의성 (1문단)\n\
+                 2. **논점 분석** — 사안의 핵심 쟁점을 다각도로 분석 (2-3문단)\n\
+                 3. **주장** — 신문사의 입장을 명확히 제시 (1문단)\n\
+                 4. **근거** — 주장을 뒷받침하는 논리적 근거와 사례 (2-3문단)\n\
+                 5. **제언** — 관련 주체(정부, 기업, 시민 등)에 대한 구체적 제언 (1문단)\n\
+                 ※ 사설은 신문사의 공식 입장입니다. 권위 있고 절제된 논조를 유지하세요."
+            }
             // "straight" and anything else → default inverted pyramid
             _ => {
                 "1. **리드** — 역피라미드 구조: 육하원칙(누가, 언제, 어디서, 무엇을, 어떻게, 왜)을 포함한 핵심 요약 (1-2문장)\n\
@@ -1464,6 +1489,9 @@ pub fn build_article_prompt(
             "feature" | "피처" => "피처",
             "analysis" | "해설" => "해설",
             "planning" | "기획" => "기획",
+            "interview" | "인터뷰" => "인터뷰",
+            "column" | "칼럼" => "칼럼",
+            "editorial" | "사설" => "사설",
             _ => "스트레이트",
         };
 
@@ -1673,6 +1701,45 @@ mod tests {
         assert!(prompt.contains("문제제기"));
         assert!(prompt.contains("현황"));
         assert!(prompt.contains("대안"));
+    }
+
+    #[test]
+    fn article_prompt_interview_type() {
+        let (prompt, has_topic) =
+            build_article_prompt("김 교수 인터뷰", &[], Some("interview"));
+        assert!(has_topic);
+        assert!(prompt.contains("인터뷰이 소개"));
+        assert!(prompt.contains("Q&A"));
+        assert!(prompt.contains("핵심 발언"));
+        assert!(prompt.contains("인터뷰"));
+    }
+
+    #[test]
+    fn article_prompt_column_type() {
+        let (prompt, has_topic) =
+            build_article_prompt("AI 규제 논란", &[], Some("column"));
+        assert!(has_topic);
+        assert!(prompt.contains("문제 제기"));
+        assert!(prompt.contains("논거 전개"));
+        assert!(prompt.contains("반론 검토"));
+        assert!(prompt.contains("칼럼"));
+    }
+
+    #[test]
+    fn article_prompt_editorial_type() {
+        let (prompt, has_topic) =
+            build_article_prompt("교육 개혁", &[], Some("editorial"));
+        assert!(has_topic);
+        assert!(prompt.contains("사안 제시"));
+        assert!(prompt.contains("논점 분석"));
+        assert!(prompt.contains("사설"));
+    }
+
+    #[test]
+    fn parse_article_args_interview_type() {
+        let (article_type, topic) = parse_article_args("--type interview 김 교수 인터뷰");
+        assert_eq!(article_type.as_deref(), Some("interview"));
+        assert_eq!(topic, "김 교수 인터뷰");
     }
 
     #[test]

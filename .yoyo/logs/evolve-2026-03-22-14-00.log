@@ -1,0 +1,198 @@
+=== Day 5 (2026-03-22 14:00) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+warning: unused import: `std::path::Path`
+    --> src/commands_project.rs:1499:9
+     |
+1499 |     use std::path::Path;
+     |         ^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `crate::commands_project::*`
+    --> src/commands_project.rs:1500:9
+     |
+1500 |     use crate::commands_project::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_research::*`
+    --> src/commands_project.rs:1501:9
+     |
+1501 |     use crate::commands_research::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_writing::*`
+    --> src/commands_project.rs:1502:9
+     |
+1502 |     use crate::commands_writing::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_workflow::*`
+    --> src/commands_project.rs:1503:9
+     |
+1503 |     use crate::commands_workflow::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_project::*`
+    --> src/commands_research.rs:3548:9
+     |
+3548 |     use crate::commands_project::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_research::*`
+    --> src/commands_research.rs:3549:9
+     |
+3549 |     use crate::commands_research::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_writing::*`
+    --> src/commands_research.rs:3550:9
+     |
+3550 |     use crate::commands_writing::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_workflow::*`
+    --> src/commands_research.rs:3551:9
+     |
+3551 |     use crate::commands_workflow::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::path::Path`
+    --> src/commands_workflow.rs:4959:9
+     |
+4959 |     use std::path::Path;
+     |         ^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_project::*`
+    --> src/commands_workflow.rs:4960:9
+     |
+4960 |     use crate::commands_project::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_writing::*`
+    --> src/commands_workflow.rs:4962:9
+     |
+4962 |     use crate::commands_writing::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_workflow::*`
+    --> src/commands_workflow.rs:4963:9
+     |
+4963 |     use crate::commands_workflow::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_project::*`
+    --> src/commands_writing.rs:3950:9
+     |
+3950 |     use crate::commands_project::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_research::*`
+    --> src/commands_writing.rs:3951:9
+     |
+3951 |     use crate::commands_research::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_writing::*`
+    --> src/commands_writing.rs:3952:9
+     |
+3952 |     use crate::commands_writing::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_workflow::*`
+    --> src/commands_writing.rs:3953:9
+     |
+3953 |     use crate::commands_workflow::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_sources_path` is never used
+    --> src/commands_project.rs:1505:8
+     |
+1505 |     fn temp_sources_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `temp_deadlines_path` is never used
+    --> src/commands_project.rs:1795:8
+     |
+1795 |     fn temp_deadlines_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_embargoes_path` is never used
+    --> src/commands_project.rs:1801:8
+     |
+1801 |     fn temp_embargoes_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_archive_paths` is never used
+    --> src/commands_project.rs:1807:8
+     |
+1807 |     fn temp_archive_paths() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_desk_path` is never used
+    --> src/commands_project.rs:1815:8
+     |
+1815 |     fn temp_desk_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^
+
+warning: function `temp_collab_dir` is never used
+    --> src/commands_project.rs:1821:8
+     |
+1821 |     fn temp_collab_dir() -> tempfile::TempDir {
+     |        ^^^^^^^^^^^^^^^
+
+warning: function `temp_coverage_path` is never used
+    --> src/commands_project.rs:1825:8
+     |
+1825 |     fn temp_coverage_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_calendar_path` is never used
+    --> src/commands_project.rs:1884:8
+     |
+1884 |     fn temp_calendar_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_performance_path` is never used
+    --> src/commands_project.rs:1955:8
+     |
+1955 |     fn temp_performance_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^^^^
+
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  이슈 0
+0개 로드.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md 작성 완료.
+
+**Day 5 (14:00) 세션 계획 요약:**
+
+| Task | 제목 | 핵심 가치 |
+|------|------|----------|
+| 1 | `/wire` — 통신사 속보 모니터링 | RSS 기반 실시간 속보 피드. 기자의 하루는 통신사 속보 확인으로 시작 |
+| 2 | `/article --type` 확장 | interview, column, editorial 추가. 기사 유형 4→7종 |
+| 3 | `/correction` — 정정보도 관리 | 출고 후 오류 기록·정정보도문 생성. 언론중재법 대응 |
+| 4 | 저널 엔트리 | 세션 기록 |
+
+**전략적 판단:** 94개 커맨드가 있는 지금, 양보다 깊이가 중요하다. 이번 세션은 한국 기자가 매일 반드시 하는 행위(통신사 속보 확인)와 법적 의무(정정보도 관리), 그리고 기존 기능의 커버리지 확대(기사 유형)에 집중한다. 세 가지 모두 "이게 없어서 불편하다"를 느끼게 하는 기능이다.
+
+→ Phase B: 구현...
+  계획된 태스크: 4개
+
+  ── Task 1 / 4 ──
+완료. `/wire` 통신사 속보 모니터링 기능을 구현하고 커밋했습니다.
+
+**구현 내용:**
+- `parse_rss_items()` — RSS XML 파서 (CDATA 지원)
+- `xml_extract_tag()` — XML 태그 내용 추출
+- `fetch_rss_feed()` / `fetch_wire_news()` — 연합뉴스·뉴시스·뉴스1 RSS 피드 수집
+- `handle_wire()` — `/wire`, `/wire <키워드>`, `/wire save <번호>` 처리
+- 테스트 8건 추가, 전체 67건 통과, 빌드 경고 없음
+
+  ── Task 2 / 4 ──

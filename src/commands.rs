@@ -386,7 +386,7 @@ pub fn help_text() -> String {
     // ── Journalist (기자업무) ──
     out.push_str("  ── 기자업무 ──\n");
     out.push_str(
-        "  /article [topic]   기사 작성 보조 (리드/본문/인용/맺음 구조)\n",
+        "  /article [--type TYPE] [topic]   기사 작성 (straight/feature/analysis/planning/interview/column/editorial)\n",
     );
     out.push_str(
         "  /research <topic>  웹 리서치 (DuckDuckGo/Naver 검색)\n",
