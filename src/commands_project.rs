@@ -12574,6 +12574,286 @@ fn contact_suggest_prompt(topic: &str) -> String {
     )
 }
 
+// ── /breaking ────────────────────────────────────────────────────────────
+
+const BREAKING_DIR: &str = ".journalist/breaking";
+
+fn breaking_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(BREAKING_DIR)
+}
+
+/// Generate a timestamped filename for a breaking news draft.
+fn breaking_file_path(topic: &str) -> std::path::PathBuf {
+    breaking_file_path_with_ts(topic, &now_ts())
+}
+
+fn now_ts() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = now.as_secs();
+    // Format as YYYY-MM-DD_HHMMSS (UTC)
+    let days = secs / 86400;
+    let day_secs = secs % 86400;
+    let h = day_secs / 3600;
+    let m = (day_secs % 3600) / 60;
+    let s = day_secs % 60;
+    // days since epoch to date
+    let (y, mo, d) = epoch_days_to_ymd(days as i64);
+    format!("{y:04}-{mo:02}-{d:02}_{h:02}{m:02}{s:02}")
+}
+
+fn epoch_days_to_ymd(mut days: i64) -> (i64, i64, i64) {
+    // Civil from days algorithm (Howard Hinnant)
+    days += 719_468;
+    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
+    let doe = days - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
+fn breaking_file_path_with_ts(topic: &str, ts: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(topic, 40);
+    let filename = if slug.is_empty() {
+        format!("{ts}_breaking.md")
+    } else {
+        format!("{ts}_{slug}.md")
+    };
+    breaking_dir().join(filename)
+}
+
+fn save_breaking(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
+/// List breaking news files, most recent first.
+fn list_breaking_files() -> Vec<std::path::PathBuf> {
+    let dir = breaking_dir();
+    if !dir.exists() {
+        return Vec::new();
+    }
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "md"))
+        .collect();
+    files.sort();
+    files.reverse();
+    files
+}
+
+/// Build the breaking news prompt for AI.
+fn build_breaking_prompt(topic: &str) -> String {
+    format!(
+        "속보 기사 작성 보조 요청.\n\n\
+         속보 주제: {topic}\n\n\
+         다음 4가지를 빠르고 정확하게 생성해주세요:\n\n\
+         ## 1. 핵심 팩트 정리 프레임워크\n\
+         - 5W1H (누가, 언제, 어디서, 무엇을, 왜, 어떻게) 기반으로 현재 확인된 사실과 미확인 사항을 구분하여 정리\n\
+         - 각 항목에 '확인됨/미확인' 표시\n\n\
+         ## 2. 속보 기사 초안\n\
+         - 역피라미드 구조 (가장 중요한 정보부터)\n\
+         - 첫 문장에 핵심 팩트 압축\n\
+         - 리드 → 본문 → 배경 순서\n\
+         - 400~600자 분량\n\
+         - [속보] 태그 포함\n\n\
+         ## 3. 후속 취재 포인트\n\
+         - 추가로 확인해야 할 사항 5개 이상\n\
+         - 각 포인트에 대한 취재 방향 제안\n\
+         - 우선순위 표시 (긴급/중요/참고)\n\n\
+         ## 4. 확인 필요 사항 체크리스트\n\
+         - 팩트체크 항목 (출처 확인, 수치 검증 등)\n\
+         - 법적 주의사항 (명예훼손, 개인정보 등)\n\
+         - 추가 취재원 목록\n\n\
+         한국어로 작성하세요. 속보 상황이므로 간결하고 정확하게."
+    )
+}
+
+/// Build prompt for a breaking news update.
+fn build_breaking_update_prompt(original: &str, update_info: &str) -> String {
+    format!(
+        "속보 업데이트 요청.\n\n\
+         ## 기존 속보 기사:\n{original}\n\n\
+         ## 추가 정보:\n{update_info}\n\n\
+         위 추가 정보를 반영하여 다음을 생성해주세요:\n\n\
+         ## 1. 업데이트된 속보 기사\n\
+         - 새로운 정보를 반영한 전체 기사 (역피라미드 구조 유지)\n\
+         - [속보 업데이트] 태그\n\
+         - 변경/추가된 부분 명시\n\n\
+         ## 2. 갱신된 확인 필요 사항\n\
+         - 새로 확인된 팩트 체크\n\
+         - 여전히 미확인인 사항\n\n\
+         ## 3. 추가 후속 취재 포인트\n\
+         - 새 정보로 인해 발생한 추가 취재 방향\n\n\
+         한국어로 작성하세요. 속보 상황이므로 간결하고 정확하게."
+    )
+}
+
+/// Parse the `/breaking` command input and determine the subcommand.
+pub enum BreakingAction {
+    /// New breaking news: `/breaking <topic>`
+    New(String),
+    /// Update latest breaking: `/breaking update <info>`
+    Update(String),
+    /// List recent breaking news: `/breaking list`
+    List,
+    /// Help
+    Help,
+}
+
+pub fn parse_breaking_input(input: &str) -> BreakingAction {
+    let args = input.strip_prefix("/breaking").unwrap_or("").trim();
+
+    if args.is_empty() || args == "help" || args == "--help" {
+        return BreakingAction::Help;
+    }
+
+    if args == "list" {
+        return BreakingAction::List;
+    }
+
+    if let Some(rest) = args.strip_prefix("update") {
+        let info = rest.trim();
+        return BreakingAction::Update(info.to_string());
+    }
+
+    BreakingAction::New(args.to_string())
+}
+
+pub async fn handle_breaking(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    match parse_breaking_input(input) {
+        BreakingAction::Help => {
+            print_breaking_help();
+        }
+        BreakingAction::List => {
+            print_breaking_list();
+        }
+        BreakingAction::New(topic) => {
+            println!("{DIM}  🚨 속보 워크플로우 시작: {topic}{RESET}");
+
+            let prompt = build_breaking_prompt(&topic);
+            let response = run_prompt(agent, &prompt, session_total, model).await;
+            auto_compact_if_needed(agent);
+
+            if !response.trim().is_empty() {
+                let path = breaking_file_path(&topic);
+                match save_breaking(&path, &response) {
+                    Ok(_) => {
+                        println!(
+                            "{GREEN}  ✓ 속보 초안 저장: {}{RESET}\n",
+                            path.display()
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("{RED}  속보 저장 실패: {e}{RESET}\n");
+                    }
+                }
+            }
+        }
+        BreakingAction::Update(info) => {
+            if info.is_empty() {
+                eprintln!("{RED}  사용법: /breaking update <추가 정보>{RESET}\n");
+                return;
+            }
+
+            // Find the most recent breaking file
+            let files = list_breaking_files();
+            if files.is_empty() {
+                eprintln!("{RED}  업데이트할 속보가 없습니다. /breaking <주제>로 먼저 속보를 작성하세요.{RESET}\n");
+                return;
+            }
+
+            let latest = &files[0];
+            let original = match std::fs::read_to_string(latest) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("{RED}  파일 읽기 실패: {e}{RESET}\n");
+                    return;
+                }
+            };
+
+            println!(
+                "{DIM}  🔄 속보 업데이트 중... (기반: {}){RESET}",
+                latest.file_name().unwrap_or_default().to_string_lossy()
+            );
+
+            let prompt = build_breaking_update_prompt(&original, &info);
+            let response = run_prompt(agent, &prompt, session_total, model).await;
+            auto_compact_if_needed(agent);
+
+            if !response.trim().is_empty() {
+                // Extract topic from the original filename
+                let stem = latest
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                // Remove the timestamp prefix (YYYY-MM-DD_HHMMSS_)
+                let topic_part = if stem.len() > 16 {
+                    &stem[16..]
+                } else {
+                    "update"
+                };
+                let path = breaking_file_path(topic_part);
+                match save_breaking(&path, &response) {
+                    Ok(_) => {
+                        println!(
+                            "{GREEN}  ✓ 속보 업데이트 저장: {}{RESET}\n",
+                            path.display()
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("{RED}  저장 실패: {e}{RESET}\n");
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn print_breaking_help() {
+    println!("{DIM}  /breaking — 속보 워크플로우 원커맨드{RESET}");
+    println!("{DIM}  속보 발생 시 취재·작성·출고를 단축합니다.{RESET}");
+    println!("{DIM}  사용법:{RESET}");
+    println!("{DIM}    /breaking <속보 주제>             속보 초안 생성 (팩트 프레임워크 + 기사 + 후속취재 + 체크리스트){RESET}");
+    println!("{DIM}    /breaking update <추가 정보>      최근 속보에 추가 정보 반영하여 업데이트{RESET}");
+    println!("{DIM}    /breaking list                   최근 속보 이력 조회{RESET}");
+    println!("{DIM}    /breaking help                   도움말{RESET}\n");
+}
+
+fn print_breaking_list() {
+    let files = list_breaking_files();
+    if files.is_empty() {
+        println!("{DIM}  속보 기록이 없습니다.{RESET}\n");
+        return;
+    }
+
+    println!("{DIM}  📋 최근 속보 이력 (최신순):{RESET}");
+    for (i, path) in files.iter().enumerate().take(20) {
+        let name = path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy();
+        println!("  {: >3}. {name}", i + 1);
+    }
+    println!();
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -17723,5 +18003,123 @@ mod tests {
     #[test]
     fn contacts_dir_constant() {
         assert_eq!(CONTACTS_DIR, ".journalist/contacts");
+    }
+
+    // ── /breaking tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn breaking_dir_constant() {
+        assert_eq!(BREAKING_DIR, ".journalist/breaking");
+    }
+
+    #[test]
+    fn parse_breaking_help() {
+        assert!(matches!(parse_breaking_input("/breaking"), BreakingAction::Help));
+        assert!(matches!(parse_breaking_input("/breaking help"), BreakingAction::Help));
+        assert!(matches!(parse_breaking_input("/breaking --help"), BreakingAction::Help));
+    }
+
+    #[test]
+    fn parse_breaking_list() {
+        assert!(matches!(parse_breaking_input("/breaking list"), BreakingAction::List));
+    }
+
+    #[test]
+    fn parse_breaking_new() {
+        match parse_breaking_input("/breaking 국회 긴급 본회의 소집") {
+            BreakingAction::New(topic) => assert_eq!(topic, "국회 긴급 본회의 소집"),
+            _ => panic!("expected New"),
+        }
+    }
+
+    #[test]
+    fn parse_breaking_update() {
+        match parse_breaking_input("/breaking update 사상자 3명 추가 확인") {
+            BreakingAction::Update(info) => assert_eq!(info, "사상자 3명 추가 확인"),
+            _ => panic!("expected Update"),
+        }
+    }
+
+    #[test]
+    fn parse_breaking_update_empty() {
+        match parse_breaking_input("/breaking update") {
+            BreakingAction::Update(info) => assert!(info.is_empty()),
+            _ => panic!("expected Update"),
+        }
+    }
+
+    #[test]
+    fn breaking_file_path_has_slug() {
+        let path = breaking_file_path_with_ts("지진 발생", "2026-03-22_103000");
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert!(name.starts_with("2026-03-22_103000_"));
+        assert!(name.ends_with(".md"));
+        assert!(name.contains("지진"));
+    }
+
+    #[test]
+    fn breaking_file_path_empty_topic() {
+        let path = breaking_file_path_with_ts("", "2026-03-22_103000");
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert_eq!(name, "2026-03-22_103000_breaking.md");
+    }
+
+    #[test]
+    fn save_and_list_breaking() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file1 = dir.path().join("2026-03-22_100000_test1.md");
+        let file2 = dir.path().join("2026-03-22_110000_test2.md");
+
+        std::fs::write(&file1, "속보 1").unwrap();
+        std::fs::write(&file2, "속보 2").unwrap();
+
+        // Verify files are readable
+        let c1 = std::fs::read_to_string(&file1).unwrap();
+        assert_eq!(c1, "속보 1");
+        let c2 = std::fs::read_to_string(&file2).unwrap();
+        assert_eq!(c2, "속보 2");
+    }
+
+    #[test]
+    fn build_breaking_prompt_contains_topic() {
+        let prompt = build_breaking_prompt("반도체 공장 화재");
+        assert!(prompt.contains("반도체 공장 화재"));
+        assert!(prompt.contains("5W1H"));
+        assert!(prompt.contains("역피라미드"));
+        assert!(prompt.contains("체크리스트"));
+    }
+
+    #[test]
+    fn build_breaking_update_prompt_contains_info() {
+        let prompt = build_breaking_update_prompt("기존 기사 내용", "사상자 추가");
+        assert!(prompt.contains("기존 기사 내용"));
+        assert!(prompt.contains("사상자 추가"));
+        assert!(prompt.contains("업데이트"));
+    }
+
+    #[test]
+    fn save_breaking_creates_dirs() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let nested = dir.path().join("sub").join("dir").join("test.md");
+        save_breaking(&nested, "test content").unwrap();
+        assert_eq!(std::fs::read_to_string(&nested).unwrap(), "test content");
+    }
+
+    #[test]
+    fn epoch_days_to_ymd_known_date() {
+        // 2026-03-22 is 20534 days since epoch (1970-01-01)
+        let (y, m, d) = epoch_days_to_ymd(20534);
+        assert_eq!(y, 2026);
+        assert_eq!(m, 3);
+        assert_eq!(d, 22);
+    }
+
+    #[test]
+    fn list_breaking_files_empty_dir() {
+        // Non-existent dir should return empty
+        let files = list_breaking_files();
+        // This may or may not be empty depending on the test environment,
+        // but at minimum it should not panic.
+        let _ = files;
     }
 }

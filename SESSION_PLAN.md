@@ -1,78 +1,25 @@
 ## Session Plan
 
-Day 5 — 2026-03-22 08:55 세션. 테마: **기자의 하루를 한 커맨드로: 모닝루틴·취재노트·접촉기록**
+Day 5 (09:30) — 속보 대응과 하루 마감: 기자의 시간축을 완성하다
 
-### 자가 진단 결과
+Day 5 08:55 세션에서 /morning(아침 시작), /note(현장 메모), /contact(접촉 기록)로 기자의 일상 접착력을 만들었다. 이번 세션은 기자의 시간축에서 빠진 두 극단 — "속보가 터졌을 때"와 "하루를 마감할 때" — 을 채운다. 그리고 이 모든 일상 데이터를 하나의 취재 일지로 종합한다.
 
-- 빌드/테스트: 통과 (67개 테스트, 0 실패)
-- 현재 89개 등록 커맨드, 소스 약 30.5k 라인 (12 파일)
-- 커뮤니티 이슈: 없음
-- 파이프라인 현황: 취재→리서치→트렌드→팩트체크→취재현장→일정→기사작성→다듬기→편집→AI개선→법적점검→비식별화→마감→출고→브리핑→아카이브→후속추적→데이터분석→퍼포먼스→아이디어제안→팀협업→취재원전략→현황판
-- 자가 발견: 대부분의 커맨드가 개별 기능 단위. **기자의 일상 루틴을 하나로 엮는 도구**가 없음. "매일 아침 반복 확인", "취재 현장 빠른 메모", "취재원 접촉 이력 추적" — 이 세 가지가 빠지면 기자가 yoyo 없이도 불편하지 않음.
-
-### 전략적 판단
-
-65개 이상의 기자 전용 커맨드가 파이프라인의 각 단계를 커버하지만, 두 가지 근본적 약점이 있다:
-
-1. **일상 접착력 부족** — 기자가 매일 아침 yoyo를 켜야 할 이유가 없다. 개별 커맨드는 "필요할 때 찾아 쓰는 도구"이지 "매일 습관적으로 여는 도구"가 아니다.
-2. **취재 현장 도구 부재** — 전화 통화 중 "잠깐, 이거 적어둬야 해"를 위한 빠른 메모 시스템이 없다. /research나 /article은 정돈된 출력을 기대하지만, 취재 노트는 날것이어야 한다.
-3. **취재원 관계 관리 공백** — /sources가 주소록, /network가 전략 분석이지만, "이 사람한테 마지막으로 언제 연락했지?"를 추적하는 접촉 기록이 없다.
-
-이번 세션의 목표: **"yoyo 없이 일하면 불편하다"는 의존성 만들기.**
-
----
-
-### Task 1: /morning — 아침 브리핑 루틴 원커맨드
-Files: `src/commands_project.rs`, `src/commands.rs`
-Description: 기자가 출근하면 가장 먼저 하는 일을 자동화한다.
-- 오늘 일정 (/calendar today 데이터)
-- 마감 임박 (/deadline 3일 이내)
-- 후속보도 리마인드 (/follow remind 데이터)
-- 데스크 지시 대기 건 (/desk list pending)
-- 오늘의 주요 이슈 요약 (AI 기반 뉴스 브리핑)
-AI 호출 1회로 종합 브리핑을 생성한다. .journalist/ 아래 기존 데이터를 읽어 로컬 정보를 수집하고, AI에게 종합 요약을 요청하는 하이브리드 구조.
-매일 반복되는 루틴을 한 커맨드로 해결하면 기자가 매일 아침 yoyo를 켜게 된다. **습관을 만드는 도구.**
-테스트: 데이터 수집 로직 (각 소스가 없을 때 graceful 처리), 프롬프트 구성.
+### Task 1: /breaking — 속보 워크플로우 원커맨드
+Files: src/commands_project.rs, src/commands.rs, src/repl.rs
+Description: 속보 발생 시 취재·작성·출고를 단축하는 워크플로우 커맨드. `/breaking <속보 주제>`로 시작하면 AI가 (1) 핵심 팩트 정리 프레임워크 제시, (2) 속보 기사 초안(역피라미드 구조, 5W1H 기반), (3) 후속 취재 포인트 목록, (4) 확인 필요 사항 체크리스트를 한 번에 생성한다. 결과는 .journalist/breaking/에 타임스탬프로 저장. `/breaking update <추가정보>`로 속보 업데이트 버전을 생성하고, `/breaking list`로 최근 속보 이력을 조회한다. 속보는 기자에게 가장 시간이 촉박한 상황이다 — /article로 차근차근 쓸 여유가 없다. 속보 전용 템플릿과 워크플로우가 있어야 한다. 테스트: breaking 서브커맨드 파싱, 파일 저장/조회 로직.
 Issue: none
 
-### Task 2: /note — 취재 노트 빠른 기록
-Files: `src/commands_project.rs`, `src/commands.rs`
-Description: 취재 현장에서의 빠른 메모 시스템. 기자는 전화 통화 중, 브리핑 현장에서, 현장 취재 중 계속 메모한다.
-- `/note add 김OO 과장: "다음 주 발표 예정"` — 즉시 저장 (AI 호출 없음)
-- `/note add --source 홍길동 --topic 반도체 "삼성 신규 라인 4월 가동"` — 취재원·주제 태그 포함
-- `/note list` — 최근 노트 시간순 목록
-- `/note list --topic 반도체` — 주제별 필터링
-- `/note search 삼성` — 키워드 검색
-- `/note export 반도체` — 특정 주제 노트를 기사 작성용으로 정리 (AI 사용)
-.journalist/notes/ 에 날짜별 JSONL로 저장. add/list/search는 AI 없이 로컬, export만 AI 사용.
-취재의 가장 원초적 행위가 메모다. "빠르게 적어두기" 도구가 없으면 기자는 여전히 메모장을 따로 쓴다.
-테스트: CRUD, 태그 필터링, 검색, JSONL 직렬화/역직렬화.
+### Task 2: /recap — 하루 마감 회고
+Files: src/commands_project.rs, src/commands.rs, src/repl.rs
+Description: 하루 종료 시 자동 회고 생성 커맨드. /morning이 아침을 여는 커맨드라면, /recap은 하루를 닫는 커맨드다. .journalist/ 아래 당일 데이터를 종합 수집한다: notes(오늘 메모), contacts(오늘 접촉), calendar(오늘 일정과 완료 여부), draft(작성/수정한 초고), deadline(마감 상태 변화), desk(데스크 지시 처리 현황). 이 데이터를 AI에게 넘겨 (1) 오늘 한 일 요약, (2) 미완료 사항과 내일 이월 항목, (3) 오늘의 취재 성과, (4) 내일 우선순위 제안을 생성한다. .journalist/recap/YYYY-MM-DD.md에 저장. /morning → (하루 취재) → /recap 사이클이 완성되면, 기자의 하루가 yoyo 안에서 시작하고 끝난다.
 Issue: none
 
-### Task 3: /contact — 취재원 접촉 기록 관리
-Files: `src/commands_project.rs`, `src/commands.rs`
-Description: /sources가 취재원 정보(이름·소속·연락처)를 관리한다면, /contact는 접촉 이력을 관리한다.
-- `/contact log 홍길동 "반도체 신규 투자 관련 전화 인터뷰"` — 접촉 기록
-- `/contact history 홍길동` — 특정 취재원 접촉 이력 조회
-- `/contact recent` — 최근 접촉 기록 (최근 7일)
-- `/contact stale` — 30일 이상 접촉 없는 주요 취재원 알림
-- `/contact suggest 주제` — 해당 주제에 연락할 만한 취재원 추천 (AI, /sources 데이터 기반)
-.journalist/contacts/ 에 취재원별 JSONL로 저장. log/history/recent/stale는 AI 없이 로컬, suggest만 AI 사용.
-기자의 가장 큰 자산은 취재원인데, "마지막으로 언제 연락했지?"를 머릿속에만 두면 관계가 끊긴다.
-테스트: 접촉 기록 CRUD, stale 판정 로직, 날짜 필터링.
+### Task 3: /diary — 취재 일지 자동 생성
+Files: src/commands_project.rs, src/commands.rs, src/repl.rs
+Description: 하루의 취재 활동을 공식 취재 일지 형식으로 자동 생성하는 커맨드. /recap이 개인 회고라면, /diary는 편집국에 제출할 수 있는 공식 취재 일지다. 날짜별로 .journalist/notes/, contacts/, calendar/, sources/, draft/ 데이터를 읽어 기관 취재일지 양식(날짜, 취재처, 취재 내용, 취재원, 비고)에 맞춰 정리한다. `--format official`로 공식 양식, `--format brief`로 간략 양식을 선택할 수 있다. .journalist/diary/YYYY-MM-DD.md에 저장. 많은 신문사가 기자에게 일일 취재일지를 요구한다 — 이걸 수작업으로 쓰는 건 시간 낭비다. 하루 동안 yoyo에 쌓인 데이터로 자동 생성하면, /note와 /contact를 쓰는 동기가 더 강해진다("일지 쓸 때 편하려면 메모해둬야지").
 Issue: none
 
-### Task 4: 저널 기록
-Files: `JOURNAL.md`
-Description: Day 5 세션 저널 작성. 작업 내용, 설계 판단, 파이프라인 현황, 다음 방향 기록.
+### Task 4: journal entry
+Files: JOURNAL.md
+Description: 이번 세션에서 구현한 내용, 설계 판단, 파이프라인 현황을 저널에 기록한다.
 Issue: none
-
----
-
-### 우선순위 근거
-
-1. **/morning**: 매일 반복되는 루틴 → 습관 형성 → 의존성 생성. yoyo를 "가끔 쓰는 도구"에서 "매일 여는 도구"로 전환하는 핵심.
-2. **/note**: 취재 현장의 가장 원초적 행위. 이게 없으면 기자는 여전히 별도 메모앱을 쓰고, yoyo와의 취재 데이터가 단절된다.
-3. **/contact**: /sources + /network의 자연스러운 보완재. 취재원 정보는 있는데 접촉 기록이 없으면 관계 관리가 불가능.
-
-세 커맨드 모두 **로컬 우선**(AI 의존도 최소화)이라 오프라인에서도 핵심 기능이 동작한다.
