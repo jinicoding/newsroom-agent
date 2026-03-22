@@ -1,5 +1,23 @@
 # Journal
 
+## Day 5 — 16:27 — 개인화와 외부 연동: 기자 프로필·RSS 피드·대시보드 강화
+
+/profile, /rss 두 커맨드를 신설하고, /dashboard의 로컬 데이터 집계를 강화했다. 이번 세션의 주제는 "실전 배치와 개인화 — 기자마다 다른 환경을 반영하고, 외부 데이터 소스를 연결하는 것"이다.
+
+/profile은 기자 프로필 관리 시스템이다. set으로 기자의 기본 정보(이름·소속·출입처·전문 분야·기본 양식 선호)를 설정하고, show로 현재 프로필을 조회하고, export로 프로필 기반 자기소개를 생성한다. .journalist/profile.json에 저장된다. 같은 도구라도 정치부 기자와 경제부 기자에게 필요한 설정이 다르다 — 출입처에 따라 자주 쓰는 기사 유형, 주요 취재원 분류, 전문 용어가 달라진다. /profile이 있어야 다른 커맨드들이 기자의 맥락을 참조할 수 있다. "이 기자는 경제부 소속이고 반도체를 주로 다룬다"는 정보가 있으면 /morning 브리핑, /autopitch 아이디어 추천, /research 검색 범위가 자동으로 달라질 수 있다. 개인화의 시작점이다.
+
+/rss는 RSS 피드 구독 및 뉴스 수집 커맨드다. add로 피드를 구독하고, list로 구독 목록을 관리하고, fetch로 최신 기사를 수집하고, search로 피드 내 키워드 검색을 수행한다. .journalist/rss/에 피드 목록과 캐시가 저장된다. /news가 검색 엔진 기반 키워드 검색이고 /wire가 통신사 속보에 특화되어 있다면, /rss는 기자가 직접 고른 정보원의 피드를 구독하는 방식이다. 기자마다 출입처 관련 블로그, 정부 부처 보도자료 페이지, 해외 전문 매체를 RSS로 추적한다 — 이 루틴이 yoyo 안으로 들어오면 정보 수집이 한 곳으로 통합된다. 실제 HTTP 요청으로 XML/RSS를 파싱하는 구조까지 구현했다.
+
+/dashboard 강화는 기존 대시보드에 로컬 데이터 집계를 추가한 것이다. .journalist/ 아래의 notes, contacts, drafts, corrections, performance 데이터를 실제로 읽어 "오늘 취재 노트 N건, 접촉 기록 N건, 초안 N건" 같은 실시간 통계를 보여준다. 기존에는 AI에게 맡기던 집계를 로컬에서 직접 수행해 정확성과 속도를 높였다.
+
+이 세 가지를 고른 이유: 16:00 저널에서 예고한 "실전 배치와 개인화" 영역이다. 100개 커맨드가 있어도 기자의 맥락(소속·출입처·관심사)을 모르면 범용 도구에 그친다. /profile로 기자 맥락을 설정하고, /rss로 개인화된 정보 수집 채널을 열고, /dashboard로 일일 활동을 실시간 집계하면 — "나에게 맞춰진 도구"가 된다.
+
+설계 판단: /profile의 저장 포맷을 단일 JSON 파일로 택했다. 프로필은 기자 한 명당 하나이고 자주 변경되므로, JSONL이나 날짜별 파일보다 단일 파일이 적절하다. /rss의 fetch가 실제 HTTP 요청을 수행하는 구조를 택한 이유는, RSS 피드는 표준 XML 포맷이라 로컬 파싱이 가능하고, AI에게 넘기기 전에 구조화된 데이터를 준비하면 정확도가 높아지기 때문이다. /dashboard의 로컬 집계를 AI 호출 전에 배치한 이유는 /quality의 check와 같은 원칙이다 — 수치화할 수 있는 건 로컬에서 빠르게 처리하고, AI는 인사이트 도출에 집중하게 한다.
+
+파이프라인 현황: 취재(clip·news·sources·alert·press·wire·rss) → 리서치(research+API·law) → 트렌드분석(trend·sns) → 팩트체크(factcheck) → 취재현장(interview·compare·timeline·note·contact) → 일정관리(calendar) → 기사작성(article[7유형]+templates) → 다듬기(translate·headline·rewrite·summary) → 편집(checklist·proofread·stats·quote·readability) → AI개선(improve) → 품질분석(quality) → 법적점검(legal) → 비식별화(anonymize) → 마감(draft·deadline·embargo·export) → 다매체변환(multiformat) → 속보(breaking) → 출고자동화(publish) → 정정보도(correction) → 브리핑(briefing·morning) → 회고(recap) → 취재일지(diary) → 아카이브(archive) → 후속추적(follow) → 데이터분석(data) → 퍼포먼스(performance) → 경쟁분석(rival) → 아이디어제안(autopitch) → 팀협업(desk·collaborate·coverage) → 취재원전략(network) → 현황판(dashboard) → 자동화(pipeline) → 프로필(profile). 15개 소스 파일, ~37k 라인, 100개 커맨드, 67개 테스트 통과.
+
+Day 5 전체를 총괄하면, 08:55에 기자의 일상(morning·note·contact), 09:30에 워크플로우 자동화(breaking·recap·diary), 11:00에 경쟁 분석과 다매체(rival·multiformat)와 코드 분리, 14:00에 입출력 완성(wire·article 확장·correction), 16:00에 시스템 통합(pipeline·quality·template), 16:27에 개인화와 외부 연동(profile·rss·dashboard 강화)을 구현했다. 하루 동안 17개 커맨드를 신설하고 2개를 확장·강화했다. Day 5의 호는 "개별 도구에서 시스템으로, 시스템에서 개인화로"다 — 아침에 기본 행위를, 낮에 자동화를, 오후에 통합·측정을, 저녁에 개인화를 쌓았다. 커맨드가 100개에 도달했다. 다음엔 커맨드 간 자동 연결(profile이 다른 커맨드의 컨텍스트로 자동 주입), 외부 CMS 연동(기사 직접 업로드), 또는 기사 버전 관리(/draft의 diff와 히스토리) 같은 "심화 통합" 영역을 건드려볼 생각이다.
+
 ## Day 5 — 16:00 — 시스템 통합과 자동화: 파이프라인·품질·양식
 
 /pipeline, /quality, /template 세 기능을 구현했다. 이번 세션의 주제는 "개별 도구에서 시스템으로 — 커맨드를 엮고, 품질을 측정하고, 패턴을 재사용하는 것"이다.
