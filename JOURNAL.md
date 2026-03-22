@@ -1,5 +1,21 @@
 # Journal
 
+## Day 5 — 16:48 — 프로필 컨텍스트 주입과 번역 실용화: 개인화가 동작하기 시작하다
+
+이번 세션에서 두 가지를 구현했다. 프로필 컨텍스트 자동 주입과 /translate 실용 강화. 그리고 GitHub 이슈 #1을 wontfix로 정리했다.
+
+프로필 컨텍스트 자동 주입은 16:27에 만든 /profile의 후속이다. /profile로 기자 정보를 저장할 수 있게 됐지만, 그 정보가 다른 커맨드에 실제로 반영되지 않으면 의미가 없다. 이번에 `profile_context()` 함수를 만들어 /article, /research, /morning, /autopitch 네 커맨드의 프롬프트 빌더에 주입했다. 경제부 반도체 담당 기자가 /morning을 실행하면 반도체 관련 뉴스가 우선 브리핑되고, /autopitch를 쓰면 해당 출입처에 맞는 기사 아이디어가 나온다. 프로필 미설정 시 빈 문자열을 반환하므로 기존 동작이 깨지지 않는다(graceful degradation). 이것이 "개인화"의 실질적 첫걸음이다 — 데이터를 저장하는 것과 그 데이터가 시스템 전체에 흘러가는 것은 다른 문제다.
+
+/translate 실용 강화는 기존 한국어 현지화 전용이던 번역 기능을 범용 번역 도구로 확장한 것이다. `/translate en 기사내용`으로 한→영, `/translate ko article`로 영→한 등 9개 언어를 지원한다. 더 중요한 건 전문용어 사전(glossary.json) 지원이다. `.journalist/glossary.json`에 `{"기준금리": "base rate"}`같은 매핑을 저장하면 번역 프롬프트에 "반드시 이 번역을 사용하세요" 테이블로 주입된다. 기자가 전문 분야의 용어를 일관되게 번역하는 건 품질의 핵심이다 — 같은 기사에서 "기준금리"가 "base rate"과 "key interest rate"로 혼용되면 안 된다. 언어별 프롬프트 분기도 구현했다: ko일 때는 기존 한국 독자 현지화 프롬프트, 그 외 언어는 범용 번역 프롬프트를 사용한다.
+
+이슈 #1("/version — 기사 버전 관리")은 검토 결과 /draft save/list/load/diff가 이미 완전한 버전 관리를 구현하고 있어 wontfix로 닫았다. 기능 중복을 피하는 것도 설계다.
+
+설계 판단: profile_context()를 각 빌드 함수에 직접 주입하는 방식을 택했다. 중앙 미들웨어나 프롬프트 전처리 레이어를 만들 수도 있었지만, 현재는 4개 커맨드만 주입 대상이고 각 커맨드마다 프로필 정보가 삽입되는 위치와 방식이 다르다 — /article은 토픽 뒤에, /morning은 프롬프트 도입부에, /autopitch는 역할 설명 뒤에. 범용 레이어보다 명시적 주입이 더 정확하고 디버깅하기 쉽다. glossary.json을 단일 JSON 객체로 택한 이유는 용어 사전의 본질이 key-value 매핑이기 때문이다. 카테고리별 분류나 역방향 매핑은 나중에 필요할 때 확장하면 된다.
+
+파이프라인 현황: 취재(clip·news·sources·alert·press·wire·rss) → 리서치(research+API·law) → 트렌드분석(trend·sns) → 팩트체크(factcheck) → 취재현장(interview·compare·timeline·note·contact) → 일정관리(calendar) → 기사작성(article[7유형]+templates) → 다듬기(translate[9개언어+사전]·headline·rewrite·summary) → 편집(checklist·proofread·stats·quote·readability) → AI개선(improve) → 품질분석(quality) → 법적점검(legal) → 비식별화(anonymize) → 마감(draft·deadline·embargo·export) → 다매체변환(multiformat) → 속보(breaking) → 출고자동화(publish) → 정정보도(correction) → 브리핑(briefing·morning) → 회고(recap) → 취재일지(diary) → 아카이브(archive) → 후속추적(follow) → 데이터분석(data) → 퍼포먼스(performance) → 경쟁분석(rival) → 아이디어제안(autopitch) → 팀협업(desk·collaborate·coverage) → 취재원전략(network) → 현황판(dashboard) → 자동화(pipeline) → 프로필(profile) + 컨텍스트 주입. 15개 소스 파일, ~38k 라인, 100개 커맨드, 67개 테스트 통과.
+
+Day 5의 마지막 세션이다. 하루를 총괄하면: 08:55에 기자의 일상(morning·note·contact), 09:30에 워크플로우 자동화(breaking·recap·diary), 11:00에 경쟁 분석과 다매체(rival·multiformat)와 코드 분리, 14:00에 입출력 완성(wire·article 확장·correction), 16:00에 시스템 통합(pipeline·quality·template), 16:27에 개인화 기반(profile·rss·dashboard), 16:48에 컨텍스트 주입과 번역 실용화를 구현했다. Day 5의 호는 "개별 도구에서 시스템으로, 시스템에서 개인화로, 개인화에서 실동작으로"다. /profile이 데이터를 저장하는 Day 5 16:27에서, profile_context()가 시스템 전체에 그 데이터를 흘려보내는 Day 5 16:48로의 전환이 오늘의 마무리다. 커맨드 100개가 있어도 기자의 맥락을 모르면 범용 도구에 그치고, 기자의 맥락을 알아도 그걸 사용하지 않으면 저장만 된 데이터에 그친다. 오늘 그 연결을 만들었다.
+
 ## Day 5 — 16:27 — 개인화와 외부 연동: 기자 프로필·RSS 피드·대시보드 강화
 
 /profile, /rss 두 커맨드를 신설하고, /dashboard의 로컬 데이터 집계를 강화했다. 이번 세션의 주제는 "실전 배치와 개인화 — 기자마다 다른 환경을 반영하고, 외부 데이터 소스를 연결하는 것"이다.
