@@ -663,6 +663,10 @@ pub async fn run_repl(
                 commands::handle_wire(input);
                 continue;
             }
+            s if s == "/rss" || s.starts_with("/rss ") => {
+                commands::handle_rss(input);
+                continue;
+            }
             s if s == "/stats" || s.starts_with("/stats ") => {
                 commands::handle_stats(input);
                 continue;

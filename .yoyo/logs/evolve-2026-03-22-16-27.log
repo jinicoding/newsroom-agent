@@ -194,3 +194,16 @@ SESSION_PLAN.md를 작성했습니다.
   계획된 태스크: 4개
 
   ── Task 1 / 4 ──
+구현 완료. `/profile` 기자 프로필 관리 시스템:
+
+- **`/profile show`** — 현재 프로필 표시 (기본 동작)
+- **`/profile set <필드> <값>`** — 필드 설정 (name, beat, org, email, phone, bio 등)
+- **`/profile remove <필드>`** — 특정 필드 삭제
+- **`/profile clear`** — 프로필 전체 초기화
+- `.journalist/profile.json`에 저장
+- `profile_context()` 함수로 다른 커맨드에서 프로필 데이터 주입 가능
+- Tab 완성 지원
+- 테스트 7개 추가, 전체 67개 통과
+    Task 1: 검증 OK
+
+  ── Task 2 / 4 ──

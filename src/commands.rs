@@ -117,6 +117,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/quality",
     "/template",
     "/profile",
+    "/rss",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -782,7 +783,7 @@ pub use crate::commands_project::{
 pub use crate::commands_research::{
     handle_alert, handle_clip, handle_contact, handle_factcheck, handle_follow, handle_law,
     handle_network, handle_news, handle_note, handle_press, handle_research, handle_sns,
-    handle_sources, handle_trend, handle_wire,
+    handle_rss, handle_sources, handle_trend, handle_wire,
 };
 
 // Article writing & editing handlers

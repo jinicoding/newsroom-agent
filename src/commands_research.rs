@@ -1,5 +1,5 @@
 //! Research & source management command handlers (취재·리서치 도메인)
-//! Commands: /alert, /clip, /contact, /factcheck, /follow, /law, /network, /news, /note, /press, /research, /sns, /sources, /trend
+//! Commands: /alert, /clip, /contact, /factcheck, /follow, /law, /network, /news, /note, /press, /research, /rss, /sns, /sources, /trend
 
 use crate::commands::auto_compact_if_needed;
 use crate::commands_project::*;
@@ -1512,6 +1512,452 @@ pub fn handle_wire(input: &str) {
     LAST_WIRE_RESULTS.with(|cell| {
         *cell.borrow_mut() = results;
     });
+}
+
+// ── /rss — RSS 피드 구독 및 뉴스 수집 ─────────────────────────────────
+
+/// File storing the list of subscribed RSS feed URLs.
+const RSS_FEEDS_FILE: &str = ".journalist/rss/feeds.json";
+/// Directory storing cached items per feed.
+const RSS_CACHE_DIR: &str = ".journalist/rss/cache";
+
+/// A single RSS feed subscription entry.
+#[derive(Debug, Clone)]
+struct RssFeed {
+    url: String,
+    name: String,
+    added: String,
+}
+
+/// Load subscribed RSS feeds from the feeds file.
+fn load_rss_feeds() -> Vec<RssFeed> {
+    load_rss_feeds_from(std::path::Path::new(RSS_FEEDS_FILE))
+}
+
+fn load_rss_feeds_from(path: &std::path::Path) -> Vec<RssFeed> {
+    if !path.exists() {
+        return Vec::new();
+    }
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&content).unwrap_or_default();
+    arr.iter()
+        .filter_map(|v| {
+            Some(RssFeed {
+                url: v["url"].as_str()?.to_string(),
+                name: v["name"].as_str().unwrap_or("").to_string(),
+                added: v["added"].as_str().unwrap_or("").to_string(),
+            })
+        })
+        .collect()
+}
+
+/// Save RSS feeds to the feeds file.
+fn save_rss_feeds(feeds: &[RssFeed]) {
+    save_rss_feeds_to(feeds, std::path::Path::new(RSS_FEEDS_FILE));
+}
+
+fn save_rss_feeds_to(feeds: &[RssFeed], path: &std::path::Path) {
+    ensure_sources_dir_at(path);
+    let arr: Vec<serde_json::Value> = feeds
+        .iter()
+        .map(|f| {
+            serde_json::json!({
+                "url": f.url,
+                "name": f.name,
+                "added": f.added,
+            })
+        })
+        .collect();
+    if let Ok(json) = serde_json::to_string_pretty(&arr) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
+/// Derive a cache filename from a feed URL.
+fn rss_cache_filename(url: &str) -> String {
+    // Simple hash: use a slug of the URL domain + path
+    let stripped = url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    let slug = crate::commands_project::topic_to_slug(stripped, 60);
+    if slug.is_empty() {
+        "feed".to_string()
+    } else {
+        slug
+    }
+}
+
+/// Load cached RSS items for a given feed URL.
+fn load_rss_cache(url: &str) -> Vec<NewsItem> {
+    let filename = format!("{}.json", rss_cache_filename(url));
+    let path = std::path::Path::new(RSS_CACHE_DIR).join(filename);
+    load_rss_cache_from(&path)
+}
+
+fn load_rss_cache_from(path: &std::path::Path) -> Vec<NewsItem> {
+    if !path.exists() {
+        return Vec::new();
+    }
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&content).unwrap_or_default();
+    arr.iter()
+        .filter_map(|v| {
+            Some(NewsItem {
+                title: v["title"].as_str()?.to_string(),
+                link: v["link"].as_str().unwrap_or("").to_string(),
+                description: v["description"].as_str().unwrap_or("").to_string(),
+                pub_date: v["pub_date"].as_str().unwrap_or("").to_string(),
+            })
+        })
+        .collect()
+}
+
+/// Save cached RSS items for a given feed URL.
+fn save_rss_cache(url: &str, items: &[NewsItem]) {
+    let filename = format!("{}.json", rss_cache_filename(url));
+    let path = std::path::Path::new(RSS_CACHE_DIR).join(filename);
+    save_rss_cache_to(items, &path);
+}
+
+fn save_rss_cache_to(items: &[NewsItem], path: &std::path::Path) {
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let arr: Vec<serde_json::Value> = items
+        .iter()
+        .map(|item| {
+            serde_json::json!({
+                "title": item.title,
+                "link": item.link,
+                "description": item.description,
+                "pub_date": item.pub_date,
+            })
+        })
+        .collect();
+    if let Ok(json) = serde_json::to_string_pretty(&arr) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
+/// Handle the `/rss` command: RSS feed subscription and news collection.
+pub fn handle_rss(input: &str) {
+    let args = input.strip_prefix("/rss").unwrap_or("").trim();
+
+    match args.split_whitespace().next().unwrap_or("help") {
+        "add" => {
+            let rest = args.strip_prefix("add").unwrap_or("").trim();
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /rss add <URL> [이름]{RESET}");
+                println!("{DIM}  예시: /rss add https://www.yna.co.kr/rss/news.xml 연합뉴스{RESET}\n");
+            } else {
+                rss_add(rest);
+            }
+        }
+        "list" => {
+            rss_list();
+        }
+        "check" => {
+            rss_check();
+        }
+        "search" => {
+            let rest = args.strip_prefix("search").unwrap_or("").trim();
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /rss search <키워드>{RESET}");
+                println!("{DIM}  예시: /rss search 반도체{RESET}\n");
+            } else {
+                rss_search(rest);
+            }
+        }
+        "remove" => {
+            let rest = args.strip_prefix("remove").unwrap_or("").trim();
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /rss remove <번호>{RESET}");
+                println!("{DIM}  /rss list 에서 번호를 확인하세요.{RESET}\n");
+            } else {
+                rss_remove(rest);
+            }
+        }
+        "help" => {
+            println!("{DIM}  사용법:{RESET}");
+            println!("{DIM}    /rss add <URL> [이름]   피드 등록{RESET}");
+            println!("{DIM}    /rss list               구독 목록{RESET}");
+            println!("{DIM}    /rss check              최신 뉴스 가져오기{RESET}");
+            println!("{DIM}    /rss search <키워드>    가져온 뉴스 검색{RESET}");
+            println!("{DIM}    /rss remove <번호>      피드 삭제{RESET}");
+            println!("{DIM}  비교: /wire·/news는 내장 소스, /rss는 사용자 지정 피드{RESET}\n");
+        }
+        other => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {other}{RESET}");
+            println!("{DIM}  사용법: /rss [add|list|check|search|remove|help]{RESET}\n");
+        }
+    }
+}
+
+/// Add a new RSS feed subscription.
+fn rss_add(rest: &str) {
+    let mut parts = rest.splitn(2, char::is_whitespace);
+    let url = parts.next().unwrap_or("").trim();
+    let name = parts.next().unwrap_or("").trim();
+
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        eprintln!("{RED}  유효한 URL을 입력하세요 (http:// 또는 https://){RESET}\n");
+        return;
+    }
+
+    let mut feeds = load_rss_feeds();
+
+    // Check for duplicates
+    if feeds.iter().any(|f| f.url == url) {
+        println!("{DIM}  이미 등록된 피드입니다: {url}{RESET}\n");
+        return;
+    }
+
+    // Auto-detect name from feed if not provided
+    let feed_name = if name.is_empty() {
+        // Try to extract domain as name
+        let domain = url
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .split('/')
+            .next()
+            .unwrap_or(url);
+        domain.to_string()
+    } else {
+        name.to_string()
+    };
+
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let timestamp = format_unix_timestamp(secs);
+
+    feeds.push(RssFeed {
+        url: url.to_string(),
+        name: feed_name.clone(),
+        added: timestamp.clone(),
+    });
+    save_rss_feeds(&feeds);
+
+    println!("{GREEN}  ✓ RSS 피드 등록: {feed_name} ({url}){RESET}");
+    println!("{DIM}    /rss check 으로 뉴스를 가져올 수 있습니다.{RESET}\n");
+}
+
+/// List all subscribed RSS feeds.
+fn rss_list() {
+    let feeds = load_rss_feeds();
+    if feeds.is_empty() {
+        println!("{DIM}  등록된 RSS 피드가 없습니다.");
+        println!("  /rss add <URL> [이름] 으로 추가하세요.{RESET}\n");
+        return;
+    }
+
+    println!("{BOLD}  RSS 구독 목록 ({} 개){RESET}", feeds.len());
+    println!("{DIM}  ─────────────────────────────{RESET}");
+    for (i, feed) in feeds.iter().enumerate() {
+        println!(
+            "{DIM}  {}. {}{RESET}  {DIM}{}{RESET}",
+            i + 1,
+            if feed.name.is_empty() {
+                &feed.url
+            } else {
+                &feed.name
+            },
+            feed.url
+        );
+        if !feed.added.is_empty() {
+            println!("{DIM}     등록: {}{RESET}", feed.added);
+        }
+    }
+    println!();
+}
+
+/// Fetch latest news from all subscribed RSS feeds.
+fn rss_check() {
+    let feeds = load_rss_feeds();
+    if feeds.is_empty() {
+        println!("{DIM}  등록된 RSS 피드가 없습니다.");
+        println!("  /rss add <URL> [이름] 으로 추가하세요.{RESET}\n");
+        return;
+    }
+
+    println!("{BOLD}  RSS 피드 확인 중... ({} 개 피드){RESET}\n", feeds.len());
+
+    let mut total_new = 0usize;
+
+    for feed in &feeds {
+        let label = if feed.name.is_empty() {
+            &feed.url
+        } else {
+            &feed.name
+        };
+        print!("{DIM}  ▶ {label}...{RESET}");
+
+        match fetch_rss_feed(label, &feed.url) {
+            Ok(items) => {
+                // Load existing cache to find new items
+                let existing = load_rss_cache(&feed.url);
+                let existing_links: std::collections::HashSet<&str> =
+                    existing.iter().map(|i| i.link.as_str()).collect();
+
+                let new_items: Vec<&NewsItem> = items
+                    .iter()
+                    .filter(|i| !i.link.is_empty() && !existing_links.contains(i.link.as_str()))
+                    .collect();
+
+                let new_count = new_items.len();
+                total_new += new_count;
+
+                println!(" {GREEN}{} 건{RESET} (새 {} 건)", items.len(), new_count);
+
+                // Show new items
+                for item in new_items.iter().take(5) {
+                    println!(
+                        "    {YELLOW}•{RESET} {BOLD}{}{RESET}",
+                        item.title
+                    );
+                    if !item.pub_date.is_empty() {
+                        println!("      {DIM}{}{RESET}", item.pub_date);
+                    }
+                }
+                if new_count > 5 {
+                    println!("    {DIM}... 외 {} 건{RESET}", new_count - 5);
+                }
+
+                // Merge and save cache (keep latest 200 per feed)
+                let mut merged = items;
+                for old in existing {
+                    if !merged.iter().any(|m| m.link == old.link) {
+                        merged.push(old);
+                    }
+                }
+                merged.truncate(200);
+                save_rss_cache(&feed.url, &merged);
+            }
+            Err(e) => {
+                println!(" {RED}실패: {e}{RESET}");
+            }
+        }
+        println!();
+    }
+
+    println!(
+        "{BOLD}  총 새 기사: {total_new} 건{RESET}"
+    );
+    println!("{DIM}  /rss search <키워드> 로 검색할 수 있습니다.{RESET}\n");
+}
+
+/// Search cached RSS items by keyword.
+fn rss_search(keyword: &str) {
+    let feeds = load_rss_feeds();
+    if feeds.is_empty() {
+        println!("{DIM}  등록된 RSS 피드가 없습니다.{RESET}\n");
+        return;
+    }
+
+    let kw = keyword.to_lowercase();
+    let keywords: Vec<&str> = kw.split_whitespace().collect();
+    let mut results: Vec<(String, NewsItem)> = Vec::new();
+
+    for feed in &feeds {
+        let label = if feed.name.is_empty() {
+            feed.url.clone()
+        } else {
+            feed.name.clone()
+        };
+        let cached = load_rss_cache(&feed.url);
+        for item in cached {
+            let title_lower = item.title.to_lowercase();
+            let desc_lower = item.description.to_lowercase();
+            if keywords
+                .iter()
+                .all(|k| title_lower.contains(k) || desc_lower.contains(k))
+            {
+                results.push((label.clone(), item));
+            }
+        }
+    }
+
+    if results.is_empty() {
+        println!("{DIM}  '{keyword}'에 해당하는 기사가 없습니다.{RESET}");
+        println!("{DIM}  /rss check 으로 최신 뉴스를 먼저 가져오세요.{RESET}\n");
+        return;
+    }
+
+    println!(
+        "{BOLD}  RSS 검색 결과: '{keyword}' ({} 건){RESET}\n",
+        results.len()
+    );
+
+    for (i, (source, item)) in results.iter().take(20).enumerate() {
+        println!(
+            "  {BOLD}{YELLOW}[{}]{RESET} {BOLD}{}{RESET}",
+            i + 1,
+            item.title
+        );
+        println!("     {DIM}[{source}] {}{RESET}", item.pub_date);
+        if !item.description.is_empty() {
+            let desc = if item.description.chars().count() > 100 {
+                let end = item
+                    .description
+                    .char_indices()
+                    .nth(100)
+                    .map(|(i, _)| i)
+                    .unwrap_or(item.description.len());
+                format!("{}…", &item.description[..end])
+            } else {
+                item.description.clone()
+            };
+            println!("     {DIM}{desc}{RESET}");
+        }
+        if !item.link.is_empty() {
+            println!("     {DIM}{}{RESET}", item.link);
+        }
+        println!();
+    }
+    if results.len() > 20 {
+        println!("{DIM}  ... 외 {} 건{RESET}\n", results.len() - 20);
+    }
+}
+
+/// Remove an RSS feed by index number.
+fn rss_remove(num_str: &str) {
+    let num: usize = match num_str.trim().parse() {
+        Ok(n) if n >= 1 => n,
+        _ => {
+            eprintln!("{RED}  유효한 번호를 입력하세요 (예: /rss remove 1){RESET}\n");
+            return;
+        }
+    };
+
+    let mut feeds = load_rss_feeds();
+    if feeds.is_empty() {
+        println!("{DIM}  등록된 RSS 피드가 없습니다.{RESET}\n");
+        return;
+    }
+    if num > feeds.len() {
+        eprintln!(
+            "{RED}  번호 범위 초과: 1~{} 사이의 번호를 입력하세요.{RESET}\n",
+            feeds.len()
+        );
+        return;
+    }
+
+    let removed = feeds.remove(num - 1);
+    save_rss_feeds(&feeds);
+
+    let label = if removed.name.is_empty() {
+        &removed.url
+    } else {
+        &removed.name
+    };
+    println!("{GREEN}  ✓ 삭제됨: {label} ({url}){RESET}\n", url = removed.url);
 }
 
 // ── /alert — 키워드 뉴스 모니터링 ──────────────────────────────────────
@@ -5481,5 +5927,84 @@ mod tests {
             assert!(!name.is_empty());
             assert!(url.starts_with("https://"));
         }
+    }
+
+    // ── /rss tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn rss_feeds_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feeds.json");
+
+        // Initially empty
+        assert!(load_rss_feeds_from(&path).is_empty());
+
+        // Save and load
+        let feeds = vec![
+            RssFeed {
+                url: "https://example.com/rss".to_string(),
+                name: "Example".to_string(),
+                added: "2026-03-22".to_string(),
+            },
+            RssFeed {
+                url: "https://other.com/feed.xml".to_string(),
+                name: "".to_string(),
+                added: "".to_string(),
+            },
+        ];
+        save_rss_feeds_to(&feeds, &path);
+
+        let loaded = load_rss_feeds_from(&path);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].url, "https://example.com/rss");
+        assert_eq!(loaded[0].name, "Example");
+        assert_eq!(loaded[1].url, "https://other.com/feed.xml");
+        assert!(loaded[1].name.is_empty());
+    }
+
+    #[test]
+    fn rss_cache_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feed_cache.json");
+
+        assert!(load_rss_cache_from(&path).is_empty());
+
+        let items = vec![
+            NewsItem {
+                title: "테스트 기사 1".to_string(),
+                link: "https://example.com/1".to_string(),
+                description: "설명 1".to_string(),
+                pub_date: "2026-03-22".to_string(),
+            },
+            NewsItem {
+                title: "테스트 기사 2".to_string(),
+                link: "https://example.com/2".to_string(),
+                description: "".to_string(),
+                pub_date: "".to_string(),
+            },
+        ];
+        save_rss_cache_to(&items, &path);
+
+        let loaded = load_rss_cache_from(&path);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].title, "테스트 기사 1");
+        assert_eq!(loaded[0].link, "https://example.com/1");
+        assert_eq!(loaded[1].title, "테스트 기사 2");
+    }
+
+    #[test]
+    fn rss_cache_filename_from_url() {
+        let slug = rss_cache_filename("https://www.yna.co.kr/rss/news.xml");
+        assert!(!slug.is_empty());
+        assert!(!slug.contains("https"));
+        // Different URLs should produce different filenames
+        let slug2 = rss_cache_filename("https://newsis.com/rss/all_rss.xml");
+        assert_ne!(slug, slug2);
+    }
+
+    #[test]
+    fn rss_command_recognized() {
+        use crate::commands::KNOWN_COMMANDS;
+        assert!(KNOWN_COMMANDS.contains(&"/rss"));
     }
 }
