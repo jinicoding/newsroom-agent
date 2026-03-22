@@ -806,6 +806,11 @@ pub async fn run_repl(
                     .await;
                 continue;
             }
+            s if s == "/rival" || s.starts_with("/rival ") => {
+                commands::handle_rival(agent, input, &mut session_total, &agent_config.model)
+                    .await;
+                continue;
+            }
             s if s == "/contact" || s.starts_with("/contact ") => {
                 if let Some(prompt) = commands::handle_contact(input) {
                     if !prompt.is_empty() {
