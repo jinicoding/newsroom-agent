@@ -110,6 +110,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/recap",
     "/diary",
     "/rival",
+    "/multiformat",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -223,6 +224,21 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/network" => filter_candidates(NETWORK_SUBCOMMANDS, &partial_lower),
         "/note" => filter_candidates(NOTE_SUBCOMMANDS, &partial_lower),
         "/breaking" => filter_candidates(BREAKING_SUBCOMMANDS, &partial_lower),
+        "/multiformat" => {
+            if partial_arg.starts_with("--format ") {
+                let fmt_part = &partial_arg[9..];
+                return crate::commands_writing::MULTIFORMAT_FORMATS
+                    .iter()
+                    .filter(|f| f.starts_with(fmt_part))
+                    .map(|f| format!("--format {f}"))
+                    .collect();
+            }
+            if "--format".starts_with(partial_arg) {
+                vec!["--format".to_string()]
+            } else {
+                Vec::new()
+            }
+        }
         "/briefing" | "/translate" | "/headline" | "/rewrite" | "/legal" => {
             if partial_arg.starts_with("--file ") {
                 let file_part = &partial_arg[7..];
@@ -751,9 +767,9 @@ pub use crate::commands_research::{
 // Article writing & editing handlers
 pub use crate::commands_writing::{
     handle_anonymize, handle_archive, handle_article, handle_checklist, handle_draft,
-    handle_export, handle_headline, handle_improve, handle_legal, handle_proofread,
-    handle_publish, handle_quote, handle_readability, handle_rewrite, handle_stats,
-    handle_summary, handle_translate,
+    handle_export, handle_headline, handle_improve, handle_legal, handle_multiformat,
+    handle_proofread, handle_publish, handle_quote, handle_readability, handle_rewrite,
+    handle_stats, handle_summary, handle_translate,
 };
 
 // Workflow & management handlers

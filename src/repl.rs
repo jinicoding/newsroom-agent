@@ -639,6 +639,11 @@ pub async fn run_repl(
                     .await;
                 continue;
             }
+            s if s == "/multiformat" || s.starts_with("/multiformat ") => {
+                commands::handle_multiformat(agent, input, &mut session_total, &agent_config.model)
+                    .await;
+                continue;
+            }
             s if s == "/clip" || s.starts_with("/clip ") => {
                 commands::handle_clip(agent, input, &mut session_total, &agent_config.model)
                     .await;
