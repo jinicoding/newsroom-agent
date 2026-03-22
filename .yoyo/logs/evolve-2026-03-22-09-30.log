@@ -36,3 +36,10 @@ SESSION_PLAN.md 작성 완료.
 - 테스트 12개 추가 (파싱, 파일 경로, 프롬프트, 저장/조회 로직 등), 전체 67개 통과
 
   ── Task 2 / 4 ──
+`/recap` 커맨드 구현 완료. 변경 내용:
+
+- **`src/commands_project.rs`**: `collect_recap_data()` — 당일 메모, 접촉 기록, 일정(완료/미완료), 수정된 초고, 마감 상태, 데스크 지시 현황을 종합 수집. `build_recap_prompt()` — AI에게 4개 섹션(오늘 한 일, 미완료/이월, 취재 성과, 내일 우선순위) 생성 요청. `handle_recap()` — help/list 서브커맨드 지원, `.journalist/recap/YYYY-MM-DD.md`에 저장. 테스트 3개 추가.
+- **`src/commands.rs`**: `KNOWN_COMMANDS`에 `/recap` 등록, import에 `handle_recap` 추가
+- **`src/repl.rs`**: REPL 디스패치에 `/recap` 매칭 추가
+
+  ── Task 3 / 4 ──

@@ -13153,6 +13153,290 @@ fn recap_print_list() {
     println!();
 }
 
+// ── /diary — 취재 일지 자동 생성 ────────────────────────────────────────
+
+const DIARY_DIR: &str = ".journalist/diary";
+
+/// Collect today's journalist data for the official diary.
+///
+/// Gathers: notes, contacts, calendar, sources, drafts — structured for
+/// institutional reporting diary format.
+pub fn collect_diary_data() -> String {
+    let mut sections = Vec::new();
+    let today = today_date_string();
+
+    // 1. Notes written today
+    let notes_file = notes_file_for_date(&today);
+    let notes = load_notes_from(&notes_file);
+    if !notes.is_empty() {
+        let mut s = format!("## 취재 메모 ({today}, {}건)\n", notes.len());
+        for n in &notes {
+            let tags = [
+                n.source.as_deref().map(|s| format!("[취재원: {s}]")),
+                n.topic.as_deref().map(|t| format!("[주제: {t}]")),
+            ];
+            let tag_str: String = tags.iter().flatten().cloned().collect::<Vec<_>>().join(" ");
+            if tag_str.is_empty() {
+                s.push_str(&format!("- {}\n", n.content));
+            } else {
+                s.push_str(&format!("- {} {tag_str}\n", n.content));
+            }
+        }
+        sections.push(s);
+    } else {
+        sections.push(format!("## 취재 메모 ({today})\n메모 없음\n"));
+    }
+
+    // 2. Contact logs today
+    let all_contacts = load_all_contact_logs();
+    let today_contacts: Vec<&ContactLog> = all_contacts
+        .iter()
+        .filter(|c| c.timestamp.starts_with(&today))
+        .collect();
+    if !today_contacts.is_empty() {
+        let mut s = format!("## 취재원 접촉 기록 ({}건)\n", today_contacts.len());
+        for c in &today_contacts {
+            s.push_str(&format!("- {} — {}\n", c.name, c.summary));
+        }
+        sections.push(s);
+    } else {
+        sections.push("## 취재원 접촉 기록\n접촉 기록 없음\n".to_string());
+    }
+
+    // 3. Calendar: today's events
+    let calendar = load_calendar_from(&calendar_path());
+    let today_events: Vec<&CalendarEvent> =
+        calendar.iter().filter(|e| e.date == today).collect();
+    if !today_events.is_empty() {
+        let done_count = today_events.iter().filter(|e| e.done).count();
+        let total = today_events.len();
+        let mut s = format!("## 일정 (완료 {done_count}/{total})\n");
+        for ev in &today_events {
+            let mark = if ev.done { "✅" } else { "⬜" };
+            s.push_str(&format!("- {mark} {} {}\n", ev.time, ev.description));
+        }
+        sections.push(s);
+    } else {
+        sections.push("## 일정\n등록된 일정 없음\n".to_string());
+    }
+
+    // 4. Sources (full list for reference)
+    let sources = load_sources_from(std::path::Path::new(SOURCES_FILE));
+    if !sources.is_empty() {
+        let mut s = format!("## 등록 취재원 ({}명)\n", sources.len());
+        for src in &sources {
+            let name = src["name"].as_str().unwrap_or("-");
+            let org = src["org"].as_str().unwrap_or("");
+            let note = src["note"].as_str().unwrap_or("");
+            if note.is_empty() {
+                s.push_str(&format!("- {name} ({org})\n"));
+            } else {
+                s.push_str(&format!("- {name} ({org}) — {note}\n"));
+            }
+        }
+        sections.push(s);
+    }
+
+    // 5. Drafts modified today
+    let drafts_dir = std::path::Path::new(DRAFTS_DIR);
+    if drafts_dir.exists() {
+        let mut today_drafts: Vec<String> = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(drafts_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|ext| ext == "md") {
+                    if let Ok(meta) = path.metadata() {
+                        if let Ok(modified) = meta.modified() {
+                            let secs = modified
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs();
+                            let days = (secs / 86400) as i64;
+                            let (y, m, d) = epoch_days_to_ymd(days);
+                            let mod_date = format!("{y:04}-{m:02}-{d:02}");
+                            if mod_date == today {
+                                let name = path
+                                    .file_stem()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .to_string();
+                                today_drafts.push(name);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if !today_drafts.is_empty() {
+            today_drafts.sort();
+            let mut s = format!("## 작업 초고 ({}건)\n", today_drafts.len());
+            for name in &today_drafts {
+                s.push_str(&format!("- {name}\n"));
+            }
+            sections.push(s);
+        }
+    }
+
+    sections.join("\n")
+}
+
+/// Build the AI prompt for diary generation.
+fn build_diary_prompt(data: &str, format: &str) -> String {
+    if format == "brief" {
+        format!(
+            "당신은 한국 신문사 기자의 업무 보조 AI입니다.
+아래 데이터를 바탕으로 **간략 취재 일지**를 작성하세요.
+
+### 양식
+- 날짜
+- 주요 취재 내용 (3줄 이내 요약)
+- 접촉 취재원 목록
+- 비고
+
+간결하게, 핵심만 적으세요.
+
+---
+
+{data}"
+        )
+    } else {
+        format!(
+            "당신은 한국 신문사 기자의 업무 보조 AI입니다.
+아래 데이터를 바탕으로 **공식 취재 일지**를 작성하세요.
+편집국에 제출할 수 있는 기관 양식에 맞춰 정리합니다.
+
+### 양식 (표 형태)
+
+| 항목 | 내용 |
+|------|------|
+| **날짜** | (오늘 날짜) |
+| **기자명** | (기자 이름 — 데이터에 없으면 빈칸) |
+| **소속** | (부서 — 데이터에 없으면 빈칸) |
+
+### 취재 활동 상세
+
+| 시간 | 취재처 | 취재 내용 | 취재원 | 비고 |
+|------|--------|-----------|--------|------|
+| ... | ... | ... | ... | ... |
+
+일정, 메모, 접촉 기록을 시간순으로 정리하여 표에 채우세요.
+시간 정보가 없으면 빈칸으로 두세요.
+
+### 취재 성과 요약
+- 오늘 핵심 취재 성과 (2~3문장)
+- 후속 취재 필요 사항
+
+### 특이사항/비고
+- 취재 과정에서 특이사항이 있으면 기록
+
+실제 데이터에 있는 내용만 작성하고, 없는 내용은 만들어내지 마세요.
+
+---
+
+{data}"
+        )
+    }
+}
+
+/// Save diary to `.journalist/diary/YYYY-MM-DD.md`.
+fn save_diary(content: &str) -> std::path::PathBuf {
+    let dir = std::path::Path::new(DIARY_DIR);
+    std::fs::create_dir_all(dir).ok();
+
+    let today = today_date_string();
+    let path = dir.join(format!("{today}.md"));
+    std::fs::write(&path, content).ok();
+    path
+}
+
+/// Handle the `/diary` command: generate daily reporting diary.
+pub async fn handle_diary(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/diary").unwrap_or("").trim();
+
+    if args == "help" || args == "--help" {
+        diary_print_help();
+        return;
+    }
+
+    if args == "list" {
+        diary_print_list();
+        return;
+    }
+
+    let format = if args == "--format brief" || args.contains("brief") {
+        "brief"
+    } else {
+        "official"
+    };
+
+    println!(
+        "{DIM}  📋 취재 일지 생성 중... (양식: {format}){RESET}"
+    );
+
+    let data = collect_diary_data();
+
+    println!("{DIM}  📊 데이터 수집 완료. AI 일지 작성 중...{RESET}");
+
+    let prompt = build_diary_prompt(&data, format);
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    if !response.trim().is_empty() {
+        let path = save_diary(&response);
+        println!(
+            "{DIM}  📋 취재 일지가 {}에 저장되었습니다.{RESET}\n",
+            path.display()
+        );
+    }
+}
+
+fn diary_print_help() {
+    println!("{DIM}  /diary — 취재 일지 자동 생성{RESET}");
+    println!("{DIM}  편집국에 제출할 수 있는 공식 취재 일지를 자동 생성합니다.{RESET}");
+    println!("{DIM}  .journalist/notes, contacts, calendar, sources, drafts 데이터를 종합합니다.{RESET}");
+    println!("{DIM}  사용법:{RESET}");
+    println!("{DIM}    /diary                   공식 양식으로 일지 생성{RESET}");
+    println!("{DIM}    /diary --format official  공식 양식 (기본값){RESET}");
+    println!("{DIM}    /diary --format brief     간략 양식{RESET}");
+    println!("{DIM}    /diary list               과거 일지 목록{RESET}");
+    println!("{DIM}    /diary help               도움말{RESET}\n");
+}
+
+fn diary_print_list() {
+    let dir = std::path::Path::new(DIARY_DIR);
+    if !dir.exists() {
+        println!("{DIM}  취재 일지가 없습니다.{RESET}\n");
+        return;
+    }
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "md"))
+        .collect();
+    files.sort();
+    files.reverse();
+    if files.is_empty() {
+        println!("{DIM}  취재 일지가 없습니다.{RESET}\n");
+        return;
+    }
+    println!("{DIM}  📋 과거 취재 일지 (최신순):{RESET}");
+    for (i, path) in files.iter().enumerate().take(20) {
+        let name = path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy();
+        println!("  {: >3}. {name}", i + 1);
+    }
+    println!();
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -18450,5 +18734,56 @@ mod tests {
         assert!(prompt.contains("내일 이월"));
         assert!(prompt.contains("취재 성과"));
         assert!(prompt.contains("내일 우선순위 제안"));
+    }
+
+    // ── /diary tests ──
+
+    #[test]
+    fn diary_dir_constant() {
+        assert_eq!(DIARY_DIR, ".journalist/diary");
+    }
+
+    #[test]
+    fn collect_diary_data_graceful_when_empty() {
+        let data = collect_diary_data();
+        assert!(data.contains("취재 메모"));
+        assert!(data.contains("취재원 접촉 기록"));
+        assert!(data.contains("일정"));
+    }
+
+    #[test]
+    fn build_diary_prompt_official_format() {
+        let prompt = build_diary_prompt("테스트 데이터", "official");
+        assert!(prompt.contains("테스트 데이터"));
+        assert!(prompt.contains("공식 취재 일지"));
+        assert!(prompt.contains("취재처"));
+        assert!(prompt.contains("취재 내용"));
+        assert!(prompt.contains("취재원"));
+        assert!(prompt.contains("비고"));
+    }
+
+    #[test]
+    fn build_diary_prompt_brief_format() {
+        let prompt = build_diary_prompt("테스트 데이터", "brief");
+        assert!(prompt.contains("테스트 데이터"));
+        assert!(prompt.contains("간략 취재 일지"));
+        assert!(prompt.contains("접촉 취재원"));
+    }
+
+    #[test]
+    fn diary_in_known_commands() {
+        use crate::commands::KNOWN_COMMANDS;
+        assert!(
+            KNOWN_COMMANDS.contains(&"/diary"),
+            "/diary should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn save_diary_creates_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("test-diary.md");
+        std::fs::write(&path, "일지 내용").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "일지 내용");
     }
 }
