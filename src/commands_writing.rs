@@ -4709,13 +4709,136 @@ async fn quality_report(
 
 const TEMPLATES_DIR: &str = ".journalist/templates";
 
+/// Built-in template definitions: (name, content)
+/// Korean journalism conventions for common recurring article types.
+pub const BUILTIN_TEMPLATES: &[(&str, &str)] = &[
+    (
+        "earnings",
+        "# 분기실적 기사 양식\n\n\
+         ## 리드\n\
+         [회사명]이 [연도] [분기] 매출 [금액]원, 영업이익 [금액]원을 기록했다고 [일자] 공시했다.\n\n\
+         ## 실적 요약\n\
+         | 항목 | 당기 | 전기 | 전년동기 | 증감률 |\n\
+         |------|------|------|----------|--------|\n\
+         | 매출 | | | | |\n\
+         | 영업이익 | | | | |\n\
+         | 당기순이익 | | | | |\n\n\
+         ## 사업부별 실적\n\
+         - [사업부1]: 매출 [금액]원 ([증감]%)\n\
+         - [사업부2]: 매출 [금액]원 ([증감]%)\n\n\
+         ## 실적 배경\n\
+         [실적 증감의 주요 원인과 배경 설명]\n\n\
+         ## 전망\n\
+         [회사 측 가이던스 또는 증권사 전망]\n\n\
+         ## 시장 반응\n\
+         [주가 변동, 애널리스트 반응 등]",
+    ),
+    (
+        "personnel",
+        "# 인사발령 기사 양식\n\n\
+         ## 리드\n\
+         [기관/회사명]은 [일자]자로 다음과 같이 인사를 단행했다.\n\n\
+         ## 주요 인사\n\
+         ◆ 승진\n\
+         ▲[직급] [이름]([부서])\n\n\
+         ◆ 전보\n\
+         ▲[부서] [이름]([전 부서])\n\n\
+         ◆ 신규 임명\n\
+         ▲[직위] [이름]\n\n\
+         ## 인사 배경\n\
+         [이번 인사의 특징과 배경 설명]\n\n\
+         ## 주요 인물 약력\n\
+         - [이름]: [학력], [주요 경력]",
+    ),
+    (
+        "obituary",
+        "# 부고 기사 양식\n\n\
+         ## 리드\n\
+         [분야]의 [업적/직함] [고인명] [직위]가 [일자] [사인]으로 별세했다. 향년 [나이]세.\n\n\
+         ## 약력\n\
+         [고인명] [직위]는 [출생년도] [출생지]에서 태어나 [학력], [주요 경력]을 거쳤다.\n\n\
+         ## 업적\n\
+         [주요 업적과 공헌 서술]\n\n\
+         ## 추모\n\
+         [주요 인사들의 추모 발언]\n\n\
+         ## 장례 안내\n\
+         - 빈소: [장소]\n\
+         - 발인: [일시]\n\
+         - 장지: [장소]\n\
+         - 유족: [배우자] [자녀] 등",
+    ),
+    (
+        "election",
+        "# 선거개표 기사 양식\n\n\
+         ## 리드\n\
+         [선거명] [일자] 투표가 실시된 가운데, [시간] 현재 개표율 [N]%에서 [후보명]([정당]) 후보가 [득표수]표([득표율]%)로 선두를 달리고 있다.\n\n\
+         ## 개표 현황\n\
+         | 순위 | 후보 | 정당 | 득표수 | 득표율 |\n\
+         |------|------|------|--------|--------|\n\
+         | 1 | | | | |\n\
+         | 2 | | | | |\n\n\
+         ## 투표율\n\
+         [최종/현재 투표율과 비교]\n\n\
+         ## 지역별 특이사항\n\
+         [지역별 개표 특이사항]\n\n\
+         ## 당선 확정 시\n\
+         [당선자 소감, 향후 일정 등]",
+    ),
+    (
+        "weather",
+        "# 날씨 기사 양식\n\n\
+         ## 리드\n\
+         [일자] [지역] 날씨는 [날씨 요약]. [기온/강수 등 핵심 정보].\n\n\
+         ## 오늘의 날씨\n\
+         - 서울/경기: [날씨], 기온 [최저]~[최고]도\n\
+         - 강원: [날씨], 기온 [최저]~[최고]도\n\
+         - 충청: [날씨], 기온 [최저]~[최고]도\n\
+         - 전라: [날씨], 기온 [최저]~[최고]도\n\
+         - 경상: [날씨], 기온 [최저]~[최고]도\n\
+         - 제주: [날씨], 기온 [최저]~[최고]도\n\n\
+         ## 특보/주의보\n\
+         [기상특보 현황]\n\n\
+         ## 주간 전망\n\
+         [향후 날씨 전망]\n\n\
+         ## 생활 정보\n\
+         - 미세먼지: [농도]\n\
+         - 자외선: [지수]\n\
+         - 빨래/우산: [권고사항]",
+    ),
+];
+
+/// Names of built-in templates.
+pub const BUILTIN_TEMPLATE_NAMES: &[&str] = &["earnings", "personnel", "obituary", "election", "weather"];
+
+/// Look up a template by name: built-in first, then user templates dir.
+/// Returns the template content if found.
+pub fn resolve_template(name: &str) -> Option<String> {
+    // Check built-in templates first
+    for (builtin_name, content) in BUILTIN_TEMPLATES {
+        if *builtin_name == name {
+            return Some(content.to_string());
+        }
+    }
+    // Check user templates
+    let path = template_path(name);
+    std::fs::read_to_string(path).ok()
+}
+
+/// Check if a template name is a built-in template.
+pub fn is_builtin_template(name: &str) -> bool {
+    BUILTIN_TEMPLATE_NAMES.contains(&name)
+}
+
 fn print_template_usage() {
     println!("{DIM}  사용법:");
     println!("    /template save <이름> [--file <경로>]   현재 초안 또는 지정 파일을 양식으로 저장");
-    println!("    /template list                         저장된 양식 목록");
+    println!("    /template list                         저장된 양식 목록 (내장 + 사용자)");
     println!("    /template show <이름>                   양식 내용 확인");
-    println!("    /template remove <이름>                 양식 삭제");
-    println!("    /template use <이름> <주제>             양식 기반 기사 작성{RESET}\n");
+    println!("    /template remove <이름>                 사용자 양식 삭제");
+    println!("    /template use <이름> <주제>             양식 기반 기사 작성");
+    println!();
+    println!("  내장 양식: earnings(분기실적), personnel(인사발령), obituary(부고),");
+    println!("             election(선거개표), weather(날씨){RESET}\n");
 }
 
 /// Parse `/template save` arguments: `<name> [--file <path>]`
@@ -4883,26 +5006,41 @@ fn handle_template_save(args: &str) {
 }
 
 fn handle_template_list() {
-    let templates = list_templates();
-    if templates.is_empty() {
-        println!("{DIM}  저장된 양식이 없습니다.{RESET}\n");
-        return;
-    }
-
     println!("{BOLD}  📋 양식 목록{RESET}");
     println!("{DIM}  ──────────────────────────────{RESET}");
-    for (name, path) in &templates {
-        let modified = std::fs::metadata(path)
-            .and_then(|m| m.modified())
-            .ok();
-        let date_str = modified
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| format_unix_timestamp(d.as_secs()))
-            .unwrap_or_else(|| "-".to_string());
-        let char_count = std::fs::read_to_string(path)
-            .map(|c| c.chars().count())
-            .unwrap_or(0);
-        println!("  {name}  ({date_str}, {char_count}자)");
+
+    // Built-in templates
+    println!("  {DIM}[내장]{RESET}");
+    for (name, content) in BUILTIN_TEMPLATES {
+        let char_count = content.chars().count();
+        let label = match *name {
+            "earnings" => "분기실적",
+            "personnel" => "인사발령",
+            "obituary" => "부고",
+            "election" => "선거개표",
+            "weather" => "날씨",
+            _ => "",
+        };
+        println!("  {name}  ({label}, {char_count}자)");
+    }
+
+    // User templates
+    let templates = list_templates();
+    if !templates.is_empty() {
+        println!("  {DIM}[사용자]{RESET}");
+        for (name, path) in &templates {
+            let modified = std::fs::metadata(path)
+                .and_then(|m| m.modified())
+                .ok();
+            let date_str = modified
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| format_unix_timestamp(d.as_secs()))
+                .unwrap_or_else(|| "-".to_string());
+            let char_count = std::fs::read_to_string(path)
+                .map(|c| c.chars().count())
+                .unwrap_or(0);
+            println!("  {name}  ({date_str}, {char_count}자)");
+        }
     }
     println!();
 }
@@ -4913,15 +5051,19 @@ fn handle_template_show(name: &str) {
         return;
     }
 
-    let path = template_path(name);
-    match std::fs::read_to_string(&path) {
-        Ok(content) => {
+    match resolve_template(name) {
+        Some(content) => {
             let char_count = content.chars().count();
-            println!("{BOLD}  📄 양식: {name} ({char_count}자){RESET}");
+            let tag = if is_builtin_template(name) {
+                " [내장]"
+            } else {
+                ""
+            };
+            println!("{BOLD}  📄 양식: {name}{tag} ({char_count}자){RESET}");
             println!("{DIM}  ──────────────────────────────{RESET}");
             println!("{content}");
         }
-        Err(_) => {
+        None => {
             eprintln!("{RED}  양식 '{name}'을(를) 찾을 수 없습니다.{RESET}\n");
         }
     }
@@ -4930,6 +5072,11 @@ fn handle_template_show(name: &str) {
 fn handle_template_remove(name: &str) {
     if name.is_empty() {
         eprintln!("{RED}  양식 이름을 지정하세요: /template remove <이름>{RESET}\n");
+        return;
+    }
+
+    if is_builtin_template(name) {
+        eprintln!("{RED}  내장 양식 '{name}'은(는) 삭제할 수 없습니다.{RESET}\n");
         return;
     }
 
@@ -4967,10 +5114,9 @@ pub async fn handle_template_use(
         return;
     }
 
-    let path = template_path(&name);
-    let template_content = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(_) => {
+    let template_content = match resolve_template(&name) {
+        Some(c) => c,
+        None => {
             eprintln!("{RED}  양식 '{name}'을(를) 찾을 수 없습니다.{RESET}\n");
             return;
         }
@@ -6728,5 +6874,86 @@ mod tests {
         assert!(TEMPLATE_SUBCOMMANDS.contains(&"show"));
         assert!(TEMPLATE_SUBCOMMANDS.contains(&"use"));
         assert!(TEMPLATE_SUBCOMMANDS.contains(&"remove"));
+    }
+
+    #[test]
+    fn builtin_templates_exist_all_five() {
+        assert_eq!(BUILTIN_TEMPLATES.len(), 5);
+        let names: Vec<&str> = BUILTIN_TEMPLATES.iter().map(|(n, _)| *n).collect();
+        assert!(names.contains(&"earnings"));
+        assert!(names.contains(&"personnel"));
+        assert!(names.contains(&"obituary"));
+        assert!(names.contains(&"election"));
+        assert!(names.contains(&"weather"));
+    }
+
+    #[test]
+    fn builtin_templates_have_content() {
+        for (name, content) in BUILTIN_TEMPLATES {
+            assert!(
+                !content.is_empty(),
+                "built-in template '{name}' should not be empty"
+            );
+            assert!(
+                content.contains("리드") || content.contains("#"),
+                "built-in template '{name}' should have structured content"
+            );
+        }
+    }
+
+    #[test]
+    fn builtin_template_earnings_has_table() {
+        let content = BUILTIN_TEMPLATES
+            .iter()
+            .find(|(n, _)| *n == "earnings")
+            .map(|(_, c)| *c)
+            .unwrap();
+        assert!(content.contains("매출"));
+        assert!(content.contains("영업이익"));
+        assert!(content.contains("전망"));
+    }
+
+    #[test]
+    fn builtin_template_personnel_has_sections() {
+        let content = BUILTIN_TEMPLATES
+            .iter()
+            .find(|(n, _)| *n == "personnel")
+            .map(|(_, c)| *c)
+            .unwrap();
+        assert!(content.contains("승진"));
+        assert!(content.contains("전보"));
+        assert!(content.contains("약력"));
+    }
+
+    #[test]
+    fn is_builtin_template_check() {
+        assert!(is_builtin_template("earnings"));
+        assert!(is_builtin_template("weather"));
+        assert!(!is_builtin_template("my_custom"));
+        assert!(!is_builtin_template(""));
+    }
+
+    #[test]
+    fn resolve_template_finds_builtin() {
+        let content = resolve_template("earnings");
+        assert!(content.is_some());
+        assert!(content.unwrap().contains("매출"));
+    }
+
+    #[test]
+    fn resolve_template_returns_none_for_missing() {
+        let content = resolve_template("nonexistent_template_xyz");
+        assert!(content.is_none());
+    }
+
+    #[test]
+    fn builtin_template_names_matches_templates() {
+        assert_eq!(BUILTIN_TEMPLATE_NAMES.len(), BUILTIN_TEMPLATES.len());
+        for (name, _) in BUILTIN_TEMPLATES {
+            assert!(
+                BUILTIN_TEMPLATE_NAMES.contains(name),
+                "BUILTIN_TEMPLATE_NAMES missing '{name}'"
+            );
+        }
     }
 }

@@ -1420,3 +1420,14 @@ Day 5 16:00 세션 계획 요약:
 - 12개 테스트 추가, 모두 통과
 
   ── Task 3 / 4 ──
+완료. `/template` 커맨드 구현:
+
+- **`save <이름> [--file <경로>]`** — 최신 초안 또는 지정 파일을 `.journalist/templates/<이름>.md`로 저장
+- **`list`** — 저장된 양식 목록 (날짜, 글자 수 포함)
+- **`show <이름>`** — 양식 내용 확인
+- **`remove <이름>`** — 양식 삭제
+- **`use <이름> <주제>`** — 양식 구조 + 주제를 AI에 전달하여 기사 작성, 결과를 초안으로 저장
+
+파일 변경: `src/commands_writing.rs` (핸들러 + 테스트 10개), `src/commands.rs` (KNOWN_COMMANDS, 탭완성, re-export), `src/repl.rs` (디스패치). 빌드·테스트 67개 모두 통과.
+
+  ── Task 4 / 4 ──
