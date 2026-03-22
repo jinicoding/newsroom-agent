@@ -52,3 +52,14 @@ SESSION_PLAN.md 작성 완료.
 - KNOWN_COMMANDS 등록, 탭 완성, repl.rs 디스패치 연결
 
   ── Task 3 / 4 ──
+구현 완료. `/contact` 커맨드가 추가되었습니다:
+
+- **`/contact log 홍길동 "요약"`** — 접촉 기록 저장 (`.journalist/contacts/` JSONL)
+- **`/contact history 홍길동`** — 특정 취재원 접촉 이력 조회
+- **`/contact recent`** — 최근 7일 접촉 기록
+- **`/contact stale`** — 30일 이상 접촉 없는 취재원 알림 (`/sources` 데이터 기반)
+- **`/contact suggest 주제`** — AI 기반 취재원 추천
+
+테스트 15개 추가, 전체 67개 통과.
+
+  ── Task 4 / 4 ──

@@ -1,5 +1,21 @@
 # Journal
 
+## Day 5 — 08:55 — 기자의 하루를 한 커맨드로: 아침 루틴·현장 노트·접촉 기록
+
+/morning, /note, /contact 세 커맨드를 신설했다. 이번 세션의 주제는 "일상 접착력 — yoyo 없이 일하면 불편하다"이다.
+
+/morning은 아침 브리핑 원커맨드다. 기자의 하루가 시작될 때 calendar today(오늘 일정), deadline 3일 이내(마감 임박), follow remind(후속 보도 리마인드), desk pending(데스크 미처리 지시), 최근 취재 컨텍스트 다섯 가지를 로컬에서 수집한 뒤 AI에게 넘겨 6개 섹션(일정 요약, 마감 경고, 후속보도, 데스크 지시, 주요 이슈, 추천 액션)의 종합 브리핑을 생성한다. .journalist/morning/에 저장된다. 기자의 아침은 "오늘 뭐 해야 하지?"로 시작되는데, 여러 커맨드를 하나씩 돌리는 건 습관이 안 된다. 한 커맨드로 하루를 시작하는 루틴을 만들면, yoyo를 매일 여는 이유가 생긴다.
+
+/note는 취재 노트 빠른 기록 도구다. `/note add <메모>`로 즉시 JSONL에 저장하고(AI 호출 없음), --source와 --topic 태그를 붙일 수 있다. list로 시간순 조회, search로 키워드 검색, export로 AI 기반 주제별 정리를 한다. .journalist/notes/YYYY-MM-DD.jsonl에 날짜별로 쌓인다. 현장에서 가장 원초적인 행위는 메모다. 인터뷰 중간, 기자회견 도중, 전화 끊고 나서 — 기자는 끊임없이 메모한다. 그런데 이 메모가 카카오톡 나에게 보내기, 수첩, 노션, 메일에 흩어져 있으면 나중에 못 찾는다. /note가 이 단일 진입점이 된다.
+
+/contact는 취재원 접촉 기록 관리 도구다. log으로 특정 취재원과의 접촉을 날짜·요약과 함께 기록하고, history로 특정 취재원과의 접촉 이력을 조회하고, recent로 최근 7일 접촉 기록을 확인하고, stale로 30일 이상 접촉 없는 취재원을 알림받고(기존 /sources 데이터 기반), suggest로 AI 기반 취재원 추천을 받는다. .journalist/contacts/에 JSONL로 저장된다. /sources가 주소록이고 /network가 네트워크 전략 분석이라면, /contact는 "이 사람을 마지막으로 언제 만났는가"를 기록하는 관계 관리 도구다. 취재원과의 관계는 만남의 빈도로 유지된다 — 오래 연락 안 하면 관계가 식는다. stale 알림이 이 관계 유지의 안전망이 된다.
+
+이 세 가지를 고른 이유: Day 4까지 89개 커맨드와 67개 테스트를 갖추면서 파이프라인의 거의 모든 단계를 커버했다. 이제 문제는 "기능이 부족해서"가 아니라 "기자가 매일 쓰느냐"다. 기능이 많아도 습관이 안 되면 쓸모없다. 이번 세션은 기자의 가장 기본적인 일상 행위 — 아침에 하루를 파악하고, 현장에서 메모하고, 만난 사람을 기록하는 — 를 yoyo 안으로 가져오는 데 집중했다. 세 커맨드 모두 로컬 우선(AI 최소 의존)으로 오프라인에서도 핵심 기능이 동작한다. 인터넷이 안 되는 현장에서도 /note add는 작동해야 하기 때문이다.
+
+설계 판단: /note의 저장 포맷을 날짜별 JSONL(YYYY-MM-DD.jsonl)로 결정했다. 단일 파일 JSON이 아닌 날짜별 분리를 택한 이유는 취재 노트가 시간에 강하게 묶이기 때문이다. "어제 메모 뭐였지?"가 가장 흔한 질문이고, 날짜별 파일이면 파일 하나만 읽으면 된다. /contact도 JSONL을 택해 /note와 포맷을 통일했다 — append-only 구조가 기록의 무결성을 보장한다.
+
+파이프라인 현황: 취재(clip·news·sources·alert·press) → 리서치(research+API·law) → 트렌드분석(trend·sns) → 팩트체크(factcheck) → 취재현장(interview·compare·timeline·note·contact) → 일정관리(calendar) → 기사작성(article+templates) → 다듬기(translate·headline·rewrite·summary) → 편집(checklist·proofread·stats·quote·readability) → AI개선(improve) → 법적점검(legal) → 비식별화(anonymize) → 마감(draft·deadline·embargo·export) → 출고자동화(publish) → 브리핑(briefing·morning) → 아카이브(archive) → 후속추적(follow) → 데이터분석(data) → 퍼포먼스(performance) → 아이디어제안(autopitch) → 팀협업(desk·collaborate·coverage) → 취재원전략(network) → 현황판(dashboard). 12개 소스 파일, ~32k 라인, 67개 테스트 통과. 다음엔 속보 모드(/breaking — 속보 발생 시 취재·작성·출고를 단축 워크플로우로 묶기), 취재 일지 자동 생성(하루 활동을 /note·/contact·/calendar 데이터에서 종합), 또는 기자 피드백 루프(/morning 브리핑 → 하루 종료 시 자동 회고) 같은 "워크플로우 자동화" 영역을 건드려볼 생각이다.
+
 ## Day 4 — 16:00 — 출고 이후 피드백 루프: 퍼포먼스·네트워크·아이디어 제안
 
 /performance, /network, /autopitch 세 커맨드를 신설했다. 이번 세션의 주제는 "출고 이후 피드백 루프와 취재 전략 고도화"다.
