@@ -40,3 +40,15 @@ SESSION_PLAN.md 작성 완료.
 - 테스트 3개 추가 (상수, 빈 데이터 graceful 처리, 프롬프트 구성 검증)
 
   ── Task 2 / 4 ──
+완료. `/note` 커맨드를 구현하고 커밋했습니다.
+
+**구현 내용:**
+- `/note add <메모>` — 즉시 JSONL 저장 (AI 호출 없음), `--source`/`--topic` 태그 지원
+- `/note list` — 전체 시간순, `--topic` 필터링
+- `/note search <키워드>` — content/source/topic 전체 검색
+- `/note export <주제>` — AI 기반 주제별 노트 정리
+- `.journalist/notes/YYYY-MM-DD.jsonl` 날짜별 저장
+- 14개 테스트 (JSONL 직렬화, CRUD, 태그 필터, 검색, 날짜별 로드 등)
+- KNOWN_COMMANDS 등록, 탭 완성, repl.rs 디스패치 연결
+
+  ── Task 3 / 4 ──

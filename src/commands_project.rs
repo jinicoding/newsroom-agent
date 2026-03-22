@@ -12207,6 +12207,373 @@ fn handle_note_export(topic: &str) -> String {
     )
 }
 
+// ── /contact — 취재원 접촉 기록 관리 ─────────────────────────────────────
+
+const CONTACTS_DIR: &str = ".journalist/contacts";
+
+/// A single contact log entry stored as one JSONL line.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+struct ContactLog {
+    name: String,
+    summary: String,
+    timestamp: String,
+}
+
+fn contacts_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(CONTACTS_DIR)
+}
+
+/// Return the JSONL file path for a given source name.
+fn contact_file_for(name: &str) -> std::path::PathBuf {
+    // Sanitize name for filesystem: replace spaces/special chars
+    let safe_name: String = name
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .collect();
+    contacts_dir().join(format!("{safe_name}.jsonl"))
+}
+
+fn append_contact_log(log: &ContactLog, path: &std::path::Path) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string(log) {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let _ = writeln!(f, "{json}");
+        }
+    }
+}
+
+fn load_contact_logs_from(path: &std::path::Path) -> Vec<ContactLog> {
+    if !path.exists() {
+        return Vec::new();
+    }
+    match std::fs::read_to_string(path) {
+        Ok(content) => content
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Load all contact logs from all files in the contacts directory.
+fn load_all_contact_logs() -> Vec<ContactLog> {
+    let dir = contacts_dir();
+    if !dir.exists() {
+        return Vec::new();
+    }
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "jsonl"))
+        .collect();
+    files.sort();
+    let mut all = Vec::new();
+    for f in &files {
+        all.extend(load_contact_logs_from(f));
+    }
+    all
+}
+
+/// Parse the timestamp string into seconds since epoch (approximate, for comparison).
+fn parse_timestamp_secs(ts: &str) -> Option<u64> {
+    // Expected format: "YYYY-MM-DDTHH:MM:SS" or similar
+    let ts = ts.replace('T', " ");
+    let parts: Vec<&str> = ts.split(|c: char| !c.is_ascii_digit()).collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    let year: u64 = parts[0].parse().ok()?;
+    let month: u64 = parts[1].parse().ok()?;
+    let day: u64 = parts[2].parse().ok()?;
+    let hour: u64 = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let min: u64 = parts.get(4).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let sec: u64 = parts.get(5).and_then(|s| s.parse().ok()).unwrap_or(0);
+
+    // Simple days-since-epoch calculation (not perfectly accurate but sufficient for comparison)
+    let mut days: u64 = 0;
+    for y in 1970..year {
+        days += if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+            366
+        } else {
+            365
+        };
+    }
+    let month_days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let is_leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    for m in 0..(month.saturating_sub(1) as usize) {
+        days += month_days.get(m).copied().unwrap_or(30) as u64;
+        if m == 1 && is_leap {
+            days += 1;
+        }
+    }
+    days += day.saturating_sub(1);
+    Some(days * 86400 + hour * 3600 + min * 60 + sec)
+}
+
+fn current_timestamp_string() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let date = format_unix_timestamp(secs);
+    date.replace(' ', "T") + ":00"
+}
+
+fn current_epoch_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// Handle the /contact command: manage source contact history.
+/// Returns Some(prompt) when AI processing is needed (suggest subcommand).
+pub fn handle_contact(input: &str) -> Option<String> {
+    let args = input.strip_prefix("/contact").unwrap_or("").trim();
+
+    if args.is_empty() || args == "help" || args == "--help" {
+        print_contact_usage();
+        return None;
+    }
+
+    let (sub, rest) = match args.split_once(char::is_whitespace) {
+        Some((s, r)) => (s, r.trim()),
+        None => (args, ""),
+    };
+
+    match sub {
+        "log" => {
+            contact_log(rest);
+            None
+        }
+        "history" => {
+            contact_history(rest);
+            None
+        }
+        "recent" => {
+            contact_recent();
+            None
+        }
+        "stale" => {
+            contact_stale();
+            None
+        }
+        "suggest" => Some(contact_suggest_prompt(rest)),
+        _ => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {sub}{RESET}");
+            print_contact_usage();
+            None
+        }
+    }
+}
+
+fn print_contact_usage() {
+    println!("{DIM}  사용법:");
+    println!("    /contact log <이름> \"<요약>\"                     접촉 기록 저장");
+    println!("    /contact history <이름>                          특정 취재원 접촉 이력 조회");
+    println!("    /contact recent                                 최근 7일 접촉 기록");
+    println!("    /contact stale                                  30일 이상 접촉 없는 취재원");
+    println!("    /contact suggest <주제>                          주제별 취재원 추천 (AI){RESET}\n");
+}
+
+fn contact_log(args: &str) {
+    if args.is_empty() {
+        eprintln!("{RED}  사용법: /contact log <이름> \"<요약>\"{RESET}\n");
+        return;
+    }
+
+    let (name, summary) = parse_contact_log_args(args);
+    if name.is_empty() || summary.is_empty() {
+        eprintln!("{RED}  이름과 요약 내용이 필요합니다.{RESET}");
+        eprintln!("{DIM}  예시: /contact log 홍길동 \"반도체 신규 투자 관련 전화 인터뷰\"{RESET}\n");
+        return;
+    }
+
+    let log = ContactLog {
+        name: name.clone(),
+        summary: summary.clone(),
+        timestamp: current_timestamp_string(),
+    };
+
+    let path = contact_file_for(&name);
+    append_contact_log(&log, &path);
+    println!("{GREEN}  📞 접촉 기록 저장: {name} — {summary}{RESET}\n");
+}
+
+/// Parse `/contact log` args: first word is name, rest is summary (optionally quoted).
+fn parse_contact_log_args(args: &str) -> (String, String) {
+    let args = args.trim();
+    if args.is_empty() {
+        return (String::new(), String::new());
+    }
+    let (name, rest) = match args.split_once(char::is_whitespace) {
+        Some((n, r)) => (n.to_string(), r.trim().to_string()),
+        None => (args.to_string(), String::new()),
+    };
+    // Strip surrounding quotes from summary
+    let summary = rest
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string();
+    (name, summary)
+}
+
+fn contact_history(name: &str) {
+    if name.is_empty() {
+        eprintln!("{RED}  이름을 지정하세요: /contact history <이름>{RESET}\n");
+        return;
+    }
+    let path = contact_file_for(name);
+    let logs = load_contact_logs_from(&path);
+    if logs.is_empty() {
+        println!("{DIM}  \"{name}\"의 접촉 기록이 없습니다.{RESET}\n");
+        return;
+    }
+    println!("{DIM}  ── {name} 접촉 이력 ({} 건) ──", logs.len());
+    for log in &logs {
+        println!("  [{}] {}", log.timestamp, log.summary);
+    }
+    println!("{RESET}");
+}
+
+fn contact_recent() {
+    let now_secs = current_epoch_secs();
+    let seven_days = 7 * 86400;
+    let cutoff = now_secs.saturating_sub(seven_days);
+
+    let all = load_all_contact_logs();
+    let recent: Vec<&ContactLog> = all
+        .iter()
+        .filter(|log| {
+            parse_timestamp_secs(&log.timestamp)
+                .map(|ts| ts >= cutoff)
+                .unwrap_or(false)
+        })
+        .collect();
+
+    if recent.is_empty() {
+        println!("{DIM}  최근 7일간 접촉 기록이 없습니다.{RESET}\n");
+        return;
+    }
+    println!("{DIM}  ── 최근 7일 접촉 기록 ({} 건) ──", recent.len());
+    for log in &recent {
+        println!("  [{}] {} — {}", log.timestamp, log.name, log.summary);
+    }
+    println!("{RESET}");
+}
+
+fn contact_stale() {
+    let sources = load_sources();
+    if sources.is_empty() {
+        println!("{DIM}  취재원 DB가 비어 있습니다. /sources add 로 등록하세요.{RESET}\n");
+        return;
+    }
+
+    let now_secs = current_epoch_secs();
+    let thirty_days = 30 * 86400;
+    let cutoff = now_secs.saturating_sub(thirty_days);
+
+    let mut stale_sources = Vec::new();
+    for source in &sources {
+        let name = source["name"].as_str().unwrap_or("");
+        if name.is_empty() {
+            continue;
+        }
+        let path = contact_file_for(name);
+        let logs = load_contact_logs_from(&path);
+        let last_contact = logs
+            .iter()
+            .filter_map(|l| parse_timestamp_secs(&l.timestamp))
+            .max();
+        let is_stale = match last_contact {
+            Some(ts) => ts < cutoff,
+            None => true, // Never contacted
+        };
+        if is_stale {
+            let org = source["org"].as_str().unwrap_or("");
+            let days_since = last_contact
+                .map(|ts| ((now_secs.saturating_sub(ts)) / 86400).to_string() + "일 전")
+                .unwrap_or_else(|| "접촉 기록 없음".to_string());
+            stale_sources.push((name.to_string(), org.to_string(), days_since));
+        }
+    }
+
+    if stale_sources.is_empty() {
+        println!("{DIM}  모든 취재원과 최근 30일 내에 접촉한 기록이 있습니다. 👍{RESET}\n");
+        return;
+    }
+
+    println!(
+        "{DIM}  ── 30일 이상 접촉 없는 취재원 ({} 명) ──",
+        stale_sources.len()
+    );
+    for (name, org, since) in &stale_sources {
+        println!("  ⚠ {name} ({org}) — 마지막 접촉: {since}");
+    }
+    println!("{RESET}");
+}
+
+/// Build a prompt for AI-powered source suggestion based on topic.
+fn contact_suggest_prompt(topic: &str) -> String {
+    if topic.is_empty() {
+        eprintln!("{RED}  주제를 지정하세요: /contact suggest <주제>{RESET}\n");
+        return String::new();
+    }
+
+    let sources = load_sources();
+    let mut sources_summary = String::new();
+    if sources.is_empty() {
+        sources_summary.push_str("(등록된 취재원 없음)\n");
+    } else {
+        for s in &sources {
+            let name = s["name"].as_str().unwrap_or("?");
+            let org = s["org"].as_str().unwrap_or("");
+            let beat = s["beat"].as_str().unwrap_or("");
+            let note = s["note"].as_str().unwrap_or("");
+            sources_summary.push_str(&format!("- {name} | {org} | beat: {beat} | {note}\n"));
+        }
+    }
+
+    // Also include recent contact logs for context
+    let all_logs = load_all_contact_logs();
+    let mut recent_context = String::new();
+    let recent_logs: Vec<&ContactLog> = all_logs.iter().rev().take(20).collect();
+    if recent_logs.is_empty() {
+        recent_context.push_str("(최근 접촉 기록 없음)\n");
+    } else {
+        for log in &recent_logs {
+            recent_context.push_str(&format!(
+                "- {} [{}]: {}\n",
+                log.name, log.timestamp, log.summary
+            ));
+        }
+    }
+
+    format!(
+        "다음 주제에 대해 취재할 때 연락할 만한 취재원을 추천해주세요.\n\n\
+         ## 취재 주제\n{topic}\n\n\
+         ## 현재 보유 취재원\n{sources_summary}\n\
+         ## 최근 접촉 이력\n{recent_context}\n\
+         ## 요청사항:\n\
+         1. 현재 취재원 중 이 주제에 연락할 만한 사람 우선 추천\n\
+         2. 보유하고 있지 않다면 어떤 유형의 취재원이 필요한지 제안\n\
+         3. 접근 전략 (어떻게 연결할 수 있는지)\n\
+         4. 인터뷰 시 핵심 질문 3개\n\n\
+         한국어로 답변하세요. 구체적이고 실용적인 제안을 해주세요."
+    )
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -17189,5 +17556,172 @@ mod tests {
             KNOWN_COMMANDS.contains(&"/note"),
             "/note should be in KNOWN_COMMANDS"
         );
+    }
+
+    // ── /contact tests ──
+
+    #[test]
+    fn contact_command_in_known_commands() {
+        use crate::commands::KNOWN_COMMANDS;
+        assert!(
+            KNOWN_COMMANDS.contains(&"/contact"),
+            "/contact should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn contact_log_struct_jsonl_roundtrip() {
+        let log = ContactLog {
+            name: "홍길동".to_string(),
+            summary: "반도체 신규 투자 관련 전화 인터뷰".to_string(),
+            timestamp: "2026-03-22T10:00:00".to_string(),
+        };
+        let json = serde_json::to_string(&log).unwrap();
+        let parsed: ContactLog = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.name, "홍길동");
+        assert_eq!(parsed.summary, "반도체 신규 투자 관련 전화 인터뷰");
+        assert_eq!(parsed.timestamp, "2026-03-22T10:00:00");
+    }
+
+    #[test]
+    fn contact_file_for_sanitizes_name() {
+        let path = contact_file_for("홍길동");
+        assert!(path.to_str().unwrap().ends_with(".jsonl"));
+        assert!(path.starts_with(CONTACTS_DIR));
+
+        // Spaces become underscores
+        let path2 = contact_file_for("홍 길동");
+        assert!(path2.to_str().unwrap().contains('_'));
+    }
+
+    #[test]
+    fn parse_contact_log_args_basic() {
+        let (name, summary) = parse_contact_log_args("홍길동 \"반도체 관련 통화\"");
+        assert_eq!(name, "홍길동");
+        assert_eq!(summary, "반도체 관련 통화");
+    }
+
+    #[test]
+    fn parse_contact_log_args_no_quotes() {
+        let (name, summary) = parse_contact_log_args("홍길동 반도체 관련 통화");
+        assert_eq!(name, "홍길동");
+        assert_eq!(summary, "반도체 관련 통화");
+    }
+
+    #[test]
+    fn parse_contact_log_args_empty() {
+        let (name, summary) = parse_contact_log_args("");
+        assert!(name.is_empty());
+        assert!(summary.is_empty());
+    }
+
+    #[test]
+    fn parse_contact_log_args_name_only() {
+        let (name, summary) = parse_contact_log_args("홍길동");
+        assert_eq!(name, "홍길동");
+        assert!(summary.is_empty());
+    }
+
+    #[test]
+    fn contact_log_append_and_load() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("test.jsonl");
+
+        let log1 = ContactLog {
+            name: "홍길동".to_string(),
+            summary: "첫 번째 접촉".to_string(),
+            timestamp: "2026-03-20T10:00:00".to_string(),
+        };
+        let log2 = ContactLog {
+            name: "홍길동".to_string(),
+            summary: "두 번째 접촉".to_string(),
+            timestamp: "2026-03-21T14:00:00".to_string(),
+        };
+
+        append_contact_log(&log1, &path);
+        append_contact_log(&log2, &path);
+
+        let loaded = load_contact_logs_from(&path);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].summary, "첫 번째 접촉");
+        assert_eq!(loaded[1].summary, "두 번째 접촉");
+    }
+
+    #[test]
+    fn load_contact_logs_from_nonexistent() {
+        let path = std::path::Path::new("/tmp/nonexistent_contact_test.jsonl");
+        let logs = load_contact_logs_from(path);
+        assert!(logs.is_empty());
+    }
+
+    #[test]
+    fn parse_timestamp_secs_valid() {
+        let secs = parse_timestamp_secs("2026-03-22T10:00:00");
+        assert!(secs.is_some());
+        let secs = secs.unwrap();
+        // 2026-03-22 should be roughly 56 years * 365.25 days * 86400 secs
+        assert!(secs > 1_700_000_000); // sanity check: after 2023
+    }
+
+    #[test]
+    fn parse_timestamp_secs_invalid() {
+        assert!(parse_timestamp_secs("").is_none());
+        assert!(parse_timestamp_secs("abc").is_none());
+    }
+
+    #[test]
+    fn stale_detection_no_logs() {
+        // A source with no contact logs should be stale
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("nobody.jsonl");
+        let logs = load_contact_logs_from(&path);
+        let last = logs
+            .iter()
+            .filter_map(|l| parse_timestamp_secs(&l.timestamp))
+            .max();
+        assert!(last.is_none()); // Never contacted = stale
+    }
+
+    #[test]
+    fn stale_detection_old_log() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("old.jsonl");
+
+        let log = ContactLog {
+            name: "테스트".to_string(),
+            summary: "오래된 접촉".to_string(),
+            timestamp: "2025-01-01T10:00:00".to_string(),
+        };
+        append_contact_log(&log, &path);
+
+        let logs = load_contact_logs_from(&path);
+        let last = logs
+            .iter()
+            .filter_map(|l| parse_timestamp_secs(&l.timestamp))
+            .max()
+            .unwrap();
+
+        let now_secs = current_epoch_secs();
+        let thirty_days = 30 * 86400;
+        assert!(last < now_secs.saturating_sub(thirty_days));
+    }
+
+    #[test]
+    fn contact_suggest_prompt_contains_topic() {
+        let prompt = contact_suggest_prompt("반도체 수출규제");
+        assert!(prompt.contains("반도체 수출규제"));
+        assert!(prompt.contains("취재원"));
+        assert!(prompt.contains("인터뷰"));
+    }
+
+    #[test]
+    fn contact_suggest_prompt_empty_topic() {
+        let prompt = contact_suggest_prompt("");
+        assert!(prompt.is_empty());
+    }
+
+    #[test]
+    fn contacts_dir_constant() {
+        assert_eq!(CONTACTS_DIR, ".journalist/contacts");
     }
 }

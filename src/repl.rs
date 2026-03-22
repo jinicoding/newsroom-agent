@@ -791,6 +791,15 @@ pub async fn run_repl(
                 }
                 continue;
             }
+            s if s == "/contact" || s.starts_with("/contact ") => {
+                if let Some(prompt) = commands::handle_contact(input) {
+                    if !prompt.is_empty() {
+                        run_prompt(agent, &prompt, &mut session_total, &agent_config.model).await;
+                        auto_compact_if_needed(agent);
+                    }
+                }
+                continue;
+            }
             s if s.starts_with('/') && is_unknown_command(s) => {
                 let cmd = s.split_whitespace().next().unwrap_or(s);
                 eprintln!("{RED}  unknown command: {cmd}{RESET}");
