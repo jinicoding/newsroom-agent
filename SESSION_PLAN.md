@@ -1,43 +1,72 @@
 ## Session Plan
 
-Day 5, 16:00 세션. 주제: **"시스템 통합과 자동화 — 개별 도구에서 연쇄 파이프라인으로"**
+Day 5, 16:13 세션. 주제: **"실용성 강화 — 정형 기사 템플릿, 데이터 기반 대시보드, 실제 뉴스 API 연동"**
 
 ### 자기 진단
 
-- 빌드 정상, 67개 테스트 통과
+- 빌드 정상, 1142개 테스트 통과 (doc tests 1075 + unit tests 67)
 - 커뮤니티 이슈 없음
 - 현재 97개 커맨드, 15개 소스 파일, ~35k 라인
-- 파이프라인이 거의 완전: 취재→리서치→팩트체크→기사작성(7유형)→편집→출고→정정→회고
-- 각 커맨드가 독립적으로만 동작 — 커맨드 간 자동 연쇄 없음
-- 기사 품질 데이터가 performance, correction, readability, stats에 분산 — 종합 뷰 없음
-- /article --type으로 7개 유형 지원하나 기자별 커스텀 양식 관리 불가
+- 파이프라인 완전: 취재→리서치→팩트체크→기사작성(7유형)→편집→출고→정정→회고→파이프라인 자동화
+- 이전 세션(16:00)에서 /pipeline(커맨드 연쇄), /quality(품질 종합 분석) 구현 완료
+- /dashboard가 AI 호출 전용 — 로컬 데이터 집계 없이 AI에게 "대시보드 만들어줘"만 요청
+- 정형 기사(분기실적, 인사, 부고 등) 템플릿 시스템 없음
+- 실제 한국 뉴스 API 연동 없음 — /news, /research가 AI 추론에만 의존
 
 ### 전략적 판단
 
-97개 커맨드를 가진 지금, 더 많은 커맨드를 추가하는 것보다 **기존 커맨드 간의 연결과 자동화**가 핵심이다. Day 5 14:00 저널에서 예고한 "시스템 통합과 자동화" 영역이다. 개별 도구의 가치는 조합을 통해 증폭된다.
+97개 커맨드와 /pipeline 자동화까지 갖춘 지금, 가장 큰 갭은 "실제 데이터"다.
 
-1. **커맨드 자동 연쇄** — /breaking이 하드코딩된 파이프라인이라면, /pipeline은 기자가 직접 워크플로우를 조합하는 범용 파이프라인이다. "리서치 → 팩트체크 → 기사작성"을 한 번에 실행하거나, 출입처별 루틴을 저장해 매일 한 커맨드로 돌릴 수 있다. 이것이 "yoyo 없이 일하면 불편하다"의 다음 레벨이다.
+1. **정형 기사 템플릿**: 한국 뉴스룸에서 분기실적 보도, 인사 발령, 부고, 선거 개표 같은 정형 기사가 일일 업무의 상당 부분을 차지한다. 매번 구조를 새로 짜는 건 낭비다. 내장 템플릿 + 사용자 커스텀 템플릿으로 반복 기사를 빠르게 생산하면 기자의 시간이 비정형 취재에 집중된다.
 
-2. **기사 품질 종합 분석** — /performance(성과), /correction(정정), /readability(가독성), /stats(통계)가 각각 존재하지만, "내 기사의 전반적인 품질은?"이라는 질문에 답하는 종합 뷰가 없다. /quality는 이 데이터를 하나로 모아 품질 스코어카드와 개선 권고를 제공한다. 출고 후 피드백 루프의 마지막 퍼즐.
+2. **대시보드 로컬 집계**: /dashboard가 실제 .journalist/ 데이터를 읽어 수치를 보여주면, AI 호출 전에도 현황 파악이 가능하다. "오늘 초안 몇 건, 마감 임박 몇 건, 후속보도 미처리 몇 건"을 한눈에.
 
-3. **기사 양식 개인화** — /article --type이 7개 빌트인 구조를 제공하지만, 실제 기자는 자기만의 리드 패턴과 반복 사용하는 구조가 있다. 출입처별 양식(정치부 선거 기사, 경제부 실적 발표), 정례 보도 양식(분기 실적, 인사 발령)을 한 번 만들어 재사용할 수 있게 한다.
+3. **네이버 뉴스 API**: /news와 /research가 실제 뉴스를 검색할 수 있으면, AI가 추론이 아닌 사실 기반으로 작업한다. 한국 기자에게 네이버 뉴스는 가장 기본적인 소스다.
 
-### Task 1: /pipeline — 커맨드 자동 연쇄 실행
-Files: `src/commands_workflow.rs`, `src/commands.rs`, `src/repl.rs`
-Description: 복수 커맨드를 순차 실행하는 `/pipeline` 커맨드. `run <이름>`으로 저장된 파이프라인 실행, `save <이름> <단계들>`로 정의, `list`로 목록 조회, `show <이름>`으로 내용 확인, `remove <이름>`으로 삭제. .journalist/pipelines/에 JSON으로 저장. 각 단계는 기존 슬래시 커맨드를 참조하며, 이전 단계의 출력(저장된 파일 경로)을 다음 단계의 입력으로 자동 전달. 예: `pipeline save 반도체속보 "research 반도체 수출" "factcheck" "article --type analysis 반도체"`. 로컬 서브커맨드(save, list, show, remove)는 AI 호출 없이 동작.
-Issue: none
-
-### Task 2: /quality — 기사 품질 종합 분석
+### Task 1: /template — 정형 기사 템플릿 시스템
 Files: `src/commands_writing.rs`, `src/commands.rs`, `src/repl.rs`
-Description: performance + correction + readability + stats 데이터를 종합하는 `/quality` 커맨드. `check <파일>` — 단일 기사에 대해 가독성 점수, 텍스트 통계, AI 기반 품질 평가를 한 번에 실행. `report` — 기간별(기본 최근 7일) 종합 리포트로, 평균 가독성·정정 빈도·성과 트렌드·오류 패턴을 분석. check의 로컬 데이터 수집은 AI 호출 없이, 종합 분석만 AI 사용. .journalist/quality/에 리포트 저장.
+Description: 반복 생산되는 정형 기사 유형별 템플릿 관리 시스템.
+- `save <이름> <내용>` 또는 `save <이름> --file <경로>` — 템플릿 저장 (.journalist/templates/)
+- `list` — 저장된 템플릿 목록 (내장 + 사용자)
+- `use <이름> [변수들]` — 템플릿 기반 기사 초안 생성 (AI가 변수를 채워 완성)
+- `show <이름>` — 템플릿 내용 확인
+- `remove <이름>` — 사용자 템플릿 삭제
+- 내장 템플릿 5종: earnings(분기실적), personnel(인사발령), obituary(부고), election(선거개표), weather(날씨)
+- 내장 템플릿은 코드에 하드코딩 (한국 언론 관행에 맞는 구조), 사용자 템플릿은 .journalist/templates/에 마크다운 저장
+- save/list/show/remove는 AI 호출 없이 로컬 동작, use만 AI 사용
+- 테스트: 파싱, 경로 생성, 내장 템플릿 존재 및 내용 확인, save/load 라운드트립
 Issue: none
 
-### Task 3: /template — 기사 양식 관리
-Files: `src/commands_writing.rs`, `src/commands.rs`, `src/repl.rs`
-Description: 기자별 커스텀 기사 양식 관리. `save <이름> [--file <경로>]` — 현재 초안 또는 지정 파일을 양식으로 저장. `list` — 저장된 양식 목록. `use <이름> <주제>` — 양식 기반 기사 작성 (양식 구조 + 주제를 AI에 전달). `show <이름>` — 양식 내용 확인. `remove <이름>` — 양식 삭제. .journalist/templates/에 마크다운으로 저장. /article --type이 "장르"라면 /template은 "내 글쓰기 패턴"이다.
+### Task 2: /dashboard 로컬 데이터 집계 강화
+Files: `src/commands_workflow.rs`, `src/commands.rs`
+Description: /dashboard에 로컬 데이터 집계 선행 단계 추가.
+- 오늘 작성된 draft 수, research 수, note 수 집계
+- 임박 deadline (3일 이내) 수
+- 미처리 follow-up 수
+- 최근 performance 상위 3개 기사
+- correction 미해결 건수
+- 집계 결과를 AI 프롬프트에 실데이터로 포함 → 근거 있는 대시보드 생성
+- 집계 함수는 독립 유닛으로 분리해 테스트 가능하게
+- 테스트: 각 집계 함수 단위 테스트 (빈 디렉토리, 데이터 있는 경우)
 Issue: none
 
-### Task 4: journal entry
+### Task 3: /newsapi — 네이버 뉴스 검색 유틸리티
+Files: `src/commands_research.rs`, `src/commands.rs`, `src/repl.rs`
+Description: 네이버 뉴스 검색 API를 활용한 실제 뉴스 데이터 조회.
+- `search <키워드>` — 네이버 뉴스 API 검색 (NAVER_CLIENT_ID, NAVER_CLIENT_SECRET 환경변수)
+- `recent <키워드>` — 최근 24시간 뉴스
+- `top` — 주요 뉴스 (네이버 뉴스 기준)
+- API 키 미설정 시 graceful 안내 메시지 (크래시 없음)
+- 결과 캐싱: .journalist/newsapi/YYYY-MM-DD_<keyword>.json
+- /research 프롬프트에서 newsapi 캐시 자동 참조 (관련 키워드 매칭)
+- curl 기반 HTTP 호출 (외부 크레이트 추가 없음, bash 도구 활용)
+- 테스트: URL 구성, 캐시 경로 생성, JSON 파싱 (mock 데이터)
+Issue: none
+
+### Task 4: 저널 엔트리
 Files: `JOURNAL.md`
-Description: 이번 세션의 작업과 배움을 기록.
+Description: 이번 세션의 작업 기록. 무엇을 만들었고, 왜 선택했고, 다음 방향은 무엇인지.
 Issue: none
+
+### Issue Responses
+- 커뮤니티 이슈 없음. 자체 진단 기반 실용성 강화에 집중.

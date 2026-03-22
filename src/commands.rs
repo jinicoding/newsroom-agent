@@ -115,6 +115,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/correction",
     "/pipeline",
     "/quality",
+    "/template",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -200,6 +201,9 @@ pub const BREAKING_SUBCOMMANDS: &[&str] = &["update", "list"];
 
 pub const PIPELINE_SUBCOMMANDS: &[&str] = &["save", "run", "list", "show", "remove"];
 
+/// Template subcommand names for `/template <Tab>` completion.
+pub use crate::commands_writing::TEMPLATE_SUBCOMMANDS;
+
 /// Return context-aware argument completions for a given command and partial argument.
 ///
 /// `cmd` is the slash command (e.g. "/model"), `partial_arg` is what the user has typed
@@ -231,6 +235,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/note" => filter_candidates(NOTE_SUBCOMMANDS, &partial_lower),
         "/breaking" => filter_candidates(BREAKING_SUBCOMMANDS, &partial_lower),
         "/pipeline" => filter_candidates(PIPELINE_SUBCOMMANDS, &partial_lower),
+        "/template" => filter_candidates(TEMPLATE_SUBCOMMANDS, &partial_lower),
         "/multiformat" => {
             if partial_arg.starts_with("--format ") {
                 let fmt_part = &partial_arg[9..];
@@ -779,7 +784,8 @@ pub use crate::commands_writing::{
     handle_anonymize, handle_archive, handle_article, handle_checklist, handle_correction,
     handle_draft, handle_export, handle_headline, handle_improve, handle_legal,
     handle_multiformat, handle_proofread, handle_publish, handle_quality, handle_quote,
-    handle_readability, handle_rewrite, handle_stats, handle_summary, handle_translate,
+    handle_readability, handle_rewrite, handle_stats, handle_summary, handle_template,
+    handle_template_use, handle_translate,
 };
 
 // Workflow & management handlers

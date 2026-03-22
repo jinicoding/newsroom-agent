@@ -4705,6 +4705,304 @@ async fn quality_report(
     }
 }
 
+// ── /template ──────────────────────────────────────────────────────────
+
+const TEMPLATES_DIR: &str = ".journalist/templates";
+
+fn print_template_usage() {
+    println!("{DIM}  사용법:");
+    println!("    /template save <이름> [--file <경로>]   현재 초안 또는 지정 파일을 양식으로 저장");
+    println!("    /template list                         저장된 양식 목록");
+    println!("    /template show <이름>                   양식 내용 확인");
+    println!("    /template remove <이름>                 양식 삭제");
+    println!("    /template use <이름> <주제>             양식 기반 기사 작성{RESET}\n");
+}
+
+/// Parse `/template save` arguments: `<name> [--file <path>]`
+/// Returns `(name, Option<file_path>)`.
+pub fn parse_template_save_args(args: &str) -> (String, Option<String>) {
+    let args = args.trim();
+    if args.is_empty() {
+        return (String::new(), None);
+    }
+
+    // Check for --file flag anywhere in args
+    if let Some(file_idx) = args.find("--file") {
+        let before = args[..file_idx].trim();
+        let after = args[file_idx + 6..].trim(); // skip "--file"
+        let file_path = after.split_whitespace().next().unwrap_or("").to_string();
+        let name = if before.is_empty() {
+            // --file comes first, name might be after file path
+            after
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or("")
+                .to_string()
+        } else {
+            before.split_whitespace().next().unwrap_or("").to_string()
+        };
+        let fp = if file_path.is_empty() {
+            None
+        } else {
+            Some(file_path)
+        };
+        (name, fp)
+    } else {
+        // No --file flag, first word is the name
+        let name = args.split_whitespace().next().unwrap_or("").to_string();
+        (name, None)
+    }
+}
+
+/// Parse `/template use` arguments: `<name> <topic...>`
+/// Returns `(name, topic)`.
+pub fn parse_template_use_args(args: &str) -> (String, String) {
+    let args = args.trim();
+    match args.split_once(char::is_whitespace) {
+        Some((name, topic)) => (name.to_string(), topic.trim().to_string()),
+        None => (args.to_string(), String::new()),
+    }
+}
+
+fn template_path(name: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(TEMPLATES_DIR).join(format!("{name}.md"))
+}
+
+fn list_templates() -> Vec<(String, std::path::PathBuf)> {
+    let dir = std::path::Path::new(TEMPLATES_DIR);
+    if !dir.exists() {
+        return Vec::new();
+    }
+    let mut result = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map_or(true, |e| e != "md") {
+                continue;
+            }
+            let name = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            result.push((name, path));
+        }
+    }
+    result.sort_by(|a, b| a.0.cmp(&b.0));
+    result
+}
+
+/// Build prompt for `/template use`: apply a template pattern to a new topic.
+pub fn build_template_use_prompt(template_content: &str, template_name: &str, topic: &str) -> String {
+    format!(
+        "아래 양식(템플릿)을 참고하여 '{topic}'에 대한 기사를 작성해주세요.\n\n\
+         양식의 구조, 문체, 형식을 따르되 내용은 새 주제에 맞게 작성해주세요.\n\n\
+         ## 양식: {template_name}\n\n\
+         {template_content}\n\n\
+         ## 작성할 주제\n\n\
+         {topic}\n\n\
+         위 양식의 구조와 스타일을 유지하면서 '{topic}'에 대한 기사를 작성해주세요."
+    )
+}
+
+pub fn handle_template(input: &str) {
+    let args = input.strip_prefix("/template").unwrap_or("").trim();
+
+    if args.is_empty() || args == "help" {
+        print_template_usage();
+        return;
+    }
+
+    let (sub, rest) = match args.split_once(char::is_whitespace) {
+        Some((s, r)) => (s, r.trim()),
+        None => (args, ""),
+    };
+
+    match sub {
+        "save" => handle_template_save(rest),
+        "list" => handle_template_list(),
+        "show" => handle_template_show(rest),
+        "remove" => handle_template_remove(rest),
+        "use" => {
+            // "use" subcommand needs AI — print message for REPL to pick up
+            eprintln!("{RED}  /template use는 handle_template_use()를 통해 호출해야 합니다.{RESET}\n");
+        }
+        _ => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {sub}{RESET}");
+            print_template_usage();
+        }
+    }
+}
+
+fn handle_template_save(args: &str) {
+    let (name, file_path) = parse_template_save_args(args);
+    if name.is_empty() {
+        eprintln!("{RED}  양식 이름을 지정하세요: /template save <이름> [--file <경로>]{RESET}\n");
+        return;
+    }
+
+    let content = if let Some(ref fp) = file_path {
+        match std::fs::read_to_string(fp) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("{RED}  파일 읽기 실패 ({fp}): {e}{RESET}\n");
+                return;
+            }
+        }
+    } else {
+        match find_latest_draft() {
+            Some(p) => match std::fs::read_to_string(&p) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("{RED}  파일 읽기 실패: {e}{RESET}\n");
+                    return;
+                }
+            },
+            None => {
+                eprintln!("{RED}  저장할 파일이 없습니다. --file로 경로를 지정하거나 /article로 초안을 먼저 작성하세요.{RESET}\n");
+                return;
+            }
+        }
+    };
+
+    if let Err(e) = std::fs::create_dir_all(TEMPLATES_DIR) {
+        eprintln!("{RED}  디렉토리 생성 실패: {e}{RESET}\n");
+        return;
+    }
+
+    let path = template_path(&name);
+    if let Err(e) = std::fs::write(&path, &content) {
+        eprintln!("{RED}  저장 실패: {e}{RESET}\n");
+        return;
+    }
+
+    let char_count = content.chars().count();
+    println!(
+        "{GREEN}  ✅ 양식 저장: {name} ({char_count}자) → {}{RESET}\n",
+        path.display()
+    );
+}
+
+fn handle_template_list() {
+    let templates = list_templates();
+    if templates.is_empty() {
+        println!("{DIM}  저장된 양식이 없습니다.{RESET}\n");
+        return;
+    }
+
+    println!("{BOLD}  📋 양식 목록{RESET}");
+    println!("{DIM}  ──────────────────────────────{RESET}");
+    for (name, path) in &templates {
+        let modified = std::fs::metadata(path)
+            .and_then(|m| m.modified())
+            .ok();
+        let date_str = modified
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| format_unix_timestamp(d.as_secs()))
+            .unwrap_or_else(|| "-".to_string());
+        let char_count = std::fs::read_to_string(path)
+            .map(|c| c.chars().count())
+            .unwrap_or(0);
+        println!("  {name}  ({date_str}, {char_count}자)");
+    }
+    println!();
+}
+
+fn handle_template_show(name: &str) {
+    if name.is_empty() {
+        eprintln!("{RED}  양식 이름을 지정하세요: /template show <이름>{RESET}\n");
+        return;
+    }
+
+    let path = template_path(name);
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            let char_count = content.chars().count();
+            println!("{BOLD}  📄 양식: {name} ({char_count}자){RESET}");
+            println!("{DIM}  ──────────────────────────────{RESET}");
+            println!("{content}");
+        }
+        Err(_) => {
+            eprintln!("{RED}  양식 '{name}'을(를) 찾을 수 없습니다.{RESET}\n");
+        }
+    }
+}
+
+fn handle_template_remove(name: &str) {
+    if name.is_empty() {
+        eprintln!("{RED}  양식 이름을 지정하세요: /template remove <이름>{RESET}\n");
+        return;
+    }
+
+    let path = template_path(name);
+    if !path.exists() {
+        eprintln!("{RED}  양식 '{name}'을(를) 찾을 수 없습니다.{RESET}\n");
+        return;
+    }
+
+    if let Err(e) = std::fs::remove_file(&path) {
+        eprintln!("{RED}  삭제 실패: {e}{RESET}\n");
+        return;
+    }
+
+    println!("{GREEN}  ✅ 양식 '{name}' 삭제 완료{RESET}\n");
+}
+
+pub async fn handle_template_use(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/template").unwrap_or("").trim();
+    let rest = args.strip_prefix("use").unwrap_or("").trim();
+
+    let (name, topic) = parse_template_use_args(rest);
+
+    if name.is_empty() {
+        eprintln!("{RED}  사용법: /template use <이름> <주제>{RESET}\n");
+        return;
+    }
+    if topic.is_empty() {
+        eprintln!("{RED}  주제를 지정하세요: /template use {name} <주제>{RESET}\n");
+        return;
+    }
+
+    let path = template_path(&name);
+    let template_content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => {
+            eprintln!("{RED}  양식 '{name}'을(를) 찾을 수 없습니다.{RESET}\n");
+            return;
+        }
+    };
+
+    println!(
+        "{GREEN}  📋 양식 '{name}' 적용 → 주제: {topic}{RESET}\n"
+    );
+
+    let prompt = build_template_use_prompt(&template_content, &name, &topic);
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    // Save result as a draft
+    if !response.trim().is_empty() {
+        let draft_path = draft_file_path(&topic);
+        match save_article_draft(&draft_path, &response) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 초안 저장: {}{RESET}\n",
+                    draft_path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  초안 저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
+}
+
+pub const TEMPLATE_SUBCOMMANDS: &[&str] = &["save", "list", "show", "use", "remove"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6332,5 +6630,103 @@ mod tests {
         assert!(prompt.contains("정정 기록 없음"));
         assert!(prompt.contains("성과 데이터 없음"));
         assert!(prompt.contains("초안 없음"));
+    }
+
+    // ── /template tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn template_command_in_known_commands() {
+        assert!(
+            crate::commands::KNOWN_COMMANDS.contains(&"/template"),
+            "/template should be in KNOWN_COMMANDS"
+        );
+    }
+
+    #[test]
+    fn parse_template_save_args_name_only() {
+        let (name, file) = parse_template_save_args("스트레이트");
+        assert_eq!(name, "스트레이트");
+        assert!(file.is_none());
+    }
+
+    #[test]
+    fn parse_template_save_args_with_file() {
+        let (name, file) = parse_template_save_args("인터뷰 --file ./my_article.md");
+        assert_eq!(name, "인터뷰");
+        assert_eq!(file, Some("./my_article.md".to_string()));
+    }
+
+    #[test]
+    fn parse_template_save_args_empty() {
+        let (name, file) = parse_template_save_args("");
+        assert!(name.is_empty());
+        assert!(file.is_none());
+    }
+
+    #[test]
+    fn parse_template_use_args_normal() {
+        let (name, topic) = parse_template_use_args("스트레이트 삼성전자 실적 발표");
+        assert_eq!(name, "스트레이트");
+        assert_eq!(topic, "삼성전자 실적 발표");
+    }
+
+    #[test]
+    fn parse_template_use_args_no_topic() {
+        let (name, topic) = parse_template_use_args("인터뷰");
+        assert_eq!(name, "인터뷰");
+        assert!(topic.is_empty());
+    }
+
+    #[test]
+    fn template_path_format() {
+        let path = template_path("스트레이트");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/templates/스트레이트.md"
+        );
+    }
+
+    #[test]
+    fn template_save_and_list_and_remove() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let templates_dir = dir.path().join("templates");
+        std::fs::create_dir_all(&templates_dir).unwrap();
+
+        // Save a template
+        let path = templates_dir.join("test_tpl.md");
+        std::fs::write(&path, "# 제목\n\n본문 내용").unwrap();
+        assert!(path.exists());
+
+        // Read it back
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("제목"));
+        assert!(content.contains("본문 내용"));
+
+        // Remove it
+        std::fs::remove_file(&path).unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn build_template_use_prompt_contains_all_parts() {
+        let prompt = build_template_use_prompt(
+            "# 스트레이트 기사\n\n리드문\n\n본문\n\n마무리",
+            "스트레이트",
+            "삼성전자 실적",
+        );
+        assert!(prompt.contains("스트레이트"));
+        assert!(prompt.contains("삼성전자 실적"));
+        assert!(prompt.contains("리드문"));
+        assert!(prompt.contains("양식"));
+        assert!(prompt.contains("구조"));
+    }
+
+    #[test]
+    fn template_subcommands_complete() {
+        assert!(TEMPLATE_SUBCOMMANDS.contains(&"save"));
+        assert!(TEMPLATE_SUBCOMMANDS.contains(&"list"));
+        assert!(TEMPLATE_SUBCOMMANDS.contains(&"show"));
+        assert!(TEMPLATE_SUBCOMMANDS.contains(&"use"));
+        assert!(TEMPLATE_SUBCOMMANDS.contains(&"remove"));
     }
 }

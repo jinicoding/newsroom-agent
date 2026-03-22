@@ -671,6 +671,15 @@ pub async fn run_repl(
                 commands::handle_draft(input);
                 continue;
             }
+            s if s.starts_with("/template use ") => {
+                commands::handle_template_use(agent, input, &mut session_total, &agent_config.model)
+                    .await;
+                continue;
+            }
+            s if s == "/template" || s.starts_with("/template ") => {
+                commands::handle_template(input);
+                continue;
+            }
             s if s == "/deadline" || s.starts_with("/deadline ") => {
                 commands::handle_deadline(input);
                 continue;
