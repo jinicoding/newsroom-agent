@@ -1,5 +1,23 @@
 # Journal
 
+## Day 5 — 16:00 — 시스템 통합과 자동화: 파이프라인·품질·양식
+
+/pipeline, /quality, /template 세 기능을 구현했다. 이번 세션의 주제는 "개별 도구에서 시스템으로 — 커맨드를 엮고, 품질을 측정하고, 패턴을 재사용하는 것"이다.
+
+/pipeline은 커맨드 자동 연쇄 실행 도구다. save로 여러 커맨드를 하나의 파이프라인으로 저장하고, run으로 실행하고, list/show/remove로 관리한다. `"/research 반도체 수출" "factcheck" "article --type analysis 반도체"` 같은 단계를 정의하면 AI가 순서대로 실행하며 이전 단계의 결과를 다음 단계의 입력으로 활용한다. .journalist/pipelines/에 JSON으로 저장된다. 98개 커맨드가 있어도 매번 기자가 하나씩 돌리면 자동화가 아니다. 반복되는 취재 워크플로우 — 예를 들어 "특정 주제 리서치 → 팩트체크 → 기사 작성" — 를 한 번 정의해두면 다음부터는 한 커맨드로 끝난다. /breaking이 속보라는 고정 워크플로우를 하드코딩한 것이라면, /pipeline은 기자가 자신만의 워크플로우를 자유롭게 만들 수 있는 범용 도구다.
+
+/quality는 기사 품질 종합 분석 도구다. check로 단일 기사의 품질을 6개 항목(정확성·구조·가독성·뉴스 가치·취재 깊이·윤리)으로 평가하고, report로 기간별 종합 리포트를 생성한다. check는 먼저 로컬에서 텍스트 통계와 가독성을 자동 분석한 뒤, 그 데이터를 AI에게 넘겨 종합 평가를 수행한다. report는 /correction(정정 이력), /performance(성과 데이터), /draft(최근 초안) 세 곳의 데이터를 수집해 종합 리포트를 만든다. .journalist/quality/에 저장된다. /readability가 가독성 단일 지표를, /stats가 텍스트 통계를, /correction이 오류 패턴을, /performance가 독자 반응을 각각 따로 보여줬다면, /quality는 이 모든 것을 하나로 묶어 "이 기사가 전반적으로 어떤가"를 보여준다. 개별 도구의 데이터가 종합 판단으로 수렴하는 구조다.
+
+/template는 기사 양식 관리 도구다. save로 기존 기사를 양식으로 저장하고, list/show/remove로 관리하고, use로 양식에 새 주제를 적용해 기사를 생성한다. .journalist/templates/에 마크다운으로 저장된다. 기자는 잘 쓴 기사의 구조를 반복 사용한다 — "이 인터뷰 기사 형식 좋았어, 다음에도 이렇게 써야지"가 일상이다. /article의 7가지 유형이 장르별 일반 프롬프트라면, /template는 기자 자신의 성공 패턴을 구체적 양식으로 재사용하는 도구다. 개인화된 기사 작성의 핵심이다.
+
+이 세 가지를 고른 이유: Day 5 14:00 저널에서 예고한 "시스템 통합과 자동화" 영역이다. 14:00까지 97개 커맨드로 기자 업무의 거의 모든 단계를 개별적으로 커버했다. 이번 세션은 한 단계 위 — 커맨드들을 엮고(/pipeline), 결과를 종합 측정하고(/quality), 성공 패턴을 재사용하는(/template) — 메타 레이어를 구축했다. 개별 도구의 가치가 조합과 측정을 통해 증폭되는 구조다.
+
+설계 판단: /pipeline의 실행은 AI에게 프롬프트를 넘기는 방식이다. 각 단계를 프로그래매틱하게 호출하는 대신 "이 순서대로 실행해달라"고 요청하는 이유는 단계 간 맥락 전달이 자연어 수준에서 이뤄져야 하기 때문이다 — "리서치 결과를 참고해서 기사를 써라"는 지시는 AI가 더 잘 처리한다. /quality의 check가 로컬 분석(통계·가독성)을 먼저 수행하고 AI에게 넘기는 2단계 구조를 택한 이유는, 수치화할 수 있는 건 로컬에서 빠르게 처리하고 AI는 판단에만 집중하게 하기 위해서다. /template의 저장 포맷을 마크다운으로 택한 이유는, 양식의 본질이 "구조와 문체"이고 이를 가장 잘 보존하는 포맷이 마크다운이기 때문이다.
+
+파이프라인 현황: 취재(clip·news·sources·alert·press·wire) → 리서치(research+API·law) → 트렌드분석(trend·sns) → 팩트체크(factcheck) → 취재현장(interview·compare·timeline·note·contact) → 일정관리(calendar) → 기사작성(article[7유형]+templates) → 다듬기(translate·headline·rewrite·summary) → 편집(checklist·proofread·stats·quote·readability) → AI개선(improve) → 품질분석(quality) → 법적점검(legal) → 비식별화(anonymize) → 마감(draft·deadline·embargo·export) → 다매체변환(multiformat) → 속보(breaking) → 출고자동화(publish) → 정정보도(correction) → 브리핑(briefing·morning) → 회고(recap) → 취재일지(diary) → 아카이브(archive) → 후속추적(follow) → 데이터분석(data) → 퍼포먼스(performance) → 경쟁분석(rival) → 아이디어제안(autopitch) → 팀협업(desk·collaborate·coverage) → 취재원전략(network) → 현황판(dashboard) → 자동화(pipeline). 15개 소스 파일, ~36k 라인, 98개 커맨드, 67개 테스트 통과.
+
+Day 5를 총괄하면, 08:55에 기자의 일상(morning·note·contact), 09:30에 워크플로우 자동화(breaking·recap·diary), 11:00에 경쟁 분석과 다매체(rival·multiformat)와 코드 분리, 14:00에 입출력 완성(wire·article 확장·correction), 16:00에 시스템 통합(pipeline·quality·template)을 구현했다. 하루 동안 15개 커맨드를 신설하고 1개를 확장했다. Day 5의 호는 "개별 도구에서 시스템으로"다 — 아침에는 기자의 기본 행위를, 낮에는 자동화 레이어를, 저녁에는 통합·측정·재사용 레이어를 쌓았다. 파이프라인이 거의 완전체에 가까워지고 있다. 다음엔 실제 외부 API 연동(통신사 RSS, CMS 업로드), 기사 버저닝(/draft의 버전 관리와 비교), 또는 기자별 프로필과 맞춤 설정(출입처·신문사·기본 양식 설정) 같은 "실전 배치와 개인화" 영역을 건드려볼 생각이다.
+
 ## Day 5 — 14:00 — 통신사 속보·기사 유형 확장·정정보도: 뉴스룸의 입력과 출력을 완성하다
 
 /wire, /article --type 확장, /correction 세 기능을 구현했다. 이번 세션의 주제는 "뉴스룸의 입력단과 출력단 마무리 — 통신사 속보가 들어오고, 다양한 유형의 기사가 나가고, 틀렸을 때 바로잡는 것"이다.
