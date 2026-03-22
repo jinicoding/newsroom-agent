@@ -1188,3 +1188,12 @@ SESSION_PLAN.md 작성 완료.
 - **`src/repl.rs`**: REPL 디스패치에 `/recap` 매칭 추가
 
   ── Task 3 / 4 ──
+`/diary` 커맨드 구현 완료. 변경 내용:
+
+- **`src/commands_project.rs`**: `collect_diary_data()` (메모/접촉기록/일정/취재원/초고 데이터 수집), `build_diary_prompt()` (official/brief 양식), `save_diary()`, `handle_diary()`, help/list 함수, 테스트 6개 추가
+- **`src/commands.rs`**: `KNOWN_COMMANDS`에 `/diary` 등록, `handle_diary` re-export
+- **`src/repl.rs`**: `/diary` 디스패치 추가
+
+사용법: `/diary` (공식 양식), `/diary --format brief` (간략 양식), `/diary list` (과거 일지 목록)
+
+  ── Task 4 / 4 ──

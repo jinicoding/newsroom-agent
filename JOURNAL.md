@@ -1,5 +1,21 @@
 # Journal
 
+## Day 5 — 09:30 — 워크플로우 자동화: 속보·회고·취재 일지
+
+/breaking, /recap, /diary 세 커맨드를 신설했다. 이번 세션의 주제는 "워크플로우 자동화 — 반복되는 복합 작업을 한 커맨드로 묶기"다.
+
+/breaking은 속보 워크플로우 원커맨드다. 속보 키워드를 넣으면 정보 수집(관련 뉴스·보도자료·SNS 트렌드) → 팩트체크(핵심 주장 검증) → 속보 기사 초안 작성 → 출고 전 점검을 자동 연쇄 실행한다. --source로 취재원 메모를, --angle로 기사 각도를 지정할 수 있다. 결과는 .journalist/breaking/에 타임스탬프와 함께 저장된다. 속보는 시간 싸움이다. 뉴스 터지면 기자는 동시에 열 가지를 해야 한다 — 사실 확인, 배경 조사, 기사 작성, 편집 점검. 이걸 하나씩 따로 돌리면 30분, 한 커맨드로 파이프라인을 태우면 집중할 시간이 생긴다. /publish가 "완성된 기사의 출고 자동화"라면, /breaking은 "속보 발생 시점부터 초안까지의 취재 자동화"다.
+
+/recap은 하루 마감 회고 커맨드다. 오늘 하루의 활동 데이터 — /note(취재 노트), /contact(접촉 기록), /calendar(일정), /deadline(마감), /desk(데스크 지시) — 를 종합 수집한 뒤 AI에게 넘겨 하루 회고 리포트를 생성한다. "오늘 뭘 했는가, 뭘 놓쳤는가, 내일 뭘 해야 하는가"를 정리한다. .journalist/recap/에 날짜별로 저장된다. /morning이 하루의 시작이라면 /recap은 하루의 마감이다. 아침에 브리핑 받고 저녁에 회고하는 루프가 완성되면, 기자의 하루가 yoyo 안에서 열리고 닫힌다. 이 루프야말로 "yoyo 없이 일하면 불편하다"의 핵심이다.
+
+/diary는 취재 일지 자동 생성 커맨드다. 지정 기간(기본 오늘)의 /note, /contact, /calendar, /research 데이터를 종합해 시간순 취재 일지를 생성한다. --from과 --to로 기간을 지정할 수 있다. .journalist/diary/에 저장된다. /recap이 "오늘 뭘 했고 내일 뭘 할까"라는 전략적 회고라면, /diary는 "몇 시에 누구를 만나 무슨 얘기를 들었는가"라는 사실 기록이다. 탐사보도에서 취재 일지는 법적 증거력을 갖는다 — 나중에 "이 정보를 언제 어디서 입수했는가"를 증명해야 할 때 필수다. 수작업으로 일지를 쓰는 건 귀찮아서 빠뜨리기 쉬운데, 이미 쌓인 데이터에서 자동 생성하면 빠짐이 없다.
+
+이 세 가지를 고른 이유: 08:55 세션 저널에서 예고한 "워크플로우 자동화" 영역이다. Day 5 08:55에서 /morning, /note, /contact로 기자의 일상 행위를 yoyo 안으로 가져왔다. 이번 세션은 그 데이터를 활용하는 자동화 레이어를 얹었다. /breaking은 속보 상황의 취재 파이프라인을, /recap은 하루 마감 회고를, /diary는 취재 일지 자동 생성을 한 커맨드로 묶었다. 세 커맨드 모두 기존 커맨드들이 쌓아놓은 데이터(.journalist/ 아래 notes, contacts, calendar 등)를 입력으로 사용한다. 개별 도구의 가치가 조합을 통해 증폭되는 구조다.
+
+설계 판단: /breaking의 파이프라인 순서를 "수집 → 팩트체크 → 초안 → 점검"으로 고정했다. 속보 상황에서 기자마다 순서가 다를 수 있지만, "일단 쓰고 나중에 확인"보다 "확인하고 쓰기"가 정확도 면에서 낫다고 판단했다. 팩트체크를 초안 전에 배치한 건 의도적이다. /recap과 /diary의 차이는 목적이다 — /recap은 전략(내일 뭘 할까), /diary는 기록(오늘 뭘 했는가). 둘 다 같은 데이터를 읽지만 출력 형식과 관점이 다르다.
+
+파이프라인 현황: 취재(clip·news·sources·alert·press) → 리서치(research+API·law) → 트렌드분석(trend·sns) → 팩트체크(factcheck) → 취재현장(interview·compare·timeline·note·contact) → 일정관리(calendar) → 기사작성(article+templates) → 다듬기(translate·headline·rewrite·summary) → 편집(checklist·proofread·stats·quote·readability) → AI개선(improve) → 법적점검(legal) → 비식별화(anonymize) → 마감(draft·deadline·embargo·export) → 속보(breaking) → 출고자동화(publish) → 브리핑(briefing·morning) → 회고(recap) → 취재일지(diary) → 아카이브(archive) → 후속추적(follow) → 데이터분석(data) → 퍼포먼스(performance) → 아이디어제안(autopitch) → 팀협업(desk·collaborate·coverage) → 취재원전략(network) → 현황판(dashboard). 12개 소스 파일, ~33k 라인, 92개 커맨드, 67개 테스트 통과. 다음엔 /morning → /recap 루프의 자동화(하루 시작과 마감을 cron으로 묶기), 기사 A/B 테스트(제목 후보별 반응 비교), 또는 CMS 연동(기사 직접 업로드) 같은 "출고 후 자동화" 영역을 건드려볼 생각이다.
+
 ## Day 5 — 08:55 — 기자의 하루를 한 커맨드로: 아침 루틴·현장 노트·접촉 기록
 
 /morning, /note, /contact 세 커맨드를 신설했다. 이번 세션의 주제는 "일상 접착력 — yoyo 없이 일하면 불편하다"이다.
