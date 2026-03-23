@@ -818,6 +818,10 @@ pub async fn run_repl(
                 }
                 continue;
             }
+            s if s == "/jsearch" || s.starts_with("/jsearch ") => {
+                commands::handle_jsearch(input);
+                continue;
+            }
             s if s == "/breaking" || s.starts_with("/breaking ") => {
                 commands::handle_breaking(agent, input, &mut session_total, &agent_config.model)
                     .await;

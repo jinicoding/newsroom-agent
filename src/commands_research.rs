@@ -4231,9 +4231,170 @@ fn contact_suggest_prompt(topic: &str) -> String {
          한국어로 답변하세요. 구체적이고 실용적인 제안을 해주세요."
     )
 }
+// ── /jsearch ────────────────────────────────────────────────────────────
 
+/// Search result entry for `/jsearch`.
+#[derive(Debug)]
+pub struct JSearchResult {
+    pub category: &'static str,
+    pub file: String,
+    pub preview: String,
+}
 
+/// Search all `.journalist/` data files for a keyword (case-insensitive).
+/// Returns results grouped by category.
+pub fn jsearch_in(keyword: &str, base: &std::path::Path) -> Vec<JSearchResult> {
+    let kw = keyword.trim().to_lowercase();
+    if kw.is_empty() {
+        return Vec::new();
+    }
 
+    let mut results = Vec::new();
+
+    // Define search targets: (subdirectory or file, category label, extension filter)
+    let targets: Vec<(&str, &'static str, &[&str])> = vec![
+        ("research", "리서치", &["md"]),
+        ("notes", "취재노트", &["jsonl"]),
+        ("drafts", "초안", &["md"]),
+        ("contacts", "접촉기록", &["jsonl"]),
+        ("archive", "아카이브", &["json"]),
+        ("sources.json", "취재원", &["json"]),
+        ("quotes.json", "인용", &["json"]),
+        ("corrections/corrections.jsonl", "정정기록", &["jsonl"]),
+    ];
+
+    for (rel_path, category, exts) in &targets {
+        let target = base.join(rel_path);
+        if !target.exists() {
+            continue;
+        }
+        if target.is_file() {
+            search_file(&target, &kw, category, &mut results);
+        } else if target.is_dir() {
+            search_dir_recursive(&target, &kw, category, exts, &mut results);
+        }
+    }
+
+    results
+}
+
+/// Recursively search a directory for files matching extensions.
+fn search_dir_recursive(
+    dir: &std::path::Path,
+    kw: &str,
+    category: &'static str,
+    exts: &[&str],
+    results: &mut Vec<JSearchResult>,
+) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            search_dir_recursive(&path, kw, category, exts, results);
+        } else if path.is_file() {
+            let ext_match = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| exts.contains(&e));
+            if ext_match {
+                search_file(&path, kw, category, results);
+            }
+        }
+    }
+}
+
+/// Search a single file for keyword matches (filename + content).
+fn search_file(
+    path: &std::path::Path,
+    kw: &str,
+    category: &'static str,
+    results: &mut Vec<JSearchResult>,
+) {
+    let filename = path
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let filename_lower = filename.to_lowercase();
+    let content_lower = content.to_lowercase();
+
+    if !filename_lower.contains(kw) && !content_lower.contains(kw) {
+        return;
+    }
+
+    // Build preview: first matching line, truncated to 80 chars
+    let preview = content
+        .lines()
+        .find(|l| l.to_lowercase().contains(kw))
+        .map(|l| {
+            let trimmed = l.trim();
+            if trimmed.len() > 80 {
+                format!("{}…", &trimmed[..trimmed.floor_char_boundary(80)])
+            } else {
+                trimmed.to_string()
+            }
+        })
+        .unwrap_or_else(|| {
+            // Filename matched but no content line matched
+            format!("(파일명 매칭: {filename})")
+        });
+
+    results.push(JSearchResult {
+        category,
+        file: filename,
+        preview,
+    });
+}
+
+/// Handle `/jsearch <keyword>` — integrated search across all journalist data.
+pub fn handle_jsearch(input: &str) {
+    let keyword = input.strip_prefix("/jsearch").unwrap_or("").trim();
+    if keyword.is_empty() {
+        println!("{BOLD}  /jsearch <키워드>{RESET} — 기자 데이터 통합 검색");
+        println!("{DIM}  검색 대상: 리서치, 취재노트, 초안, 취재원, 인용, 아카이브, 접촉기록, 정정기록{RESET}");
+        println!("{DIM}  예시: /jsearch 반도체{RESET}\n");
+        return;
+    }
+
+    let base = std::path::Path::new(".journalist");
+    let results = jsearch_in(keyword, base);
+
+    if results.is_empty() {
+        println!("{DIM}  \"{keyword}\" 검색 결과가 없습니다.{RESET}\n");
+        return;
+    }
+
+    // Group by category
+    let mut grouped: std::collections::BTreeMap<&str, Vec<&JSearchResult>> =
+        std::collections::BTreeMap::new();
+    for r in &results {
+        grouped.entry(r.category).or_default().push(r);
+    }
+
+    println!(
+        "{BOLD}  🔍 \"{keyword}\" 통합 검색 결과 ({count}건){RESET}",
+        count = results.len()
+    );
+    println!("{DIM}  ──────────────────────────────{RESET}");
+
+    for (category, items) in &grouped {
+        println!("{GREEN}  [{category}]{RESET}");
+        for item in items {
+            println!("{DIM}    • {file}{RESET}", file = item.file);
+            println!("{DIM}      {preview}{RESET}", preview = item.preview);
+        }
+    }
+    println!();
+}
 
 #[cfg(test)]
 mod tests {
@@ -6091,5 +6252,162 @@ mod tests {
             strip_html_tags("A&amp;B &lt;C&gt; &quot;D&apos;"),
             "A&B <C> \"D'"
         );
+    }
+
+    // ── /jsearch tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn jsearch_empty_keyword_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let results = jsearch_in("", dir.path());
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn jsearch_no_data_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let results = jsearch_in("반도체", dir.path());
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn jsearch_finds_research_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let research_dir = dir.path().join("research");
+        std::fs::create_dir_all(&research_dir).unwrap();
+        std::fs::write(
+            research_dir.join("2026-03-23_semiconductor.md"),
+            "# 반도체 시장 동향\n삼성전자 파운드리 현황",
+        )
+        .unwrap();
+
+        let results = jsearch_in("반도체", dir.path());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].category, "리서치");
+        assert!(results[0].preview.contains("반도체"));
+    }
+
+    #[test]
+    fn jsearch_finds_notes_jsonl() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes_dir = dir.path().join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+        std::fs::write(
+            notes_dir.join("2026-03-23.jsonl"),
+            r#"{"content":"반도체 관련 취재 메모","timestamp":"2026-03-23T10:00:00"}"#,
+        )
+        .unwrap();
+
+        let results = jsearch_in("취재", dir.path());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].category, "취재노트");
+    }
+
+    #[test]
+    fn jsearch_finds_sources_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("sources.json"),
+            r#"[{"name":"김기자","beat":"반도체"}]"#,
+        )
+        .unwrap();
+
+        let results = jsearch_in("반도체", dir.path());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].category, "취재원");
+    }
+
+    #[test]
+    fn jsearch_finds_drafts_recursive() {
+        let dir = tempfile::tempdir().unwrap();
+        let drafts_sub = dir.path().join("drafts").join("2026-03");
+        std::fs::create_dir_all(&drafts_sub).unwrap();
+        std::fs::write(
+            drafts_sub.join("article.md"),
+            "AI 반도체 경쟁 심화",
+        )
+        .unwrap();
+
+        let results = jsearch_in("AI", dir.path());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].category, "초안");
+    }
+
+    #[test]
+    fn jsearch_case_insensitive() {
+        let dir = tempfile::tempdir().unwrap();
+        let research_dir = dir.path().join("research");
+        std::fs::create_dir_all(&research_dir).unwrap();
+        std::fs::write(
+            research_dir.join("test.md"),
+            "Samsung Electronics market share",
+        )
+        .unwrap();
+
+        let results = jsearch_in("samsung", dir.path());
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn jsearch_multiple_categories() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let research_dir = dir.path().join("research");
+        std::fs::create_dir_all(&research_dir).unwrap();
+        std::fs::write(research_dir.join("chip.md"), "반도체 리서치").unwrap();
+
+        let notes_dir = dir.path().join("notes");
+        std::fs::create_dir_all(&notes_dir).unwrap();
+        std::fs::write(
+            notes_dir.join("day.jsonl"),
+            r#"{"content":"반도체 메모"}"#,
+        )
+        .unwrap();
+
+        std::fs::write(
+            dir.path().join("quotes.json"),
+            r#"[{"text":"반도체 인용"}]"#,
+        )
+        .unwrap();
+
+        let results = jsearch_in("반도체", dir.path());
+        assert_eq!(results.len(), 3);
+
+        let categories: Vec<&str> = results.iter().map(|r| r.category).collect();
+        assert!(categories.contains(&"리서치"));
+        assert!(categories.contains(&"취재노트"));
+        assert!(categories.contains(&"인용"));
+    }
+
+    #[test]
+    fn jsearch_filename_match_without_content_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let research_dir = dir.path().join("research");
+        std::fs::create_dir_all(&research_dir).unwrap();
+        std::fs::write(
+            research_dir.join("반도체_분석.md"),
+            "내용에는 키워드 없음",
+        )
+        .unwrap();
+
+        let results = jsearch_in("반도체", dir.path());
+        assert_eq!(results.len(), 1);
+        assert!(results[0].preview.contains("파일명 매칭"));
+    }
+
+    #[test]
+    fn jsearch_corrections_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let corrections_dir = dir.path().join("corrections");
+        std::fs::create_dir_all(&corrections_dir).unwrap();
+        std::fs::write(
+            corrections_dir.join("corrections.jsonl"),
+            r#"{"article":"반도체 기사","correction":"오류 정정"}"#,
+        )
+        .unwrap();
+
+        let results = jsearch_in("정정", dir.path());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].category, "정정기록");
     }
 }

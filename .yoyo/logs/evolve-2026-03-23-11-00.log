@@ -202,3 +202,12 @@ SESSION_PLAN.md 작성 완료.
     Task 1: 검증 OK
 
   ── Task 2 / 4 ──
+완료. 10개 커맨드(`/wire`, `/rss`, `/correction`, `/coverage`, `/contact`, `/quality`, `/rival`, `/research`, `/diary`, `/recap`)에 서브커맨드 탭 완성을 추가했습니다.
+
+- 각 도메인 모듈에 `*_SUBCOMMANDS` 상수 배열 정의
+- `commands.rs`에서 re-export + `command_arg_completions` match 분기 추가
+- `/morning`은 서브커맨드가 없어 제외
+- 10개 테스트 추가, 전체 67개 테스트 통과
+    Task 2: 검증 OK
+
+  ── Task 3 / 4 ──

@@ -118,6 +118,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/template",
     "/profile",
     "/rss",
+    "/jsearch",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -488,6 +489,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /diary [cmd]       취재 일지 (write|list|view)\n",
+    );
+    out.push_str(
+        "  /jsearch <키워드>     기자 데이터 통합 검색\n",
     );
     out.push('\n');
 
@@ -905,9 +909,9 @@ pub use crate::commands_project::{
 
 // Research & source management handlers
 pub use crate::commands_research::{
-    handle_alert, handle_clip, handle_contact, handle_factcheck, handle_follow, handle_law,
-    handle_network, handle_news, handle_note, handle_press, handle_research, handle_sns,
-    handle_rss, handle_sources, handle_trend, handle_wire,
+    handle_alert, handle_clip, handle_contact, handle_factcheck, handle_follow, handle_jsearch,
+    handle_law, handle_network, handle_news, handle_note, handle_press, handle_research,
+    handle_sns, handle_rss, handle_sources, handle_trend, handle_wire,
 };
 
 // Article writing & editing handlers
