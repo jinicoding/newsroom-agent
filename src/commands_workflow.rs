@@ -7739,4 +7739,106 @@ mod tests {
         assert!(!prompt.contains("출입처/분야:"));
         assert!(prompt.contains("데이터"));
     }
+
+    // ── /dashboard tests (Day 6) ────────────────────────────────────
+
+    #[test]
+    fn dashboard_stats_default_all_zeros() {
+        let stats = DashboardStats::default();
+        assert_eq!(stats.drafts_today, 0);
+        assert_eq!(stats.research_today, 0);
+        assert_eq!(stats.notes_today, 0);
+        assert_eq!(stats.imminent_deadlines, 0);
+        assert_eq!(stats.pending_followups, 0);
+        assert!(stats.top_articles.is_empty());
+        assert_eq!(stats.unresolved_corrections, 0);
+    }
+
+    #[test]
+    fn dashboard_stats_equality() {
+        let a = DashboardStats {
+            drafts_today: 3,
+            research_today: 1,
+            ..Default::default()
+        };
+        let b = DashboardStats {
+            drafts_today: 3,
+            research_today: 1,
+            ..Default::default()
+        };
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn count_pending_followups_all_pending() {
+        let followups = vec![
+            Followup { topic: "x".into(), due: None, done: false, created_at: "".into() },
+            Followup { topic: "y".into(), due: None, done: false, created_at: "".into() },
+        ];
+        assert_eq!(count_pending_followups(&followups), 2);
+    }
+
+    #[test]
+    fn count_unresolved_corrections_multiple_statuses() {
+        let corrections = vec![
+            crate::commands_writing::CorrectionRecord {
+                date: "".into(), article: "A".into(), error: "".into(),
+                fix: "".into(), status: "resolved".into(),
+            },
+            crate::commands_writing::CorrectionRecord {
+                date: "".into(), article: "B".into(), error: "".into(),
+                fix: "".into(), status: "pending".into(),
+            },
+            crate::commands_writing::CorrectionRecord {
+                date: "".into(), article: "C".into(), error: "".into(),
+                fix: "".into(), status: "investigating".into(),
+            },
+        ];
+        assert_eq!(count_unresolved_corrections(&corrections), 2);
+    }
+
+    #[test]
+    fn count_files_for_date_filters_by_ext() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("2026-03-23_a.md"), "").unwrap();
+        std::fs::write(dir.path().join("2026-03-23_b.md"), "").unwrap();
+        std::fs::write(dir.path().join("2026-03-23_c.txt"), "").unwrap();
+        std::fs::write(dir.path().join("2026-03-22_d.md"), "").unwrap();
+        // Only .md files for 03-23
+        assert_eq!(count_files_for_date(dir.path(), "2026-03-23", ".md"), 2);
+        // .txt files for 03-23
+        assert_eq!(count_files_for_date(dir.path(), "2026-03-23", ".txt"), 1);
+    }
+
+    #[test]
+    fn top_performance_articles_truncates_to_n() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("perf.json");
+        let data = serde_json::json!([
+            {"title": "A", "views": 100, "comments": 0, "shares": 0},
+            {"title": "B", "views": 200, "comments": 0, "shares": 0},
+            {"title": "C", "views": 300, "comments": 0, "shares": 0},
+            {"title": "D", "views": 400, "comments": 0, "shares": 0}
+        ]);
+        std::fs::write(&path, serde_json::to_string(&data).unwrap()).unwrap();
+        let top = top_performance_articles(&path, 2);
+        assert_eq!(top.len(), 2);
+        assert_eq!(top[0].0, "D");
+        assert_eq!(top[0].1, 400);
+        assert_eq!(top[1].0, "C");
+        assert_eq!(top[1].1, 300);
+    }
+
+    #[test]
+    fn top_performance_articles_scores_sum_all_fields() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("perf.json");
+        let data = serde_json::json!([
+            {"title": "X", "views": 10, "comments": 20, "shares": 30}
+        ]);
+        std::fs::write(&path, serde_json::to_string(&data).unwrap()).unwrap();
+        let top = top_performance_articles(&path, 5);
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0].1, 60); // 10+20+30
+    }
 }

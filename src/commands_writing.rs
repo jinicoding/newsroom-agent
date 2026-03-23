@@ -7202,4 +7202,64 @@ mod tests {
             );
         }
     }
+
+    // ── /translate tests (Day 6) ────────────────────────────────────
+
+    #[test]
+    fn parse_translate_args_all_nine_lang_codes() {
+        for code in &["ko", "en", "ja", "zh", "es", "fr", "de", "ru", "pt"] {
+            let args = parse_translate_args(code);
+            assert_eq!(
+                args.target_lang.as_deref(),
+                Some(*code),
+                "lang code '{code}' should be recognized"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_translate_args_invalid_lang_code_becomes_text() {
+        let args = parse_translate_args("xx some text");
+        assert!(args.target_lang.is_none());
+        assert_eq!(args.inline_text, "xx some text");
+    }
+
+    #[test]
+    fn parse_translate_args_lang_not_first_is_text() {
+        // If text comes before lang code, the code is treated as text
+        let args = parse_translate_args("hello en world");
+        assert!(args.target_lang.is_none());
+        assert_eq!(args.inline_text, "hello en world");
+    }
+
+    #[test]
+    fn parse_translate_args_file_and_glossary_combined() {
+        let args = parse_translate_args("ja --file a.md --glossary g.json extra words");
+        assert_eq!(args.target_lang.as_deref(), Some("ja"));
+        assert_eq!(args.file_path.as_deref(), Some("a.md"));
+        assert_eq!(args.glossary_path.as_deref(), Some("g.json"));
+        assert_eq!(args.inline_text, "extra words");
+    }
+
+    #[test]
+    fn format_glossary_for_prompt_table_header() {
+        let glossary = vec![("A".to_string(), "B".to_string())];
+        let out = format_glossary_for_prompt(&glossary);
+        assert!(out.contains("| 원문 | 지정 번역 |"));
+        assert!(out.contains("| A | B |"));
+    }
+
+    #[test]
+    fn build_translate_prompt_japanese_label() {
+        let prompt = build_translate_prompt("text", Some("ja"), &[]).unwrap();
+        assert!(prompt.contains("日本語"));
+    }
+
+    #[test]
+    fn load_glossary_invalid_json_returns_empty() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("bad.json");
+        std::fs::write(&path, "not json at all").unwrap();
+        assert!(load_glossary(path.to_str().unwrap()).is_empty());
+    }
 }

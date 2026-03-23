@@ -6034,4 +6034,50 @@ mod tests {
         assert!(prompt.contains("반도체+수출"));
         assert!(prompt.contains("핵심 사실"));
     }
+
+    // ── RSS parsing tests (Day 6) ────────────────────────────────────
+
+    #[test]
+    fn parse_rss_items_multiple_items() {
+        let xml = r#"<rss><channel>
+<item><title>A</title><link>http://a</link></item>
+<item><title>B</title><link>http://b</link></item>
+<item><title>C</title><link>http://c</link></item>
+</channel></rss>"#;
+        let items = parse_rss_items(xml);
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].title, "A");
+        assert_eq!(items[1].title, "B");
+        assert_eq!(items[2].title, "C");
+    }
+
+    #[test]
+    fn parse_rss_items_html_entities_decoded() {
+        let xml = r#"<rss><channel>
+<item><title>삼성 &amp; SK &lt;반도체&gt;</title><link>http://x</link></item>
+</channel></rss>"#;
+        let items = parse_rss_items(xml);
+        assert_eq!(items[0].title, "삼성 & SK <반도체>");
+    }
+
+    #[test]
+    fn parse_rss_items_completely_empty_string() {
+        assert!(parse_rss_items("").is_empty());
+    }
+
+    #[test]
+    fn strip_html_tags_nested_tags() {
+        assert_eq!(
+            strip_html_tags("<div><p><b>중첩</b> 태그</p></div>"),
+            "중첩 태그"
+        );
+    }
+
+    #[test]
+    fn strip_html_tags_all_entities() {
+        assert_eq!(
+            strip_html_tags("A&amp;B &lt;C&gt; &quot;D&apos;"),
+            "A&B <C> \"D'"
+        );
+    }
 }

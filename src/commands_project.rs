@@ -1601,10 +1601,8 @@ fn format_profile(profile: &serde_json::Map<String, serde_json::Value>) -> Strin
     }
 }
 
-/// Build a context string from the profile for injection into prompts.
-/// Used by /article, /briefing, /morning etc. to personalize output.
-pub fn profile_context() -> String {
-    let profile = load_profile();
+/// Build a context string from a profile map for injection into prompts.
+pub fn profile_context_from(profile: &serde_json::Map<String, serde_json::Value>) -> String {
     if profile.is_empty() {
         return String::new();
     }
@@ -1622,6 +1620,12 @@ pub fn profile_context() -> String {
         return String::new();
     }
     format!("\n[기자 프로필] {}", parts.join(" | "))
+}
+
+/// Build a context string from the profile for injection into prompts.
+/// Used by /article, /briefing, /morning etc. to personalize output.
+pub fn profile_context() -> String {
+    profile_context_from(&load_profile())
 }
 
 /// Handle the `/profile` command.
@@ -2371,5 +2375,44 @@ mod tests {
         let reloaded = load_profile_from(&path);
         assert!(reloaded.get("name").is_some());
         assert!(reloaded.get("beat").is_none());
+    }
+
+    #[test]
+    fn profile_context_from_empty_map() {
+        let map = serde_json::Map::new();
+        assert_eq!(profile_context_from(&map), "");
+    }
+
+    #[test]
+    fn profile_context_from_full_profile() {
+        let mut map = serde_json::Map::new();
+        map.insert("name".into(), serde_json::Value::String("홍길동".into()));
+        map.insert("org".into(), serde_json::Value::String("조선일보".into()));
+        map.insert("beat".into(), serde_json::Value::String("정치".into()));
+        let ctx = profile_context_from(&map);
+        assert!(ctx.contains("기자: 홍길동"));
+        assert!(ctx.contains("소속: 조선일보"));
+        assert!(ctx.contains("출입처/분야: 정치"));
+        assert!(ctx.starts_with("\n[기자 프로필]"));
+    }
+
+    #[test]
+    fn profile_context_from_partial_profile() {
+        let mut map = serde_json::Map::new();
+        map.insert("name".into(), serde_json::Value::String("김기자".into()));
+        let ctx = profile_context_from(&map);
+        assert!(ctx.contains("기자: 김기자"));
+        assert!(!ctx.contains("소속:"));
+        assert!(!ctx.contains("출입처/분야:"));
+    }
+
+    #[test]
+    fn profile_context_from_non_string_values_ignored() {
+        let mut map = serde_json::Map::new();
+        map.insert("name".into(), serde_json::Value::Number(42.into()));
+        map.insert("email".into(), serde_json::Value::String("test@test.com".into()));
+        // name is not a string so it's ignored; email is not used in context
+        let ctx = profile_context_from(&map);
+        assert_eq!(ctx, "");
     }
 }

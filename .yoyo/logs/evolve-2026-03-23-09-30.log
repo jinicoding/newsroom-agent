@@ -204,3 +204,7 @@ SESSION_PLAN.md 작성 완료.
     Task 1: 검증 OK
 
   ── Task 2 / 4 ──
+완료. `profile_context()`를 6개 커맨드(`/briefing`, `/factcheck`, `/interview`, `/trend`, `/breaking`, `/headline`)에 추가 주입했습니다. 총 10개 커맨드가 기자 프로필을 자동 반영합니다. 6개 테스트 추가, 전체 67개 통과.
+    Task 2: 검증 OK
+
+  ── Task 3 / 4 ──
