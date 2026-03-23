@@ -16,6 +16,18 @@ use yoagent::*;
 /// Directory for cached research results.
 pub const RESEARCH_DIR: &str = ".journalist/research";
 
+/// Subcommand names for `/wire <Tab>` completion.
+pub const WIRE_SUBCOMMANDS: &[&str] = &["save"];
+
+/// Subcommand names for `/rss <Tab>` completion.
+pub const RSS_SUBCOMMANDS: &[&str] = &["add", "list", "check", "search", "remove"];
+
+/// Subcommand names for `/contact <Tab>` completion.
+pub const CONTACT_SUBCOMMANDS: &[&str] = &["log", "history", "recent", "stale", "suggest"];
+
+/// Subcommand names for `/research <Tab>` completion.
+pub const RESEARCH_SUBCOMMANDS: &[&str] = &["list", "search"];
+
 /// Build the research file path: `.journalist/research/YYYY-MM-DD_<slug>.md`
 pub fn research_file_path(topic: &str) -> std::path::PathBuf {
     research_file_path_with_date(topic, &today_str())

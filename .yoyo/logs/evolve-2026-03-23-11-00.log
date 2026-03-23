@@ -1,0 +1,204 @@
+=== Day 6 (2026-03-23 11:00) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+warning: unused import: `std::path::Path`
+    --> src/commands_project.rs:1700:9
+     |
+1700 |     use std::path::Path;
+     |         ^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `crate::commands_project::*`
+    --> src/commands_project.rs:1701:9
+     |
+1701 |     use crate::commands_project::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_research::*`
+    --> src/commands_project.rs:1702:9
+     |
+1702 |     use crate::commands_research::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_writing::*`
+    --> src/commands_project.rs:1703:9
+     |
+1703 |     use crate::commands_writing::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_workflow::*`
+    --> src/commands_project.rs:1704:9
+     |
+1704 |     use crate::commands_workflow::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_project::*`
+    --> src/commands_research.rs:4230:9
+     |
+4230 |     use crate::commands_project::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_research::*`
+    --> src/commands_research.rs:4231:9
+     |
+4231 |     use crate::commands_research::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_writing::*`
+    --> src/commands_research.rs:4232:9
+     |
+4232 |     use crate::commands_writing::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_workflow::*`
+    --> src/commands_research.rs:4233:9
+     |
+4233 |     use crate::commands_workflow::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::path::Path`
+    --> src/commands_workflow.rs:5406:9
+     |
+5406 |     use std::path::Path;
+     |         ^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_project::*`
+    --> src/commands_workflow.rs:5407:9
+     |
+5407 |     use crate::commands_project::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_writing::*`
+    --> src/commands_workflow.rs:5409:9
+     |
+5409 |     use crate::commands_writing::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_workflow::*`
+    --> src/commands_workflow.rs:5410:9
+     |
+5410 |     use crate::commands_workflow::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_project::*`
+    --> src/commands_writing.rs:5302:9
+     |
+5302 |     use crate::commands_project::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_research::*`
+    --> src/commands_writing.rs:5303:9
+     |
+5303 |     use crate::commands_research::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_writing::*`
+    --> src/commands_writing.rs:5304:9
+     |
+5304 |     use crate::commands_writing::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_workflow::*`
+    --> src/commands_writing.rs:5305:9
+     |
+5305 |     use crate::commands_workflow::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_sources_path` is never used
+    --> src/commands_project.rs:1706:8
+     |
+1706 |     fn temp_sources_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `temp_deadlines_path` is never used
+    --> src/commands_project.rs:2035:8
+     |
+2035 |     fn temp_deadlines_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_embargoes_path` is never used
+    --> src/commands_project.rs:2041:8
+     |
+2041 |     fn temp_embargoes_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_archive_paths` is never used
+    --> src/commands_project.rs:2047:8
+     |
+2047 |     fn temp_archive_paths() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_desk_path` is never used
+    --> src/commands_project.rs:2055:8
+     |
+2055 |     fn temp_desk_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^
+
+warning: function `temp_collab_dir` is never used
+    --> src/commands_project.rs:2061:8
+     |
+2061 |     fn temp_collab_dir() -> tempfile::TempDir {
+     |        ^^^^^^^^^^^^^^^
+
+warning: function `temp_coverage_path` is never used
+    --> src/commands_project.rs:2065:8
+     |
+2065 |     fn temp_coverage_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_calendar_path` is never used
+    --> src/commands_project.rs:2124:8
+     |
+2124 |     fn temp_calendar_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_performance_path` is never used
+    --> src/commands_project.rs:2195:8
+     |
+2195 |     fn temp_performance_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^^^^
+
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  커뮤니티 이슈 0
+0개 로드.
+→ self 이슈 확인...
+  self 이슈 없음.
+→ help-wanted 이슈 확인...
+  help-wanted 이슈 없음.
+→ 대기 답변 스캔...
+  대기 답변 없음.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md 작성 완료.
+
+**Day 6 11:00 세션 계획 요약:**
+
+| Task | 내용 | 파일 |
+|------|------|------|
+| 1 | KNOWN_MODELS 현행화 (Claude 4.6 등) | commands.rs |
+| 2 | 서브커맨드 탭 완성 추가 (10개 커맨드) | commands.rs + 3개 모듈 |
+| 3 | /jsearch 신설 — 기자 데이터 통합 검색 | commands_research.rs, commands.rs |
+| 4 | 저널 엔트리 | JOURNAL.md |
+
+커뮤니티 이슈는 오늘 없습니다. 구현은 하지 않고 계획만 작성했습니다.
+
+→ Phase B: 구현...
+  계획된 태스크: 4개
+
+  ── Task 1 / 4 ──
+완료. `KNOWN_MODELS`에 다음을 반영했습니다:
+
+- **추가**: `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5`, `gpt-4.1-nano`
+- **유지**: 기존 dated 버전(`claude-sonnet-4-20250514` 등) 하위호환
+- 섹션별 주석으로 정리
+
+67개 테스트 전부 통과, 커밋 `fedd564`.
+    Task 1: 검증 OK
+
+  ── Task 2 / 4 ──

@@ -15,6 +15,18 @@ use crate::prompt::*;
 use yoagent::agent::Agent;
 use yoagent::*;
 
+/// Subcommand names for `/coverage <Tab>` completion.
+pub const COVERAGE_SUBCOMMANDS: &[&str] = &["claim", "release", "check", "list"];
+
+/// Subcommand names for `/rival <Tab>` completion.
+pub const RIVAL_SUBCOMMANDS: &[&str] = &["search", "compare"];
+
+/// Subcommand names for `/diary <Tab>` completion.
+pub const DIARY_SUBCOMMANDS: &[&str] = &["list"];
+
+/// Subcommand names for `/recap <Tab>` completion.
+pub const RECAP_SUBCOMMANDS: &[&str] = &["list"];
+
 // ── /briefing ────────────────────────────────────────────────────────────
 
 /// Parse `/briefing` input to extract `--file <path>` and inline text.

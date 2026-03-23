@@ -217,6 +217,15 @@ pub const PROFILE_SUBCOMMANDS: &[&str] = &["show", "set", "remove", "clear"];
 /// Template subcommand names for `/template <Tab>` completion.
 pub use crate::commands_writing::TEMPLATE_SUBCOMMANDS;
 
+/// Re-export subcommand constants from domain modules.
+pub use crate::commands_research::{
+    CONTACT_SUBCOMMANDS, RESEARCH_SUBCOMMANDS, RSS_SUBCOMMANDS, WIRE_SUBCOMMANDS,
+};
+pub use crate::commands_workflow::{
+    COVERAGE_SUBCOMMANDS, DIARY_SUBCOMMANDS, RECAP_SUBCOMMANDS, RIVAL_SUBCOMMANDS,
+};
+pub use crate::commands_writing::{CORRECTION_SUBCOMMANDS, QUALITY_SUBCOMMANDS};
+
 /// Return context-aware argument completions for a given command and partial argument.
 ///
 /// `cmd` is the slash command (e.g. "/model"), `partial_arg` is what the user has typed
@@ -250,6 +259,16 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/pipeline" => filter_candidates(PIPELINE_SUBCOMMANDS, &partial_lower),
         "/template" => filter_candidates(TEMPLATE_SUBCOMMANDS, &partial_lower),
         "/profile" => filter_candidates(PROFILE_SUBCOMMANDS, &partial_lower),
+        "/wire" => filter_candidates(WIRE_SUBCOMMANDS, &partial_lower),
+        "/rss" => filter_candidates(RSS_SUBCOMMANDS, &partial_lower),
+        "/correction" => filter_candidates(CORRECTION_SUBCOMMANDS, &partial_lower),
+        "/coverage" => filter_candidates(COVERAGE_SUBCOMMANDS, &partial_lower),
+        "/contact" => filter_candidates(CONTACT_SUBCOMMANDS, &partial_lower),
+        "/quality" => filter_candidates(QUALITY_SUBCOMMANDS, &partial_lower),
+        "/rival" => filter_candidates(RIVAL_SUBCOMMANDS, &partial_lower),
+        "/research" => filter_candidates(RESEARCH_SUBCOMMANDS, &partial_lower),
+        "/diary" => filter_candidates(DIARY_SUBCOMMANDS, &partial_lower),
+        "/recap" => filter_candidates(RECAP_SUBCOMMANDS, &partial_lower),
         "/multiformat" => {
             if partial_arg.starts_with("--format ") {
                 let fmt_part = &partial_arg[9..];
@@ -2954,6 +2973,90 @@ mod tests {
             load_candidates.contains(&test_file.to_string()),
             "/load should complete .json files: {load_candidates:?}"
         );
+    }
+
+    // ── subcommand completions for domain commands ──────────────────────
+
+    #[test]
+    fn test_arg_completions_wire() {
+        let all = command_arg_completions("/wire", "");
+        assert_eq!(all, vec!["save"]);
+        let filtered = command_arg_completions("/wire", "x");
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn test_arg_completions_rss() {
+        let all = command_arg_completions("/rss", "");
+        assert_eq!(all.len(), 5);
+        assert!(all.contains(&"add".to_string()));
+        assert!(all.contains(&"remove".to_string()));
+        let filtered = command_arg_completions("/rss", "s");
+        assert_eq!(filtered, vec!["search"]);
+    }
+
+    #[test]
+    fn test_arg_completions_correction() {
+        let all = command_arg_completions("/correction", "");
+        assert_eq!(all.len(), 3);
+        assert!(all.contains(&"add".to_string()));
+        assert!(all.contains(&"list".to_string()));
+        assert!(all.contains(&"report".to_string()));
+    }
+
+    #[test]
+    fn test_arg_completions_coverage() {
+        let all = command_arg_completions("/coverage", "");
+        assert_eq!(all.len(), 4);
+        assert!(all.contains(&"claim".to_string()));
+        let filtered = command_arg_completions("/coverage", "c");
+        assert_eq!(filtered.len(), 2); // claim, check
+    }
+
+    #[test]
+    fn test_arg_completions_contact() {
+        let all = command_arg_completions("/contact", "");
+        assert_eq!(all.len(), 5);
+        assert!(all.contains(&"suggest".to_string()));
+        assert!(all.contains(&"stale".to_string()));
+        let filtered = command_arg_completions("/contact", "st");
+        assert_eq!(filtered, vec!["stale"]);
+    }
+
+    #[test]
+    fn test_arg_completions_quality() {
+        let all = command_arg_completions("/quality", "");
+        assert_eq!(all.len(), 2);
+        assert!(all.contains(&"check".to_string()));
+        assert!(all.contains(&"report".to_string()));
+    }
+
+    #[test]
+    fn test_arg_completions_rival() {
+        let all = command_arg_completions("/rival", "");
+        assert_eq!(all.len(), 2);
+        assert!(all.contains(&"search".to_string()));
+        assert!(all.contains(&"compare".to_string()));
+    }
+
+    #[test]
+    fn test_arg_completions_research() {
+        let all = command_arg_completions("/research", "");
+        assert_eq!(all.len(), 2);
+        assert!(all.contains(&"list".to_string()));
+        assert!(all.contains(&"search".to_string()));
+    }
+
+    #[test]
+    fn test_arg_completions_diary() {
+        let all = command_arg_completions("/diary", "");
+        assert_eq!(all, vec!["list"]);
+    }
+
+    #[test]
+    fn test_arg_completions_recap() {
+        let all = command_arg_completions("/recap", "");
+        assert_eq!(all, vec!["list"]);
     }
 
     // ── /index tests ─────────────────────────────────────────────────────

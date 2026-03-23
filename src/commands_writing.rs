@@ -5295,6 +5295,12 @@ pub async fn handle_template_use(
 
 pub const TEMPLATE_SUBCOMMANDS: &[&str] = &["save", "list", "show", "use", "remove"];
 
+/// Subcommand names for `/correction <Tab>` completion.
+pub const CORRECTION_SUBCOMMANDS: &[&str] = &["add", "list", "report"];
+
+/// Subcommand names for `/quality <Tab>` completion.
+pub const QUALITY_SUBCOMMANDS: &[&str] = &["check", "report"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
