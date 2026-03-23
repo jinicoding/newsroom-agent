@@ -1050,6 +1050,20 @@ mod tests {
     };
     use yoagent::ThinkingLevel;
 
+    /// Create a unique temp directory for tests, removing any stale leftover first.
+    /// Uses process ID and a caller-supplied label to avoid collisions in parallel runs.
+    fn test_tmp_dir(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "yoyo_test_{}_{}_{:?}",
+            label,
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("failed to create test temp dir");
+        dir
+    }
+
     #[test]
     fn test_command_parsing_quit() {
         let quit_commands = ["/quit", "/exit"];
@@ -1348,8 +1362,7 @@ mod tests {
 
     #[test]
     fn test_detect_project_type_node() {
-        let tmp = std::env::temp_dir().join("yoyo_test_node");
-        let _ = std::fs::create_dir_all(&tmp);
+        let tmp = test_tmp_dir("node");
         std::fs::write(tmp.join("package.json"), "{}").unwrap();
         assert_eq!(detect_project_type(&tmp), ProjectType::Node);
         let _ = std::fs::remove_dir_all(&tmp);
@@ -1357,8 +1370,7 @@ mod tests {
 
     #[test]
     fn test_detect_project_type_python_pyproject() {
-        let tmp = std::env::temp_dir().join("yoyo_test_python_pyproject");
-        let _ = std::fs::create_dir_all(&tmp);
+        let tmp = test_tmp_dir("python_pyproject");
         std::fs::write(tmp.join("pyproject.toml"), "[project]").unwrap();
         assert_eq!(detect_project_type(&tmp), ProjectType::Python);
         let _ = std::fs::remove_dir_all(&tmp);
@@ -1366,8 +1378,7 @@ mod tests {
 
     #[test]
     fn test_detect_project_type_python_setup_py() {
-        let tmp = std::env::temp_dir().join("yoyo_test_python_setup");
-        let _ = std::fs::create_dir_all(&tmp);
+        let tmp = test_tmp_dir("python_setup");
         std::fs::write(tmp.join("setup.py"), "").unwrap();
         assert_eq!(detect_project_type(&tmp), ProjectType::Python);
         let _ = std::fs::remove_dir_all(&tmp);
@@ -1375,8 +1386,7 @@ mod tests {
 
     #[test]
     fn test_detect_project_type_go() {
-        let tmp = std::env::temp_dir().join("yoyo_test_go");
-        let _ = std::fs::create_dir_all(&tmp);
+        let tmp = test_tmp_dir("go");
         std::fs::write(tmp.join("go.mod"), "module example.com/test").unwrap();
         assert_eq!(detect_project_type(&tmp), ProjectType::Go);
         let _ = std::fs::remove_dir_all(&tmp);
@@ -1384,8 +1394,7 @@ mod tests {
 
     #[test]
     fn test_detect_project_type_makefile() {
-        let tmp = std::env::temp_dir().join("yoyo_test_make");
-        let _ = std::fs::create_dir_all(&tmp);
+        let tmp = test_tmp_dir("make");
         std::fs::write(tmp.join("Makefile"), "test:\n\techo ok").unwrap();
         assert_eq!(detect_project_type(&tmp), ProjectType::Make);
         let _ = std::fs::remove_dir_all(&tmp);
@@ -1393,8 +1402,7 @@ mod tests {
 
     #[test]
     fn test_detect_project_type_unknown() {
-        let tmp = std::env::temp_dir().join("yoyo_test_unknown");
-        let _ = std::fs::create_dir_all(&tmp);
+        let tmp = test_tmp_dir("unknown");
         // Empty dir — no marker files
         assert_eq!(detect_project_type(&tmp), ProjectType::Unknown);
         let _ = std::fs::remove_dir_all(&tmp);
@@ -1403,8 +1411,7 @@ mod tests {
     #[test]
     fn test_detect_project_type_priority_rust_over_makefile() {
         // If both Cargo.toml and Makefile exist, Rust wins
-        let tmp = std::env::temp_dir().join("yoyo_test_priority");
-        let _ = std::fs::create_dir_all(&tmp);
+        let tmp = test_tmp_dir("priority");
         std::fs::write(tmp.join("Cargo.toml"), "[package]").unwrap();
         std::fs::write(tmp.join("Makefile"), "test:").unwrap();
         assert_eq!(detect_project_type(&tmp), ProjectType::Rust);
@@ -2303,8 +2310,7 @@ mod tests {
 
     #[test]
     fn test_scan_important_files_empty_dir() {
-        let tmp = std::env::temp_dir().join("yoyo_test_init_empty");
-        let _ = std::fs::create_dir_all(&tmp);
+        let tmp = test_tmp_dir("init_empty");
         let files = scan_important_files(&tmp);
         assert!(files.is_empty(), "Empty dir should have no important files");
         let _ = std::fs::remove_dir_all(&tmp);
@@ -2312,8 +2318,7 @@ mod tests {
 
     #[test]
     fn test_scan_important_files_with_readme() {
-        let tmp = std::env::temp_dir().join("yoyo_test_init_readme");
-        let _ = std::fs::create_dir_all(&tmp);
+        let tmp = test_tmp_dir("init_readme");
         std::fs::write(tmp.join("README.md"), "# Hello").unwrap();
         std::fs::write(tmp.join("package.json"), "{}").unwrap();
         let files = scan_important_files(&tmp);
@@ -2341,8 +2346,7 @@ mod tests {
 
     #[test]
     fn test_scan_important_dirs_empty_dir() {
-        let tmp = std::env::temp_dir().join("yoyo_test_init_dirs_empty");
-        let _ = std::fs::create_dir_all(&tmp);
+        let tmp = test_tmp_dir("init_dirs_empty");
         let dirs = scan_important_dirs(&tmp);
         assert!(dirs.is_empty(), "Empty dir should have no important dirs");
         let _ = std::fs::remove_dir_all(&tmp);
@@ -2350,7 +2354,7 @@ mod tests {
 
     #[test]
     fn test_scan_important_dirs_with_subdirs() {
-        let tmp = std::env::temp_dir().join("yoyo_test_init_subdirs");
+        let tmp = test_tmp_dir("init_subdirs");
         let _ = std::fs::create_dir_all(tmp.join("src"));
         let _ = std::fs::create_dir_all(tmp.join("tests"));
         let _ = std::fs::create_dir_all(tmp.join("docs"));
@@ -2401,11 +2405,11 @@ mod tests {
 
     #[test]
     fn test_detect_project_name_fallback_to_dir() {
-        let tmp = std::env::temp_dir().join("yoyo_test_name_fallback");
-        let _ = std::fs::create_dir_all(&tmp);
+        let tmp = test_tmp_dir("name_fallback");
         let name = detect_project_name(&tmp);
+        let dir_name = tmp.file_name().unwrap().to_str().unwrap();
         assert_eq!(
-            name, "yoyo_test_name_fallback",
+            name, dir_name,
             "Should fall back to directory name"
         );
         let _ = std::fs::remove_dir_all(&tmp);
@@ -2413,8 +2417,7 @@ mod tests {
 
     #[test]
     fn test_detect_project_name_from_readme() {
-        let tmp = std::env::temp_dir().join("yoyo_test_name_readme");
-        let _ = std::fs::create_dir_all(&tmp);
+        let tmp = test_tmp_dir("name_readme");
         std::fs::write(tmp.join("README.md"), "# My Awesome Project\n\nSome text.").unwrap();
         let name = detect_project_name(&tmp);
         assert_eq!(
@@ -2426,8 +2429,7 @@ mod tests {
 
     #[test]
     fn test_detect_project_name_from_package_json() {
-        let tmp = std::env::temp_dir().join("yoyo_test_name_pkg");
-        let _ = std::fs::create_dir_all(&tmp);
+        let tmp = test_tmp_dir("name_pkg");
         std::fs::write(
             tmp.join("package.json"),
             "{\n  \"name\": \"cool-app\",\n  \"version\": \"1.0.0\"\n}",
@@ -2486,8 +2488,7 @@ mod tests {
 
     #[test]
     fn test_generate_init_content_empty_dir() {
-        let tmp = std::env::temp_dir().join("yoyo_test_init_gen_empty");
-        let _ = std::fs::create_dir_all(&tmp);
+        let tmp = test_tmp_dir("init_gen_empty");
         let content = generate_init_content(&tmp);
         // Should still have sections even for empty/unknown project
         assert!(content.contains("# Project Context"));
@@ -2500,8 +2501,7 @@ mod tests {
 
     #[test]
     fn test_generate_init_content_node_project() {
-        let tmp = std::env::temp_dir().join("yoyo_test_init_gen_node");
-        let _ = std::fs::create_dir_all(&tmp);
+        let tmp = test_tmp_dir("init_gen_node");
         std::fs::write(
             tmp.join("package.json"),
             "{\n  \"name\": \"my-app\",\n  \"version\": \"1.0.0\"\n}",
@@ -3230,10 +3230,7 @@ mod tests {
 
     #[test]
     fn test_memory_crud_roundtrip() {
-        use std::fs;
-        let dir = std::env::temp_dir().join("yoyo_test_memory_cmd_crud");
-        let _ = fs::remove_dir_all(&dir);
-        let _ = fs::create_dir_all(&dir);
+        let dir = test_tmp_dir("memory_cmd_crud");
         let path = dir.join("memory.json");
 
         // Start empty
@@ -3258,7 +3255,7 @@ mod tests {
         assert_eq!(reloaded.entries.len(), 1);
         assert_eq!(reloaded.entries[0].note, "docker needed");
 
-        let _ = fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
