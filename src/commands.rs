@@ -400,43 +400,34 @@ pub fn help_text() -> String {
     out.push_str("  /forget <n>        Remove a project memory by index\n");
     out.push('\n');
 
-    // ── Journalist (기자업무) ──
-    out.push_str("  ── 기자업무 ──\n");
-    out.push_str(
-        "  /article [--type TYPE] [topic]   기사 작성 (straight/feature/analysis/planning/interview/column/editorial)\n",
-    );
+    // ── 취재·리서치 ──
+    out.push_str("  ── 취재·리서치 ──\n");
     out.push_str(
         "  /research <topic>  웹 리서치 (DuckDuckGo/Naver 검색)\n",
     );
     out.push_str(
-        "  /sources [cmd]     취재원 DB 관리 (add|list|search|remove|edit)\n",
+        "  /news <키워드>         네이버 뉴스 검색 (save로 클립 저장)\n",
     );
     out.push_str(
         "  /factcheck <claim> 팩트체크 (다중 소스 검증)\n",
     );
     out.push_str(
-        "  /briefing [text|--file <path>]  보도자료 → 기사 초안 변환\n",
+        "  /sources [cmd]     취재원 DB 관리 (add|list|search|remove|edit)\n",
     );
     out.push_str(
-        "  /checklist [text|--file <path>] 출고 전 체크리스트 (육하원칙/출처/중립성/법적리스크 등)\n",
+        "  /contact [cmd]     연락처 관리 (add|list|search|remove)\n",
+    );
+    out.push_str(
+        "  /network [cmd]     취재원 네트워크 시각화·분석 (show|add|suggest)\n",
     );
     out.push_str(
         "  /interview <주제> [--source 취재원]  인터뷰 질문지 생성\n",
     );
     out.push_str(
-        "  /compare <파일1> <파일2>  두 기사 초안 비교 분석 (사실/톤/출처/구조 변경)\n",
+        "  /briefing [text|--file <path>]  보도자료 → 기사 초안 변환\n",
     );
     out.push_str(
-        "  /timeline <주제>         주제에 관한 시간순 이벤트 타임라인 생성\n",
-    );
-    out.push_str(
-        "  /translate [lang] [text|--file <path>] [--glossary <path>]  기사 번역 (방향 지정·용어사전)\n",
-    );
-    out.push_str(
-        "  /headline [text|--file <path>]   헤드라인 후보 5~7개 생성 (스트레이트/분석/피처/클릭유도)\n",
-    );
-    out.push_str(
-        "  /rewrite [text|--file <path>]    기사 재작성 (--style 스트레이트/피처/칼럼/요약/SNS --length 글자수)\n",
+        "  /wire [키워드]         통신사 기사 모니터링·분석\n",
     );
     out.push_str(
         "  /clip <URL>            URL 기사 스크랩 (본문 추출 후 저장)\n",
@@ -445,22 +436,93 @@ pub fn help_text() -> String {
         "  /clip list             스크랩 목록 보기\n",
     );
     out.push_str(
-        "  /news <키워드>         네이버 뉴스 검색 (save로 클립 저장)\n",
+        "  /timeline <주제>         주제에 관한 시간순 이벤트 타임라인 생성\n",
     );
     out.push_str(
         "  /trend <키워드>        키워드 뉴스 트렌드 분석 (보도량/프레임/각도/타이밍)\n",
     );
     out.push_str(
-        "  /summary <path|text>   문서 빠른 요약 (3~5줄)\n",
+        "  /rival [cmd]       경쟁사 보도 모니터링 (add|list|check|remove)\n",
     );
     out.push_str(
-        "  /stats [파일경로]      기사 통계 (글자/단어/문장/문단 수, 읽기 시간)\n",
+        "  /alert [cmd]       키워드 뉴스 모니터링 (add|list|check|remove)\n",
     );
     out.push_str(
-        "  /readability [파일]    가독성 점수 (문장 길이, 수동태, 전문 용어, 등급)\n",
+        "  /rss [cmd]         RSS 피드 구독·확인 (add|list|check|remove)\n",
+    );
+    out.push_str(
+        "  /data [파일|URL]       데이터 분석·시각화 (CSV/JSON/통계)\n",
+    );
+    out.push_str(
+        "  /law <키워드>          법령·판례 검색\n",
+    );
+    out.push_str(
+        "  /note [cmd]        취재 노트 관리 (add|list|search|remove)\n",
+    );
+    out.push_str(
+        "  /diary [cmd]       취재 일지 (write|list|view)\n",
+    );
+    out.push('\n');
+
+    // ── 기사작성·편집 ──
+    out.push_str("  ── 기사작성·편집 ──\n");
+    out.push_str(
+        "  /article [--type TYPE] [topic]   기사 작성 (straight/feature/analysis/planning/interview/column/editorial)\n",
     );
     out.push_str(
         "  /draft <sub> <제목>    기사 초안 버전 관리 (save|list|load|diff)\n",
+    );
+    out.push_str(
+        "  /template [name]       기사 템플릿 불러오기 (straight/feature/interview 등)\n",
+    );
+    out.push_str(
+        "  /headline [text|--file <path>]   헤드라인 후보 5~7개 생성 (스트레이트/분석/피처/클릭유도)\n",
+    );
+    out.push_str(
+        "  /rewrite [text|--file <path>]    기사 재작성 (--style 스트레이트/피처/칼럼/요약/SNS --length 글자수)\n",
+    );
+    out.push_str(
+        "  /proofread [text|--file <path>]  한국어 기사 교열 (맞춤법/문법/뉴스문체)\n",
+    );
+    out.push_str(
+        "  /translate [lang] [text|--file <path>] [--glossary <path>]  기사 번역 (방향 지정·용어사전)\n",
+    );
+    out.push_str(
+        "  /summary <path|text>   문서 빠른 요약 (3~5줄)\n",
+    );
+    out.push_str(
+        "  /compare <파일1> <파일2>  두 기사 초안 비교 분석 (사실/톤/출처/구조 변경)\n",
+    );
+    out.push_str(
+        "  /quote [cmd]       인용문 관리 (add|list|search|remove)\n",
+    );
+    out.push_str(
+        "  /anonymize [text|--file <path>]  기사 내 취재원 익명화 처리\n",
+    );
+    out.push_str(
+        "  /correction [cmd]  정정보도 관리 (create|list|view)\n",
+    );
+    out.push_str(
+        "  /improve [text|--file <path>]    기사 개선 제안 (구조/표현/논리)\n",
+    );
+    out.push_str(
+        "  /breaking [topic]      속보 기사 빠른 작성\n",
+    );
+    out.push('\n');
+
+    // ── 워크플로우·관리 ──
+    out.push_str("  ── 워크플로우·관리 ──\n");
+    out.push_str(
+        "  /morning [topic]       모닝 브리핑 (오늘의 뉴스·일정·할일 요약)\n",
+    );
+    out.push_str(
+        "  /recap                 데일리 리캡 (오늘 작업 요약)\n",
+    );
+    out.push_str(
+        "  /checklist [text|--file <path>] 출고 전 체크리스트 (육하원칙/출처/중립성/법적리스크 등)\n",
+    );
+    out.push_str(
+        "  /legal [text|--file <path>]  기사 법적 리스크 사전 점검 (명예훼손/초상권/반론권)\n",
     );
     out.push_str(
         "  /deadline <sub>        마감 카운트다운 (set|list|clear)\n",
@@ -469,25 +531,7 @@ pub fn help_text() -> String {
         "  /embargo <sub>         엠바고 시간 관리 (set|list|clear)\n",
     );
     out.push_str(
-        "  /export <파일> [--html] 기사 내보내기 (텍스트/HTML)\n",
-    );
-    out.push_str(
-        "  /proofread [text|--file <path>]  한국어 기사 교열 (맞춤법/문법/뉴스문체)\n",
-    );
-    out.push_str(
-        "  /quote [cmd]       인용문 관리 (add|list|search|remove)\n",
-    );
-    out.push_str(
-        "  /alert [cmd]       키워드 뉴스 모니터링 (add|list|check|remove)\n",
-    );
-    out.push_str(
-        "  /legal [text|--file <path>]  기사 법적 리스크 사전 점검 (명예훼손/초상권/반론권)\n",
-    );
-    out.push_str(
-        "  /archive [cmd]     출고 기사 아카이브 (save|list|search|view)\n",
-    );
-    out.push_str(
-        "  /follow [cmd]      후속 보도 추적 (add|list|done|remind)\n",
+        "  /calendar [cmd]        취재 일정 관리 (add|list|today|week)\n",
     );
     out.push_str(
         "  /desk [cmd]        데스크 업무 지시 큐 (assign|list|done|feedback|pitch)\n",
@@ -496,7 +540,60 @@ pub fn help_text() -> String {
         "  /collaborate [cmd] 공동취재 메모 공유 (start|note|list|view|close)\n",
     );
     out.push_str(
+        "  /follow [cmd]      후속 보도 추적 (add|list|done|remind)\n",
+    );
+    out.push_str(
+        "  /archive [cmd]     출고 기사 아카이브 (save|list|search|view)\n",
+    );
+    out.push_str(
         "  /pipeline [cmd]    커맨드 자동 연쇄 실행 (save|run|list|show|remove)\n",
+    );
+    out.push('\n');
+
+    // ── 발행·성과 ──
+    out.push_str("  ── 발행·성과 ──\n");
+    out.push_str(
+        "  /export <파일> [--html] 기사 내보내기 (텍스트/HTML)\n",
+    );
+    out.push_str(
+        "  /publish [--platform]  기사 발행 (CMS/이메일/SNS)\n",
+    );
+    out.push_str(
+        "  /multiformat [파일]    기사 다중 포맷 출력 (웹/SNS/뉴스레터)\n",
+    );
+    out.push_str(
+        "  /sns [cmd]         SNS 포스팅 생성 (twitter|facebook|instagram)\n",
+    );
+    out.push_str(
+        "  /press [topic]         보도자료 작성\n",
+    );
+    out.push_str(
+        "  /stats [파일경로]      기사 통계 (글자/단어/문장/문단 수, 읽기 시간)\n",
+    );
+    out.push_str(
+        "  /readability [파일]    가독성 점수 (문장 길이, 수동태, 전문 용어, 등급)\n",
+    );
+    out.push_str(
+        "  /quality [파일]        기사 품질 종합 점수 (정확성/균형/가독성/구조)\n",
+    );
+    out.push_str(
+        "  /performance [기간]    기사 성과 분석 (조회수/공유/댓글 트래킹)\n",
+    );
+    out.push_str(
+        "  /coverage [주제]       커버리지 분석 (보도 범위·깊이·빈도)\n",
+    );
+    out.push_str(
+        "  /dashboard             작업 현황 대시보드 (마감/진행/성과 한눈에)\n",
+    );
+    out.push_str(
+        "  /autopitch [topic]     기사 아이디어 자동 제안 (트렌드 기반)\n",
+    );
+    out.push('\n');
+
+    // ── 프로필·설정 ──
+    out.push_str("  ── 프로필·설정 ──\n");
+    out.push_str(
+        "  /profile [cmd]     기자 프로필 관리 (show|set|edit)\n",
     );
     out.push('\n');
 
@@ -3069,52 +3166,12 @@ mod tests {
     #[test]
     fn test_help_text_contains_all_commands() {
         let text = help_text();
-        let expected = [
-            "/help",
-            "/quit",
-            "/exit",
-            "/clear",
-            "/compact",
-            "/save",
-            "/load",
-            "/retry",
-            "/status",
-            "/tokens",
-            "/cost",
-            "/config",
-            "/version",
-            "/history",
-            "/search",
-            "/mark",
-            "/jump",
-            "/marks",
-            "/git",
-            "/diff",
-            "/undo",
-            "/commit",
-            "/pr",
-            "/review",
-            "/context",
-            "/init",
-            "/health",
-            "/fix",
-            "/test",
-            "/lint",
-            "/run",
-            "/docs",
-            "/find",
-            "/index",
-            "/tree",
-            "/model",
-            "/think",
-            "/spawn",
-            "/remember",
-            "/memories",
-            "/forget",
-            "/provider",
-        ];
-        for cmd in &expected {
-            assert!(text.contains(cmd), "help text should contain {cmd}");
+        // Every command in KNOWN_COMMANDS must appear in help text
+        for cmd in KNOWN_COMMANDS {
+            assert!(
+                text.contains(cmd),
+                "help text should contain {cmd}"
+            );
         }
     }
 
@@ -3126,6 +3183,11 @@ mod tests {
             "── Git ──",
             "── Project ──",
             "── AI ──",
+            "── 취재·리서치 ──",
+            "── 기사작성·편집 ──",
+            "── 워크플로우·관리 ──",
+            "── 발행·성과 ──",
+            "── 프로필·설정 ──",
             "── Input ──",
         ];
         for cat in &categories {
@@ -3190,8 +3252,8 @@ mod tests {
     fn test_help_text_ai_commands_under_ai_header() {
         let text = help_text();
         let ai_start = text.find("── AI ──").expect("AI header missing");
-        let input_start = text.find("── Input ──").expect("Input header missing");
-        let ai_section = &text[ai_start..input_start];
+        let next_start = text.find("── 취재·리서치 ──").expect("취재·리서치 header missing");
+        let ai_section = &text[ai_start..next_start];
         for cmd in &[
             "/model",
             "/think",
