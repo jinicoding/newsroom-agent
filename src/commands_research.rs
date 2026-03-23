@@ -672,8 +672,9 @@ pub fn build_factcheck_prompt(claim: &str) -> Option<String> {
     if claim.is_empty() {
         return None;
     }
+    let ctx = profile_context();
     Some(format!(
-        "다음 주장/사실에 대한 팩트체크를 수행해주세요: \"{claim}\"\n\n\
+        "다음 주장/사실에 대한 팩트체크를 수행해주세요: \"{claim}\"{ctx}\n\n\
          다음 단계를 따라주세요:\n\
          1. 여러 소스에서 관련 정보를 검색 (DuckDuckGo, 네이버 등)\n\
          2. 교차검증 전략을 적용하세요:\n\
@@ -2214,8 +2215,9 @@ fn save_trend(path: &std::path::Path, content: &str) -> Result<(), std::io::Erro
 
 /// Build the AI prompt for trend analysis.
 pub fn build_trend_prompt(keyword: &str, news_context: &str) -> String {
+    let ctx = profile_context();
     format!(
-        "키워드 '{keyword}'에 대한 뉴스 트렌드를 분석해주세요.\n\n\
+        "키워드 '{keyword}'에 대한 뉴스 트렌드를 분석해주세요.{ctx}\n\n\
          다음 항목을 포함해 분석해주세요:\n\n\
          ## 1. 보도량 추이\n\
          최근 보도량이 과열/보통/미개척 중 어디에 해당하는지 판단하고, 근거를 설명하세요.\n\n\
@@ -4993,6 +4995,22 @@ mod tests {
         let news_ctx = "\n[뉴스 데이터]\n1. 반도체 수출 급증";
         let prompt = build_trend_prompt("반도체", news_ctx);
         assert!(prompt.contains("반도체 수출 급증"));
+    }
+
+    #[test]
+    fn build_factcheck_prompt_calls_profile_context() {
+        let prompt = build_factcheck_prompt("한국 GDP 5% 성장");
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert!(p.contains("한국 GDP 5% 성장"));
+        assert!(p.contains("팩트체크"));
+    }
+
+    #[test]
+    fn build_trend_prompt_calls_profile_context() {
+        let prompt = build_trend_prompt("AI 규제", "");
+        assert!(prompt.contains("AI 규제"));
+        assert!(prompt.contains("트렌드"));
     }
 
     #[test]

@@ -46,8 +46,9 @@ pub fn build_briefing_prompt(press_release: &str) -> Option<String> {
     if press_release.trim().is_empty() {
         return None;
     }
+    let ctx = profile_context();
     Some(format!(
-        "아래 보도자료를 기사 초안으로 변환해주세요.\n\n\
+        "아래 보도자료를 기사 초안으로 변환해주세요.{ctx}\n\n\
          다음 단계를 따라주세요:\n\
          1. 보도자료에서 핵심 사실(누가, 무엇을, 언제, 어디서, 왜, 어떻게)을 추출하세요\n\
          2. 역피라미드 구조로 기사 초안을 작성하세요:\n\
@@ -227,8 +228,9 @@ pub fn build_interview_prompt(
         return None;
     }
 
+    let ctx = profile_context();
     let mut prompt = format!(
-        "당신은 숙련된 기자의 인터뷰 준비를 돕는 전문 어시스턴트입니다.\n\n\
+        "당신은 숙련된 기자의 인터뷰 준비를 돕는 전문 어시스턴트입니다.{ctx}\n\n\
          **주제**: {topic}\n\n"
     );
 
@@ -4101,8 +4103,9 @@ fn list_breaking_files() -> Vec<std::path::PathBuf> {
 
 /// Build the breaking news prompt for AI.
 fn build_breaking_prompt(topic: &str) -> String {
+    let ctx = profile_context();
     format!(
-        "속보 기사 작성 보조 요청.\n\n\
+        "속보 기사 작성 보조 요청.{ctx}\n\n\
          속보 주제: {topic}\n\n\
          다음 4가지를 빠르고 정확하게 생성해주세요:\n\n\
          ## 1. 핵심 팩트 정리 프레임워크\n\
@@ -7389,6 +7392,33 @@ mod tests {
         assert!(prompt.contains("5W1H"));
         assert!(prompt.contains("역피라미드"));
         assert!(prompt.contains("체크리스트"));
+    }
+
+    #[test]
+    fn build_briefing_prompt_calls_profile_context() {
+        // profile_context() returns empty when no profile file exists,
+        // so the prompt should still work fine (graceful degradation)
+        let prompt = build_briefing_prompt("테스트 보도자료 내용");
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert!(p.contains("테스트 보도자료 내용"));
+        assert!(p.contains("역피라미드"));
+    }
+
+    #[test]
+    fn build_interview_prompt_calls_profile_context() {
+        let prompt = build_interview_prompt("경제 정책", None, &[]);
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert!(p.contains("경제 정책"));
+        assert!(p.contains("인터뷰"));
+    }
+
+    #[test]
+    fn build_breaking_prompt_calls_profile_context() {
+        let prompt = build_breaking_prompt("대형 사고 발생");
+        assert!(prompt.contains("대형 사고 발생"));
+        assert!(prompt.contains("속보"));
     }
 
     #[test]

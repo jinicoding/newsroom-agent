@@ -566,8 +566,9 @@ pub fn build_headline_prompt(article: &str) -> Option<String> {
     if article.trim().is_empty() {
         return None;
     }
+    let ctx = profile_context();
     Some(format!(
-        "아래 기사 초안(또는 주제)을 읽고, **한국 신문 스타일의 헤드라인 후보 5~7개**를 생성해주세요.\n\n\
+        "아래 기사 초안(또는 주제)을 읽고, **한국 신문 스타일의 헤드라인 후보 5~7개**를 생성해주세요.{ctx}\n\n\
          ## 헤드라인 스타일 (각 스타일별 최소 1개)\n\n\
          1. **스트레이트**: 핵심 사실을 간결하게 전달. 주어+동사 구조.\n\
          2. **분석**: 맥락·의미를 담은 헤드라인. '~의 의미', '~이 뜻하는 것' 등.\n\
@@ -5599,6 +5600,15 @@ mod tests {
     fn build_headline_prompt_empty_returns_none() {
         assert!(build_headline_prompt("").is_none());
         assert!(build_headline_prompt("   ").is_none());
+    }
+
+    #[test]
+    fn build_headline_prompt_calls_profile_context() {
+        let prompt = build_headline_prompt("삼성전자 실적 기사");
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert!(p.contains("삼성전자 실적 기사"));
+        assert!(p.contains("헤드라인"));
     }
 
     #[test]

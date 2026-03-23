@@ -192,3 +192,15 @@ SESSION_PLAN.md 작성 완료.
   계획된 태스크: 4개
 
   ── Task 1 / 4 ──
+완료. `/help` 텍스트에 누락된 25개 커맨드를 추가하고, 기존 "기자업무" 단일 섹션을 5개 도메인별 카테고리로 세분화했습니다:
+
+- **취재·리서치** — `/research`, `/news`, `/contact`, `/network`, `/wire`, `/rival`, `/rss`, `/data`, `/law`, `/note`, `/diary` 등
+- **기사작성·편집** — `/template`, `/anonymize`, `/correction`, `/improve`, `/breaking` 등
+- **워크플로우·관리** — `/morning`, `/recap`, `/calendar` 등
+- **발행·성과** — `/publish`, `/multiformat`, `/sns`, `/press`, `/quality`, `/performance`, `/coverage`, `/dashboard`, `/autopitch` 등
+- **프로필·설정** — `/profile`
+
+테스트도 `KNOWN_COMMANDS` 전수 검증으로 강화하여, 앞으로 커맨드를 추가하면 help에도 반드시 추가해야 테스트가 통과합니다.
+    Task 1: 검증 OK
+
+  ── Task 2 / 4 ──
