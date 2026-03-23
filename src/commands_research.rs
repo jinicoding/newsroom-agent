@@ -4396,6 +4396,365 @@ pub fn handle_jsearch(input: &str) {
     println!();
 }
 
+// ── /monitor — 키워드 지속 모니터링과 변화 감지 ──────────────────────────
+
+/// Directory for monitor data.
+const MONITOR_DIR: &str = ".journalist/monitor";
+
+/// Subcommand names for `/monitor <Tab>` completion.
+pub const MONITOR_SUBCOMMANDS: &[&str] = &["add", "list", "check", "history", "remove"];
+
+/// Load the monitor keywords list from a given path.
+fn load_monitor_keywords_from(path: &std::path::Path) -> Vec<serde_json::Value> {
+    if !path.exists() {
+        return Vec::new();
+    }
+    match std::fs::read_to_string(path) {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Load the monitor keywords from the default path.
+fn load_monitor_keywords() -> Vec<serde_json::Value> {
+    load_monitor_keywords_from(std::path::Path::new(MONITOR_DIR).join("keywords.json").as_path())
+}
+
+/// Save monitor keywords to a given path.
+fn save_monitor_keywords_to(keywords: &[serde_json::Value], path: &std::path::Path) {
+    ensure_sources_dir_at(path);
+    if let Ok(json) = serde_json::to_string_pretty(keywords) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
+/// Save monitor keywords to the default path.
+fn save_monitor_keywords(keywords: &[serde_json::Value]) {
+    let path = std::path::Path::new(MONITOR_DIR).join("keywords.json");
+    save_monitor_keywords_to(keywords, &path);
+}
+
+/// Load history entries for a keyword from a given directory.
+pub fn load_monitor_history_from(
+    keyword: &str,
+    monitor_dir: &std::path::Path,
+) -> Vec<serde_json::Value> {
+    let slug = topic_to_slug(keyword, 50);
+    let path = monitor_dir.join(format!("{slug}_history.json"));
+    if !path.exists() {
+        return Vec::new();
+    }
+    match std::fs::read_to_string(&path) {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Load history entries for a keyword from the default monitor directory.
+fn load_monitor_history(keyword: &str) -> Vec<serde_json::Value> {
+    load_monitor_history_from(keyword, std::path::Path::new(MONITOR_DIR))
+}
+
+/// Save history entries for a keyword to a given directory.
+pub fn save_monitor_history_to(
+    keyword: &str,
+    history: &[serde_json::Value],
+    monitor_dir: &std::path::Path,
+) {
+    let slug = topic_to_slug(keyword, 50);
+    let path = monitor_dir.join(format!("{slug}_history.json"));
+    ensure_sources_dir_at(&path);
+    if let Ok(json) = serde_json::to_string_pretty(history) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
+/// Save history entries for a keyword to the default monitor directory.
+fn save_monitor_history(keyword: &str, history: &[serde_json::Value]) {
+    save_monitor_history_to(keyword, history, std::path::Path::new(MONITOR_DIR));
+}
+
+/// Detect new headlines that don't appear in the previous check's headlines.
+pub fn detect_new_headlines(
+    current: &[String],
+    previous: &[String],
+) -> Vec<String> {
+    current
+        .iter()
+        .filter(|h| !previous.iter().any(|p| p == *h))
+        .cloned()
+        .collect()
+}
+
+/// Handle `/monitor` command dispatch.
+pub fn handle_monitor(input: &str) {
+    let args = input.strip_prefix("/monitor").unwrap_or("").trim();
+
+    match args.split_whitespace().next().unwrap_or("list") {
+        "add" => {
+            let rest = args.strip_prefix("add").unwrap_or("").trim();
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /monitor add <키워드>{RESET}");
+                println!("{DIM}  예시: /monitor add 반도체 수출규제{RESET}\n");
+            } else {
+                monitor_add(rest);
+            }
+        }
+        "list" => {
+            monitor_list();
+        }
+        "check" => {
+            monitor_check();
+        }
+        "history" => {
+            let rest = args.strip_prefix("history").unwrap_or("").trim();
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /monitor history <키워드>{RESET}");
+                println!("{DIM}  예시: /monitor history 반도체{RESET}\n");
+            } else {
+                monitor_history_display(rest);
+            }
+        }
+        "remove" => {
+            let rest = args.strip_prefix("remove").unwrap_or("").trim();
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /monitor remove <번호>{RESET}");
+                println!("{DIM}  예시: /monitor remove 2{RESET}\n");
+            } else {
+                monitor_remove(rest);
+            }
+        }
+        other => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {other}{RESET}");
+            println!("{DIM}  사용법: /monitor [add|list|check|history|remove]{RESET}\n");
+        }
+    }
+}
+
+fn monitor_add(keyword: &str) {
+    let keyword = keyword.trim();
+    let mut keywords = load_monitor_keywords();
+
+    if keywords
+        .iter()
+        .any(|k| k["keyword"].as_str() == Some(keyword))
+    {
+        println!("{DIM}  '{keyword}' 키워드는 이미 모니터링 중입니다.{RESET}\n");
+        return;
+    }
+
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let timestamp = format_unix_timestamp(secs);
+
+    let entry = serde_json::json!({
+        "keyword": keyword,
+        "created": timestamp,
+    });
+    keywords.push(entry);
+    save_monitor_keywords(&keywords);
+
+    println!("{DIM}  모니터링 등록됨: \"{keyword}\" [{timestamp}]{RESET}\n");
+}
+
+fn monitor_list() {
+    let keywords = load_monitor_keywords();
+    if keywords.is_empty() {
+        println!("{DIM}  등록된 모니터링 키워드가 없습니다.");
+        println!("  /monitor add <키워드> 로 추가하세요.{RESET}\n");
+        return;
+    }
+
+    println!("{BOLD}  모니터링 키워드 ({} 건){RESET}", keywords.len());
+    println!("{DIM}  ─────────────────────────────{RESET}");
+    for (i, kw) in keywords.iter().enumerate() {
+        let keyword = kw["keyword"].as_str().unwrap_or("?");
+        let created = kw["created"].as_str().unwrap_or("");
+        let history = load_monitor_history(keyword);
+        let check_count = history.len();
+        let last_check = history
+            .last()
+            .and_then(|h| h["checked_at"].as_str())
+            .unwrap_or("없음");
+        println!(
+            "{DIM}  {}. {keyword}  (등록: {created}, 확인: {check_count}회, 최근: {last_check}){RESET}",
+            i + 1
+        );
+    }
+    println!();
+}
+
+fn monitor_check() {
+    let keywords = load_monitor_keywords();
+    if keywords.is_empty() {
+        println!("{DIM}  등록된 모니터링 키워드가 없습니다.");
+        println!("  /monitor add <키워드> 로 추가하세요.{RESET}\n");
+        return;
+    }
+
+    println!(
+        "{BOLD}  모니터링 변화 감지 — {} 개 키워드 확인 중...{RESET}\n",
+        keywords.len()
+    );
+
+    for kw in &keywords {
+        let keyword = kw["keyword"].as_str().unwrap_or("?");
+        println!("{BOLD}  ▶ \"{keyword}\"{RESET}");
+
+        // Fetch current headlines
+        let current_headlines = fetch_naver_headlines(keyword, 10);
+
+        match current_headlines {
+            Ok(headlines) => {
+                // Load previous history
+                let history = load_monitor_history(keyword);
+                let previous_headlines: Vec<String> = history
+                    .last()
+                    .and_then(|h| h["headlines"].as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let new_headlines = detect_new_headlines(&headlines, &previous_headlines);
+
+                if headlines.is_empty() {
+                    println!("{DIM}    검색 결과 없음{RESET}");
+                } else if new_headlines.is_empty() {
+                    println!("{DIM}    변화 없음 (이전과 동일한 {count}건){RESET}", count = headlines.len());
+                } else {
+                    println!(
+                        "{GREEN}    🆕 새 기사 {new}건 발견 (전체 {total}건){RESET}",
+                        new = new_headlines.len(),
+                        total = headlines.len()
+                    );
+                    for (i, h) in new_headlines.iter().enumerate() {
+                        println!("{GREEN}    {idx}. {h}{RESET}", idx = i + 1);
+                    }
+                }
+
+                // Save this check to history
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let timestamp = format_unix_timestamp(secs);
+
+                let entry = serde_json::json!({
+                    "checked_at": timestamp,
+                    "headline_count": headlines.len(),
+                    "new_count": new_headlines.len(),
+                    "headlines": headlines,
+                });
+
+                let mut history = load_monitor_history(keyword);
+                history.push(entry);
+                // Keep last 50 checks max
+                if history.len() > 50 {
+                    history = history.split_off(history.len() - 50);
+                }
+                save_monitor_history(keyword, &history);
+            }
+            Err(e) => {
+                eprintln!("{RED}    뉴스 조회 실패: {e}{RESET}");
+            }
+        }
+        println!();
+    }
+}
+
+/// Fetch headlines from Naver news search for a keyword.
+fn fetch_naver_headlines(keyword: &str, max: usize) -> Result<Vec<String>, String> {
+    let encoded = keyword
+        .as_bytes()
+        .iter()
+        .map(|&b| {
+            if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~' {
+                format!("{}", b as char)
+            } else {
+                format!("%{:02X}", b)
+            }
+        })
+        .collect::<String>();
+
+    let url = format!(
+        "https://search.naver.com/search.naver?where=news&query={encoded}&sort=1&sm=tab_smr"
+    );
+
+    let output = std::process::Command::new("curl")
+        .args(["-sL", "--max-time", "10", &url])
+        .output()
+        .map_err(|e| format!("{e}"))?;
+
+    let body = String::from_utf8_lossy(&output.stdout);
+    Ok(extract_naver_news_headlines(&body, max))
+}
+
+fn monitor_history_display(keyword: &str) {
+    let keyword = keyword.trim();
+    let history = load_monitor_history(keyword);
+
+    if history.is_empty() {
+        println!("{DIM}  \"{keyword}\"의 모니터링 히스토리가 없습니다.{RESET}");
+        println!("{DIM}  /monitor check 으로 먼저 확인하세요.{RESET}\n");
+        return;
+    }
+
+    println!(
+        "{BOLD}  \"{keyword}\" 모니터링 히스토리 ({} 회 확인){RESET}",
+        history.len()
+    );
+    println!("{DIM}  ─────────────────────────────{RESET}");
+
+    // Show last 10 checks
+    let start = if history.len() > 10 {
+        history.len() - 10
+    } else {
+        0
+    };
+    for (i, entry) in history[start..].iter().enumerate() {
+        let checked_at = entry["checked_at"].as_str().unwrap_or("?");
+        let total = entry["headline_count"].as_u64().unwrap_or(0);
+        let new_count = entry["new_count"].as_u64().unwrap_or(0);
+        let marker = if new_count > 0 {
+            format!("{GREEN}🆕 +{new_count}{RESET}")
+        } else {
+            format!("{DIM}변화없음{RESET}")
+        };
+        println!(
+            "{DIM}  {idx}. [{checked_at}] {total}건 — {marker}",
+            idx = start + i + 1,
+        );
+    }
+    println!();
+}
+
+fn monitor_remove(idx_str: &str) {
+    let idx: usize = match idx_str.parse() {
+        Ok(n) if n >= 1 => n,
+        _ => {
+            eprintln!("{RED}  유효한 번호를 입력하세요: {idx_str}{RESET}\n");
+            return;
+        }
+    };
+    let mut keywords = load_monitor_keywords();
+    if idx > keywords.len() {
+        eprintln!(
+            "{RED}  범위 밖의 번호: {idx} (전체 {} 건){RESET}\n",
+            keywords.len()
+        );
+        return;
+    }
+    let removed = keywords.remove(idx - 1);
+    save_monitor_keywords(&keywords);
+    let keyword = removed["keyword"].as_str().unwrap_or("?");
+    println!("{DIM}  모니터링 삭제됨: \"{keyword}\"{RESET}\n");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6409,5 +6768,130 @@ mod tests {
         let results = jsearch_in("정정", dir.path());
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].category, "정정기록");
+    }
+
+    // ── /monitor tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn monitor_keywords_add_load_remove() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("keywords.json");
+
+        // Initially empty
+        let keywords = load_monitor_keywords_from(&path);
+        assert!(keywords.is_empty());
+
+        // Add two keywords
+        let kw1 = serde_json::json!({"keyword": "반도체", "created": "2026-03-23"});
+        let kw2 = serde_json::json!({"keyword": "부동산", "created": "2026-03-23"});
+        let keywords = vec![kw1, kw2];
+        save_monitor_keywords_to(&keywords, &path);
+
+        let loaded = load_monitor_keywords_from(&path);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0]["keyword"].as_str().unwrap(), "반도체");
+        assert_eq!(loaded[1]["keyword"].as_str().unwrap(), "부동산");
+
+        // Remove first
+        let mut updated = loaded;
+        updated.remove(0);
+        save_monitor_keywords_to(&updated, &path);
+        let reloaded = load_monitor_keywords_from(&path);
+        assert_eq!(reloaded.len(), 1);
+        assert_eq!(reloaded[0]["keyword"].as_str().unwrap(), "부동산");
+    }
+
+    #[test]
+    fn monitor_history_save_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let monitor_dir = dir.path();
+
+        // Initially empty
+        let history = load_monitor_history_from("반도체", monitor_dir);
+        assert!(history.is_empty());
+
+        // Save a check entry
+        let entry = serde_json::json!({
+            "checked_at": "2026-03-23 10:00",
+            "headline_count": 5,
+            "new_count": 5,
+            "headlines": ["기사1", "기사2", "기사3", "기사4", "기사5"],
+        });
+        save_monitor_history_to("반도체", &[entry], monitor_dir);
+
+        let loaded = load_monitor_history_from("반도체", monitor_dir);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0]["headline_count"].as_u64().unwrap(), 5);
+        assert_eq!(loaded[0]["new_count"].as_u64().unwrap(), 5);
+
+        // Add a second check
+        let entry2 = serde_json::json!({
+            "checked_at": "2026-03-23 12:00",
+            "headline_count": 6,
+            "new_count": 1,
+            "headlines": ["기사1", "기사2", "기사3", "기사4", "기사5", "기사6"],
+        });
+        let mut history = loaded;
+        history.push(entry2);
+        save_monitor_history_to("반도체", &history, monitor_dir);
+
+        let reloaded = load_monitor_history_from("반도체", monitor_dir);
+        assert_eq!(reloaded.len(), 2);
+    }
+
+    #[test]
+    fn detect_new_headlines_finds_diff() {
+        let previous = vec![
+            "기사A".to_string(),
+            "기사B".to_string(),
+            "기사C".to_string(),
+        ];
+        let current = vec![
+            "기사B".to_string(),
+            "기사C".to_string(),
+            "기사D".to_string(),
+            "기사E".to_string(),
+        ];
+
+        let new_ones = detect_new_headlines(&current, &previous);
+        assert_eq!(new_ones.len(), 2);
+        assert!(new_ones.contains(&"기사D".to_string()));
+        assert!(new_ones.contains(&"기사E".to_string()));
+    }
+
+    #[test]
+    fn detect_new_headlines_empty_previous() {
+        let previous: Vec<String> = vec![];
+        let current = vec!["기사A".to_string(), "기사B".to_string()];
+
+        let new_ones = detect_new_headlines(&current, &previous);
+        assert_eq!(new_ones.len(), 2);
+    }
+
+    #[test]
+    fn detect_new_headlines_no_change() {
+        let headlines = vec!["기사A".to_string(), "기사B".to_string()];
+        let new_ones = detect_new_headlines(&headlines, &headlines);
+        assert!(new_ones.is_empty());
+    }
+
+    #[test]
+    fn monitor_history_different_keywords_separate_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let monitor_dir = dir.path();
+
+        let entry1 = serde_json::json!({"checked_at": "t1", "headlines": ["a"]});
+        let entry2 = serde_json::json!({"checked_at": "t2", "headlines": ["b"]});
+
+        save_monitor_history_to("반도체", &[entry1], monitor_dir);
+        save_monitor_history_to("부동산", &[entry2], monitor_dir);
+
+        let h1 = load_monitor_history_from("반도체", monitor_dir);
+        let h2 = load_monitor_history_from("부동산", monitor_dir);
+
+        assert_eq!(h1.len(), 1);
+        assert_eq!(h2.len(), 1);
+        assert_eq!(h1[0]["headlines"][0].as_str().unwrap(), "a");
+        assert_eq!(h2[0]["headlines"][0].as_str().unwrap(), "b");
     }
 }

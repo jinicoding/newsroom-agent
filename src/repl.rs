@@ -705,6 +705,10 @@ pub async fn run_repl(
                 commands::handle_alert(input);
                 continue;
             }
+            s if s == "/monitor" || s.starts_with("/monitor ") => {
+                commands::handle_monitor(input);
+                continue;
+            }
             s if s == "/legal" || s.starts_with("/legal ") => {
                 commands::handle_legal(agent, input, &mut session_total, &agent_config.model)
                     .await;

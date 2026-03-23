@@ -119,6 +119,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/profile",
     "/rss",
     "/jsearch",
+    "/monitor",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -220,7 +221,8 @@ pub use crate::commands_writing::TEMPLATE_SUBCOMMANDS;
 
 /// Re-export subcommand constants from domain modules.
 pub use crate::commands_research::{
-    CONTACT_SUBCOMMANDS, RESEARCH_SUBCOMMANDS, RSS_SUBCOMMANDS, WIRE_SUBCOMMANDS,
+    CONTACT_SUBCOMMANDS, MONITOR_SUBCOMMANDS, RESEARCH_SUBCOMMANDS, RSS_SUBCOMMANDS,
+    WIRE_SUBCOMMANDS,
 };
 pub use crate::commands_workflow::{
     COVERAGE_SUBCOMMANDS, DIARY_SUBCOMMANDS, RECAP_SUBCOMMANDS, RIVAL_SUBCOMMANDS,
@@ -246,6 +248,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/embargo" => filter_candidates(EMBARGO_SUBCOMMANDS, &partial_lower),
         "/quote" => filter_candidates(QUOTE_SUBCOMMANDS, &partial_lower),
         "/alert" => filter_candidates(ALERT_SUBCOMMANDS, &partial_lower),
+        "/monitor" => filter_candidates(MONITOR_SUBCOMMANDS, &partial_lower),
         "/archive" => filter_candidates(ARCHIVE_SUBCOMMANDS, &partial_lower),
         "/data" => filter_candidates(DATA_SUBCOMMANDS, &partial_lower),
         "/follow" => filter_candidates(FOLLOW_SUBCOMMANDS, &partial_lower),
@@ -474,6 +477,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /alert [cmd]       키워드 뉴스 모니터링 (add|list|check|remove)\n",
+    );
+    out.push_str(
+        "  /monitor [cmd]     키워드 지속 모니터링·변화 감지 (add|list|check|history|remove)\n",
     );
     out.push_str(
         "  /rss [cmd]         RSS 피드 구독·확인 (add|list|check|remove)\n",
@@ -910,8 +916,8 @@ pub use crate::commands_project::{
 // Research & source management handlers
 pub use crate::commands_research::{
     handle_alert, handle_clip, handle_contact, handle_factcheck, handle_follow, handle_jsearch,
-    handle_law, handle_network, handle_news, handle_note, handle_press, handle_research,
-    handle_sns, handle_rss, handle_sources, handle_trend, handle_wire,
+    handle_law, handle_monitor, handle_network, handle_news, handle_note, handle_press,
+    handle_research, handle_sns, handle_rss, handle_sources, handle_trend, handle_wire,
 };
 
 // Article writing & editing handlers
