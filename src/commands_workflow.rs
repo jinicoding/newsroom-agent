@@ -5462,11 +5462,7 @@ pub fn handle_pipeline(input: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
-    use crate::commands_project::*;
     use crate::commands_research::*;
-    use crate::commands_writing::*;
-    use crate::commands_workflow::*;
 
     fn save_pipeline_to_dir(
         dir: &std::path::Path,

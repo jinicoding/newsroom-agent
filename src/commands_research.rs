@@ -4759,10 +4759,6 @@ fn monitor_remove(idx_str: &str) {
 mod tests {
     use super::*;
     use std::path::Path;
-    use crate::commands_project::*;
-    use crate::commands_research::*;
-    use crate::commands_writing::*;
-    use crate::commands_workflow::*;
 
     fn temp_sources_path() -> (tempfile::TempDir, std::path::PathBuf) {
         let dir = tempfile::TempDir::new().unwrap();
