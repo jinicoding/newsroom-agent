@@ -830,6 +830,10 @@ pub async fn run_repl(
                 commands::handle_jsearch(input);
                 continue;
             }
+            s if s == "/bigkinds" || s.starts_with("/bigkinds ") => {
+                commands::handle_bigkinds(input);
+                continue;
+            }
             s if s == "/breaking" || s.starts_with("/breaking ") => {
                 commands::handle_breaking(agent, input, &mut session_total, &agent_config.model)
                     .await;

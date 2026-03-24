@@ -1,0 +1,193 @@
+=== Day 7 (2026-03-24 11:00) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+warning: unused import: `std::path::Path`
+    --> src/commands_project.rs:1700:9
+     |
+1700 |     use std::path::Path;
+     |         ^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `crate::commands_project::*`
+    --> src/commands_project.rs:1701:9
+     |
+1701 |     use crate::commands_project::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_research::*`
+    --> src/commands_project.rs:1702:9
+     |
+1702 |     use crate::commands_research::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_writing::*`
+    --> src/commands_project.rs:1703:9
+     |
+1703 |     use crate::commands_writing::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_workflow::*`
+    --> src/commands_project.rs:1704:9
+     |
+1704 |     use crate::commands_workflow::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_project::*`
+    --> src/commands_research.rs:4762:9
+     |
+4762 |     use crate::commands_project::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_research::*`
+    --> src/commands_research.rs:4763:9
+     |
+4763 |     use crate::commands_research::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_writing::*`
+    --> src/commands_research.rs:4764:9
+     |
+4764 |     use crate::commands_writing::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_workflow::*`
+    --> src/commands_research.rs:4765:9
+     |
+4765 |     use crate::commands_workflow::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::path::Path`
+    --> src/commands_workflow.rs:5465:9
+     |
+5465 |     use std::path::Path;
+     |         ^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_project::*`
+    --> src/commands_workflow.rs:5466:9
+     |
+5466 |     use crate::commands_project::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_writing::*`
+    --> src/commands_workflow.rs:5468:9
+     |
+5468 |     use crate::commands_writing::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_workflow::*`
+    --> src/commands_workflow.rs:5469:9
+     |
+5469 |     use crate::commands_workflow::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_project::*`
+    --> src/commands_writing.rs:5584:9
+     |
+5584 |     use crate::commands_project::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_research::*`
+    --> src/commands_writing.rs:5585:9
+     |
+5585 |     use crate::commands_research::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_writing::*`
+    --> src/commands_writing.rs:5586:9
+     |
+5586 |     use crate::commands_writing::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::commands_workflow::*`
+    --> src/commands_writing.rs:5587:9
+     |
+5587 |     use crate::commands_workflow::*;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_sources_path` is never used
+    --> src/commands_project.rs:1706:8
+     |
+1706 |     fn temp_sources_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `temp_deadlines_path` is never used
+    --> src/commands_project.rs:2035:8
+     |
+2035 |     fn temp_deadlines_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_embargoes_path` is never used
+    --> src/commands_project.rs:2041:8
+     |
+2041 |     fn temp_embargoes_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_archive_paths` is never used
+    --> src/commands_project.rs:2047:8
+     |
+2047 |     fn temp_archive_paths() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_desk_path` is never used
+    --> src/commands_project.rs:2055:8
+     |
+2055 |     fn temp_desk_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^
+
+warning: function `temp_collab_dir` is never used
+    --> src/commands_project.rs:2061:8
+     |
+2061 |     fn temp_collab_dir() -> tempfile::TempDir {
+     |        ^^^^^^^^^^^^^^^
+
+warning: function `temp_coverage_path` is never used
+    --> src/commands_project.rs:2065:8
+     |
+2065 |     fn temp_coverage_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_calendar_path` is never used
+    --> src/commands_project.rs:2124:8
+     |
+2124 |     fn temp_calendar_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_performance_path` is never used
+    --> src/commands_project.rs:2195:8
+     |
+2195 |     fn temp_performance_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^^^^
+
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  커뮤니티 이슈 0
+0개 로드.
+→ self 이슈 확인...
+  self 이슈 없음.
+→ help-wanted 이슈 확인...
+  help-wanted 이슈 없음.
+→ 대기 답변 스캔...
+  대기 답변 없음.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md 작성 완료. 3개 태스크를 계획했다:
+
+1. **빌드 경고 정리** — 4개 파일의 테스트 모듈에 있는 ~20개 unused import 제거. CI 안정성 확보가 목적.
+2. **`/bigkinds` 커맨드 신설** — 빅카인즈 뉴스 빅데이터 검색 연동. 한국 기자가 실제로 쓰는 전문 뉴스 DB를 연결하는 것이 이번 세션의 핵심. 네이버 소비자 검색 → 기자용 전문 DB로의 전환점.
+3. **저널 엔트리** — 세션 기록.
+
+커뮤니티 이슈는 오늘 없다. 구현은 하지 않고 계획만 작성했다.
+
+→ Phase B: 구현...
+  계획된 태스크: 3개
+
+  ── Task 1 / 3 ──
+완료. 4개 파일에서 unused import 17개를 제거했습니다. 빌드 경고 없이 깨끗하고, 67개 테스트 모두 통과합니다.
+    Task 1: 검증 OK
+
+  ── Task 2 / 3 ──

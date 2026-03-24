@@ -4755,6 +4755,579 @@ fn monitor_remove(idx_str: &str) {
     println!("{DIM}  모니터링 삭제됨: \"{keyword}\"{RESET}\n");
 }
 
+// ── /bigkinds — 빅카인즈 뉴스 데이터베이스 검색 ──────────────────────────
+
+/// Directory for cached bigkinds search results.
+pub const BIGKINDS_DIR: &str = ".journalist/bigkinds";
+
+/// Subcommand names for `/bigkinds <Tab>` completion.
+pub const BIGKINDS_SUBCOMMANDS: &[&str] = &["search", "trend", "related"];
+
+/// A single BIG KINDS search result.
+#[derive(Debug, Clone)]
+pub struct BigKindsItem {
+    pub title: String,
+    pub provider: String,
+    pub date: String,
+    pub url: String,
+    pub summary: String,
+}
+
+/// A trend data point for BIG KINDS trend analysis.
+#[derive(Debug, Clone)]
+pub struct BigKindsTrend {
+    pub date: String,
+    pub count: u64,
+}
+
+/// A related keyword from BIG KINDS.
+#[derive(Debug, Clone)]
+pub struct BigKindsRelated {
+    pub keyword: String,
+    pub score: f64,
+}
+
+/// Parse BIG KINDS search response JSON into items.
+pub fn parse_bigkinds_search(json: &str) -> Vec<BigKindsItem> {
+    // BIG KINDS API returns: {"result":{"docs":[{"TITLE":"...", "PROVIDER":"...", "DATE":"...", "PROVIDER_LINK_PAGE":"...", "CONTENT":"..."}]}}
+    let docs_start = match json.find("\"docs\"") {
+        Some(pos) => pos,
+        None => return Vec::new(),
+    };
+    let after_docs = &json[docs_start..];
+    let arr_start = match after_docs.find('[') {
+        Some(pos) => pos,
+        None => return Vec::new(),
+    };
+    let arr_content = &after_docs[arr_start..];
+
+    // Find matching bracket
+    let arr_end = find_matching_bracket(arr_content);
+    let arr_str = &arr_content[..arr_end + 1];
+
+    parse_bigkinds_items_from_array(arr_str)
+}
+
+/// Find the position of the closing bracket for an array string starting with '['.
+fn find_matching_bracket(s: &str) -> usize {
+    let mut depth = 0;
+    let mut in_string = false;
+    let mut escape_next = false;
+    for (i, ch) in s.char_indices() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        if ch == '\\' && in_string {
+            escape_next = true;
+            continue;
+        }
+        if ch == '"' {
+            in_string = !in_string;
+            continue;
+        }
+        if in_string {
+            continue;
+        }
+        match ch {
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return i;
+                }
+            }
+            _ => {}
+        }
+    }
+    s.len().saturating_sub(1)
+}
+
+/// Parse individual items from a JSON array string of BIG KINDS docs.
+fn parse_bigkinds_items_from_array(arr: &str) -> Vec<BigKindsItem> {
+    let mut results = Vec::new();
+    // Split by object boundaries
+    let mut depth = 0;
+    let mut obj_start = None;
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    for (i, ch) in arr.char_indices() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        if ch == '\\' && in_string {
+            escape_next = true;
+            continue;
+        }
+        if ch == '"' {
+            in_string = !in_string;
+            continue;
+        }
+        if in_string {
+            continue;
+        }
+        match ch {
+            '{' => {
+                if depth == 0 {
+                    obj_start = Some(i);
+                }
+                depth += 1;
+            }
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    if let Some(start) = obj_start {
+                        let obj = &arr[start..=i];
+                        if let Some(item) = parse_single_bigkinds_item(obj) {
+                            results.push(item);
+                        }
+                    }
+                    obj_start = None;
+                }
+            }
+            _ => {}
+        }
+    }
+    results
+}
+
+/// Parse a single BIG KINDS document JSON object.
+fn parse_single_bigkinds_item(obj: &str) -> Option<BigKindsItem> {
+    let title = json_extract_string(obj, "TITLE").unwrap_or_default();
+    let provider = json_extract_string(obj, "PROVIDER").unwrap_or_default();
+    let date = json_extract_string(obj, "DATE").unwrap_or_default();
+    let url = json_extract_string(obj, "PROVIDER_LINK_PAGE").unwrap_or_default();
+    let summary = json_extract_string(obj, "CONTENT")
+        .map(|c| {
+            let trimmed = c.chars().take(200).collect::<String>();
+            if c.len() > 200 {
+                format!("{trimmed}…")
+            } else {
+                trimmed
+            }
+        })
+        .unwrap_or_default();
+
+    if title.is_empty() {
+        return None;
+    }
+    Some(BigKindsItem {
+        title: strip_html_tags(&title),
+        provider,
+        date,
+        url,
+        summary: strip_html_tags(&summary),
+    })
+}
+
+/// Parse BIG KINDS trend response JSON into trend data points.
+pub fn parse_bigkinds_trend(json: &str) -> Vec<BigKindsTrend> {
+    // Returns: {"result":{"timeline":[{"date":"2026-03-01","count":42},...]}}
+    let timeline_start = match json.find("\"timeline\"") {
+        Some(pos) => pos,
+        None => return Vec::new(),
+    };
+    let after = &json[timeline_start..];
+    let arr_start = match after.find('[') {
+        Some(pos) => pos,
+        None => return Vec::new(),
+    };
+    let arr_content = &after[arr_start..];
+    let arr_end = find_matching_bracket(arr_content);
+    let arr_str = &arr_content[..arr_end + 1];
+
+    let mut results = Vec::new();
+    let mut search_from = 0;
+    while let Some(obj_start) = arr_str[search_from..].find('{') {
+        let abs_start = search_from + obj_start;
+        let obj_end = match arr_str[abs_start..].find('}') {
+            Some(pos) => abs_start + pos + 1,
+            None => break,
+        };
+        let obj = &arr_str[abs_start..obj_end];
+        let date = json_extract_string(obj, "date").unwrap_or_default();
+        let count = json_extract_string(obj, "count")
+            .and_then(|c| c.parse::<u64>().ok())
+            .unwrap_or(0);
+        if !date.is_empty() {
+            results.push(BigKindsTrend { date, count });
+        }
+        search_from = obj_end;
+    }
+    results
+}
+
+/// Parse BIG KINDS related keywords response.
+pub fn parse_bigkinds_related(json: &str) -> Vec<BigKindsRelated> {
+    // Returns: {"result":{"nodes":[{"name":"키워드","weight":0.85},...]}}
+    let nodes_start = match json.find("\"nodes\"") {
+        Some(pos) => pos,
+        None => return Vec::new(),
+    };
+    let after = &json[nodes_start..];
+    let arr_start = match after.find('[') {
+        Some(pos) => pos,
+        None => return Vec::new(),
+    };
+    let arr_content = &after[arr_start..];
+    let arr_end = find_matching_bracket(arr_content);
+    let arr_str = &arr_content[..arr_end + 1];
+
+    let mut results = Vec::new();
+    let mut search_from = 0;
+    while let Some(obj_start) = arr_str[search_from..].find('{') {
+        let abs_start = search_from + obj_start;
+        let obj_end = match arr_str[abs_start..].find('}') {
+            Some(pos) => abs_start + pos + 1,
+            None => break,
+        };
+        let obj = &arr_str[abs_start..obj_end];
+        let name = json_extract_string(obj, "name").unwrap_or_default();
+        let weight = json_extract_string(obj, "weight")
+            .and_then(|w| w.parse::<f64>().ok())
+            .unwrap_or(0.0);
+        if !name.is_empty() {
+            results.push(BigKindsRelated {
+                keyword: name,
+                score: weight,
+            });
+        }
+        search_from = obj_end;
+    }
+    results
+}
+
+/// Format trend data as a simple bar chart.
+pub fn format_trend_chart(trends: &[BigKindsTrend]) -> String {
+    if trends.is_empty() {
+        return String::from("  데이터 없음");
+    }
+    let max_count = trends.iter().map(|t| t.count).max().unwrap_or(1).max(1);
+    let bar_width = 30;
+    let mut out = String::new();
+    for t in trends {
+        let bar_len = (t.count as f64 / max_count as f64 * bar_width as f64) as usize;
+        let bar: String = "█".repeat(bar_len);
+        let pad: String = "░".repeat(bar_width - bar_len);
+        out.push_str(&format!(
+            "  {} {} {}{} ({}건)\n",
+            t.date, " ", bar, pad, t.count
+        ));
+    }
+    out
+}
+
+/// Save bigkinds search results to cache.
+fn save_bigkinds_cache(keyword: &str, subcommand: &str, content: &str) -> Result<(), std::io::Error> {
+    let dir = std::path::Path::new(BIGKINDS_DIR);
+    std::fs::create_dir_all(dir)?;
+    let slug = topic_to_slug(keyword, 30);
+    let date = today_str();
+    let filename = format!("{date}_{subcommand}_{slug}.json");
+    std::fs::write(dir.join(filename), content)
+}
+
+/// Build BIG KINDS search API request via curl.
+fn bigkinds_search(keyword: &str, count: u32) -> Result<String, String> {
+    let api_key = std::env::var("BIGKINDS_API_KEY")
+        .map_err(|_| "BIGKINDS_API_KEY 환경변수가 설정되지 않았습니다. https://www.bigkinds.or.kr 에서 API 키를 발급받으세요.".to_string())?;
+
+    let body = format!(
+        r#"{{"access_key":"{}","argument":{{"query":"{}","published_at":{{"from":"{}","until":"{}"}},"provider":[],"category":[],"sort":{{"date":"desc"}},"hilight":200,"return_from":0,"return_size":{}}}}}"#,
+        api_key,
+        keyword.replace('"', "\\\""),
+        thirty_days_ago(),
+        today_str(),
+        count
+    );
+
+    let output = std::process::Command::new("curl")
+        .args([
+            "-s",
+            "--max-time",
+            "15",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            &body,
+            "https://tools.kinds.or.kr:8443/search/news",
+        ])
+        .output()
+        .map_err(|e| format!("curl 실행 실패: {e}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "API 요청 실패: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Build BIG KINDS trend API request via curl.
+fn bigkinds_trend(keyword: &str) -> Result<String, String> {
+    let api_key = std::env::var("BIGKINDS_API_KEY")
+        .map_err(|_| "BIGKINDS_API_KEY 환경변수가 설정되지 않았습니다.".to_string())?;
+
+    let body = format!(
+        r#"{{"access_key":"{}","argument":{{"query":"{}","published_at":{{"from":"{}","until":"{}"}},"provider":[]}}}}"#,
+        api_key,
+        keyword.replace('"', "\\\""),
+        thirty_days_ago(),
+        today_str(),
+    );
+
+    let output = std::process::Command::new("curl")
+        .args([
+            "-s",
+            "--max-time",
+            "15",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            &body,
+            "https://tools.kinds.or.kr:8443/search/news",
+        ])
+        .output()
+        .map_err(|e| format!("curl 실행 실패: {e}"))?;
+
+    if !output.status.success() {
+        return Err("API 요청 실패".to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Build BIG KINDS related keywords API request via curl.
+fn bigkinds_related(keyword: &str) -> Result<String, String> {
+    let api_key = std::env::var("BIGKINDS_API_KEY")
+        .map_err(|_| "BIGKINDS_API_KEY 환경변수가 설정되지 않았습니다.".to_string())?;
+
+    let body = format!(
+        r#"{{"access_key":"{}","argument":{{"query":"{}","published_at":{{"from":"{}","until":"{}"}},"provider":[]}}}}"#,
+        api_key,
+        keyword.replace('"', "\\\""),
+        thirty_days_ago(),
+        today_str(),
+    );
+
+    let output = std::process::Command::new("curl")
+        .args([
+            "-s",
+            "--max-time",
+            "15",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            &body,
+            "https://tools.kinds.or.kr:8443/search/news",
+        ])
+        .output()
+        .map_err(|e| format!("curl 실행 실패: {e}"))?;
+
+    if !output.status.success() {
+        return Err("API 요청 실패".to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Get date string for 30 days ago (YYYY-MM-DD).
+fn thirty_days_ago() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let thirty_days = 30 * 24 * 60 * 60;
+    let past = now - thirty_days;
+    // Convert epoch to YYYY-MM-DD
+    let days_since_epoch = past / 86400;
+    epoch_days_to_date(days_since_epoch)
+}
+
+/// Convert days since Unix epoch to YYYY-MM-DD string.
+fn epoch_days_to_date(days: u64) -> String {
+    // Simple Gregorian calendar conversion
+    let mut y = 1970i64;
+    let mut remaining = days as i64;
+
+    loop {
+        let days_in_year = if is_leap_year(y) { 366 } else { 365 };
+        if remaining < days_in_year {
+            break;
+        }
+        remaining -= days_in_year;
+        y += 1;
+    }
+
+    let month_days = if is_leap_year(y) {
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+
+    let mut m = 0;
+    for (i, &md) in month_days.iter().enumerate() {
+        if remaining < md as i64 {
+            m = i;
+            break;
+        }
+        remaining -= md as i64;
+    }
+
+    format!("{:04}-{:02}-{:02}", y, m + 1, remaining + 1)
+}
+
+fn is_leap_year(y: i64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+/// Handle the `/bigkinds` command.
+pub fn handle_bigkinds(input: &str) {
+    let args = input.strip_prefix("/bigkinds").unwrap_or("").trim();
+
+    if args.is_empty() || args == "help" {
+        println!("{DIM}  사용법: /bigkinds search <키워드>   빅카인즈 뉴스 검색{RESET}");
+        println!("{DIM}          /bigkinds trend <키워드>    키워드 언급량 추이{RESET}");
+        println!("{DIM}          /bigkinds related <키워드>  연관어 분석{RESET}");
+        println!("{DIM}  환경변수: BIGKINDS_API_KEY (https://www.bigkinds.or.kr 에서 발급){RESET}");
+        println!("{DIM}  예시:   /bigkinds search 반도체 수출{RESET}");
+        println!("{DIM}          /bigkinds trend AI{RESET}\n");
+        return;
+    }
+
+    if let Some(keyword) = args.strip_prefix("search") {
+        let keyword = keyword.trim();
+        if keyword.is_empty() {
+            eprintln!("{RED}  검색 키워드를 입력하세요. 예: /bigkinds search 반도체{RESET}\n");
+            return;
+        }
+        handle_bigkinds_search(keyword);
+    } else if let Some(keyword) = args.strip_prefix("trend") {
+        let keyword = keyword.trim();
+        if keyword.is_empty() {
+            eprintln!("{RED}  키워드를 입력하세요. 예: /bigkinds trend AI{RESET}\n");
+            return;
+        }
+        handle_bigkinds_trend(keyword);
+    } else if let Some(keyword) = args.strip_prefix("related") {
+        let keyword = keyword.trim();
+        if keyword.is_empty() {
+            eprintln!("{RED}  키워드를 입력하세요. 예: /bigkinds related 반도체{RESET}\n");
+            return;
+        }
+        handle_bigkinds_related(keyword);
+    } else {
+        // Treat bare argument as search
+        handle_bigkinds_search(args);
+    }
+}
+
+fn handle_bigkinds_search(keyword: &str) {
+    println!("{DIM}  빅카인즈에서 '{keyword}' 검색 중...{RESET}");
+    match bigkinds_search(keyword, 10) {
+        Ok(json) => {
+            let items = parse_bigkinds_search(&json);
+            if items.is_empty() {
+                println!("{DIM}  검색 결과가 없습니다.{RESET}\n");
+                return;
+            }
+            println!();
+            for (i, item) in items.iter().enumerate() {
+                println!(
+                    "  {BOLD}{YELLOW}[{}]{RESET} {BOLD}{}{RESET}",
+                    i + 1,
+                    item.title
+                );
+                let meta_parts: Vec<&str> = [item.provider.as_str(), item.date.as_str()]
+                    .into_iter()
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if !meta_parts.is_empty() {
+                    println!("  {DIM}    {}{RESET}", meta_parts.join(" | "));
+                }
+                if !item.summary.is_empty() {
+                    println!("  {DIM}    {}{RESET}", item.summary);
+                }
+                if !item.url.is_empty() {
+                    println!("  {DIM}    {}{RESET}", item.url);
+                }
+                println!();
+            }
+            // Cache results
+            let _ = save_bigkinds_cache(keyword, "search", &json);
+            println!(
+                "{DIM}  총 {}건 | 최근 30일 | 빅카인즈 뉴스 빅데이터{RESET}\n",
+                items.len()
+            );
+        }
+        Err(e) => {
+            eprintln!("{RED}  {e}{RESET}\n");
+        }
+    }
+}
+
+fn handle_bigkinds_trend(keyword: &str) {
+    println!("{DIM}  빅카인즈에서 '{keyword}' 트렌드 분석 중...{RESET}");
+    match bigkinds_trend(keyword) {
+        Ok(json) => {
+            let trends = parse_bigkinds_trend(&json);
+            if trends.is_empty() {
+                println!("{DIM}  트렌드 데이터가 없습니다.{RESET}\n");
+                return;
+            }
+            println!("\n  {BOLD}'{keyword}' 언급량 추이 (최근 30일){RESET}\n");
+            print!("{}", format_trend_chart(&trends));
+            let total: u64 = trends.iter().map(|t| t.count).sum();
+            println!(
+                "\n{DIM}  총 {total}건 | 기간: {} ~ {}{RESET}\n",
+                trends.first().map(|t| t.date.as_str()).unwrap_or("?"),
+                trends.last().map(|t| t.date.as_str()).unwrap_or("?"),
+            );
+            let _ = save_bigkinds_cache(keyword, "trend", &json);
+        }
+        Err(e) => {
+            eprintln!("{RED}  {e}{RESET}\n");
+        }
+    }
+}
+
+fn handle_bigkinds_related(keyword: &str) {
+    println!("{DIM}  빅카인즈에서 '{keyword}' 연관어 분석 중...{RESET}");
+    match bigkinds_related(keyword) {
+        Ok(json) => {
+            let related = parse_bigkinds_related(&json);
+            if related.is_empty() {
+                println!("{DIM}  연관어 데이터가 없습니다.{RESET}\n");
+                return;
+            }
+            println!("\n  {BOLD}'{keyword}' 연관 키워드{RESET}\n");
+            for (i, r) in related.iter().enumerate() {
+                let bar_len = (r.score * 20.0) as usize;
+                let bar: String = "●".repeat(bar_len.min(20));
+                println!(
+                    "  {DIM}{:>2}.{RESET} {BOLD}{}{RESET} {DIM}{} ({:.0}%){RESET}",
+                    i + 1,
+                    r.keyword,
+                    bar,
+                    r.score * 100.0
+                );
+            }
+            println!();
+            let _ = save_bigkinds_cache(keyword, "related", &json);
+        }
+        Err(e) => {
+            eprintln!("{RED}  {e}{RESET}\n");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6869,6 +7442,125 @@ mod tests {
         let headlines = vec!["기사A".to_string(), "기사B".to_string()];
         let new_ones = detect_new_headlines(&headlines, &headlines);
         assert!(new_ones.is_empty());
+    }
+
+    // ── /bigkinds tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn bigkinds_parse_search_results() {
+        let json = r#"{"result":{"docs":[{"TITLE":"반도체 수출 호조","PROVIDER":"한국경제","DATE":"2026-03-20","PROVIDER_LINK_PAGE":"https://example.com/1","CONTENT":"반도체 수출이 전년 대비 30% 증가했다."},{"TITLE":"AI 칩 시장 전망","PROVIDER":"매일경제","DATE":"2026-03-19","PROVIDER_LINK_PAGE":"https://example.com/2","CONTENT":"인공지능 반도체 시장이 빠르게 성장하고 있다."}]}}"#;
+        let items = parse_bigkinds_search(json);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].title, "반도체 수출 호조");
+        assert_eq!(items[0].provider, "한국경제");
+        assert_eq!(items[0].date, "2026-03-20");
+        assert_eq!(items[1].title, "AI 칩 시장 전망");
+    }
+
+    #[test]
+    fn bigkinds_parse_empty_results() {
+        let json = r#"{"result":{"docs":[]}}"#;
+        let items = parse_bigkinds_search(json);
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn bigkinds_parse_no_docs_key() {
+        let json = r#"{"result":{}}"#;
+        let items = parse_bigkinds_search(json);
+        assert!(items.is_empty());
+    }
+
+    /// URL-encode a keyword (test helper).
+    fn url_encode(keyword: &str) -> String {
+        let mut encoded = String::new();
+        for byte in keyword.bytes() {
+            match byte {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                    encoded.push(byte as char);
+                }
+                _ => {
+                    encoded.push_str(&format!("%{:02X}", byte));
+                }
+            }
+        }
+        encoded
+    }
+
+    #[test]
+    fn bigkinds_url_encode_korean() {
+        let encoded = url_encode("반도체");
+        assert!(!encoded.contains(' '));
+        assert!(encoded.contains('%'));
+        // ASCII should pass through
+        let ascii = url_encode("AI");
+        assert_eq!(ascii, "AI");
+    }
+
+    #[test]
+    fn bigkinds_url_encode_spaces_and_special() {
+        let encoded = url_encode("반도체 수출");
+        assert!(encoded.contains("%20"));
+        assert!(!encoded.contains(' '));
+    }
+
+    #[test]
+    fn bigkinds_parse_trend_data() {
+        let json = r#"{"result":{"timeline":[{"date":"2026-03-01","count":"42"},{"date":"2026-03-02","count":"55"}]}}"#;
+        let trends = parse_bigkinds_trend(json);
+        assert_eq!(trends.len(), 2);
+        assert_eq!(trends[0].date, "2026-03-01");
+        assert_eq!(trends[0].count, 42);
+        assert_eq!(trends[1].count, 55);
+    }
+
+    #[test]
+    fn bigkinds_parse_trend_empty() {
+        let json = r#"{"result":{"timeline":[]}}"#;
+        let trends = parse_bigkinds_trend(json);
+        assert!(trends.is_empty());
+    }
+
+    #[test]
+    fn bigkinds_format_trend_chart_basic() {
+        let trends = vec![
+            BigKindsTrend {
+                date: "2026-03-01".to_string(),
+                count: 10,
+            },
+            BigKindsTrend {
+                date: "2026-03-02".to_string(),
+                count: 20,
+            },
+        ];
+        let chart = format_trend_chart(&trends);
+        assert!(chart.contains("2026-03-01"));
+        assert!(chart.contains("2026-03-02"));
+        assert!(chart.contains("10건"));
+        assert!(chart.contains("20건"));
+    }
+
+    #[test]
+    fn bigkinds_format_trend_chart_empty() {
+        let chart = format_trend_chart(&[]);
+        assert!(chart.contains("데이터 없음"));
+    }
+
+    #[test]
+    fn bigkinds_parse_related_keywords() {
+        let json = r#"{"result":{"nodes":[{"name":"인공지능","weight":"0.85"},{"name":"삼성전자","weight":"0.72"}]}}"#;
+        let related = parse_bigkinds_related(json);
+        assert_eq!(related.len(), 2);
+        assert_eq!(related[0].keyword, "인공지능");
+        assert!((related[0].score - 0.85).abs() < 0.01);
+        assert_eq!(related[1].keyword, "삼성전자");
+    }
+
+    #[test]
+    fn bigkinds_parse_related_empty() {
+        let json = r#"{"result":{"nodes":[]}}"#;
+        let related = parse_bigkinds_related(json);
+        assert!(related.is_empty());
     }
 
     #[test]
