@@ -5301,6 +5301,282 @@ pub const CORRECTION_SUBCOMMANDS: &[&str] = &["add", "list", "report"];
 /// Subcommand names for `/quality <Tab>` completion.
 pub const QUALITY_SUBCOMMANDS: &[&str] = &["check", "report"];
 
+// ── /spellcheck ─────────────────────────────────────────────────────────
+
+/// A single spelling correction from the Busan University spellcheck API.
+#[derive(Debug, Clone)]
+pub struct SpellCorrection {
+    pub original: String,
+    pub replacement: String,
+    pub help: String,
+}
+
+/// Parse the spellcheck API HTML response to extract correction data.
+/// The API returns HTML with embedded JavaScript containing `data = [{...}]`.
+pub fn parse_spellcheck_response(html: &str) -> Vec<SpellCorrection> {
+    // The API embeds results in: data = [{str: "...", candWord: "...", help: "..."}]
+    // We extract the JSON array from the HTML.
+    let marker = "data = [";
+    let start = match html.find(marker) {
+        Some(pos) => pos + "data = ".len(),
+        None => return Vec::new(),
+    };
+
+    // Find the matching closing bracket
+    let rest = &html[start..];
+    let mut depth = 0;
+    let mut end = 0;
+    for (i, ch) in rest.char_indices() {
+        match ch {
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = i + 1;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    if end == 0 {
+        return Vec::new();
+    }
+
+    let json_str = &rest[..end];
+
+    // Parse as JSON array of objects
+    let arr: Vec<serde_json::Value> = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    arr.iter()
+        .filter_map(|obj| {
+            let original = obj.get("orgStr").and_then(|v| v.as_str())?.to_string();
+            let replacement = obj.get("candWord").and_then(|v| v.as_str())?.to_string();
+            let help = obj
+                .get("help")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if original == replacement {
+                return None;
+            }
+            Some(SpellCorrection {
+                original,
+                replacement,
+                help,
+            })
+        })
+        .collect()
+}
+
+/// Format spellcheck corrections for display.
+pub fn format_spellcheck_results(corrections: &[SpellCorrection]) -> String {
+    if corrections.is_empty() {
+        return "  ✓ 맞춤법 오류가 발견되지 않았습니다.\n".to_string();
+    }
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "  총 {}건의 교정 제안\n\n",
+        corrections.len()
+    ));
+
+    for (i, c) in corrections.iter().enumerate() {
+        out.push_str(&format!("  {}. ", i + 1));
+        out.push_str(&format!("\"{}\" → \"{}\"\n", c.original, c.replacement));
+        if !c.help.is_empty() {
+            // Strip HTML tags from help text
+            let clean_help = crate::commands_research::strip_html_tags(&c.help);
+            if !clean_help.trim().is_empty() {
+                out.push_str(&format!("     설명: {}\n", clean_help.trim()));
+            }
+        }
+        out.push('\n');
+    }
+
+    out
+}
+
+/// Apply corrections to the original text, returning the corrected version.
+pub fn apply_spellcheck_corrections(text: &str, corrections: &[SpellCorrection]) -> String {
+    let mut result = text.to_string();
+    for c in corrections {
+        // Only replace the first occurrence of each (replacement may itself contain originals)
+        if let Some(pos) = result.find(&c.original) {
+            let end = pos + c.original.len();
+            result = format!("{}{}{}", &result[..pos], c.replacement, &result[end..]);
+        }
+    }
+    result
+}
+
+/// Save spellcheck result to `.journalist/spellcheck/`.
+fn spellcheck_file_path(slug: &str) -> std::path::PathBuf {
+    let safe: String = slug
+        .chars()
+        .take(40)
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let ts = format_unix_timestamp(secs).replace(['-', ' ', ':'], "");
+    std::path::PathBuf::from(format!(
+        ".journalist/spellcheck/{safe}_{ts}.txt"
+    ))
+}
+
+/// Handle the `/spellcheck` command: rule-based Korean spellcheck via Busan University API.
+pub fn handle_spellcheck(input: &str) {
+    let args = input.strip_prefix("/spellcheck").unwrap_or("").trim();
+    let (file_path, inline_text) = parse_proofread_args(args);
+
+    // Read text from file or inline
+    let text = if let Some(ref path) = file_path {
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                println!(
+                    "{DIM}  파일 읽기: {path} ({} bytes){RESET}",
+                    content.len()
+                );
+                if inline_text.is_empty() {
+                    content
+                } else {
+                    format!("{content}\n\n{inline_text}")
+                }
+            }
+            Err(e) => {
+                eprintln!("{RED}  파일 읽기 실패: {path} — {e}{RESET}\n");
+                return;
+            }
+        }
+    } else {
+        inline_text
+    };
+
+    if text.trim().is_empty() {
+        println!("{DIM}  사용법: /spellcheck <텍스트>{RESET}");
+        println!("{DIM}  또는:   /spellcheck --file <경로>{RESET}");
+        println!(
+            "{DIM}  부산대 맞춤법 검사기로 한국어 맞춤법·띄어쓰기를 교정합니다.{RESET}\n"
+        );
+        return;
+    }
+
+    println!("{DIM}  맞춤법 검사 중...{RESET}");
+
+    // Call the Busan University spellcheck API via curl
+    // The API accepts POST to /results with text1 parameter
+    let result = std::process::Command::new("curl")
+        .args([
+            "-s",
+            "--max-time",
+            "15",
+            "-X",
+            "POST",
+            "http://speller.cs.pusan.ac.kr/results",
+            "-d",
+        ])
+        .arg(format!("text1={}", urlencoding_simple(&text)))
+        .output();
+
+    let html = match result {
+        Ok(output) => {
+            if !output.status.success() {
+                eprintln!("{RED}  맞춤법 검사 API 호출 실패 (exit code: {:?}){RESET}\n", output.status.code());
+                return;
+            }
+            String::from_utf8_lossy(&output.stdout).to_string()
+        }
+        Err(e) => {
+            eprintln!("{RED}  맞춤법 검사 API 호출 실패: {e}{RESET}\n");
+            return;
+        }
+    };
+
+    if html.trim().is_empty() {
+        eprintln!("{RED}  맞춤법 검사 API로부터 빈 응답을 받았습니다.{RESET}\n");
+        return;
+    }
+
+    let corrections = parse_spellcheck_response(&html);
+    let formatted = format_spellcheck_results(&corrections);
+    println!("{formatted}");
+
+    // Save result
+    let slug = if let Some(ref path) = file_path {
+        std::path::Path::new(path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "spellcheck".to_string())
+    } else {
+        let preview: String = text.chars().take(30).collect();
+        if preview.is_empty() {
+            "spellcheck".to_string()
+        } else {
+            preview
+        }
+    };
+
+    let save_path = spellcheck_file_path(&slug);
+    let mut save_content = String::new();
+    save_content.push_str("# 맞춤법 검사 결과\n\n");
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    save_content.push_str(&format!(
+        "검사 시각: {} (UTC)\n",
+        format_unix_timestamp(now_secs)
+    ));
+    if let Some(ref path) = file_path {
+        save_content.push_str(&format!("원본 파일: {path}\n"));
+    }
+    save_content.push_str(&format!("교정 건수: {}\n\n", corrections.len()));
+    save_content.push_str(&formatted);
+    if !corrections.is_empty() {
+        save_content.push_str("## 교정 적용 결과\n\n");
+        save_content.push_str(&apply_spellcheck_corrections(&text, &corrections));
+        save_content.push('\n');
+    }
+
+    if let Some(parent) = save_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match std::fs::write(&save_path, &save_content) {
+        Ok(_) => {
+            println!(
+                "{GREEN}  ✓ 검사 결과 저장: {}{RESET}\n",
+                save_path.display()
+            );
+        }
+        Err(e) => {
+            eprintln!("{RED}  결과 저장 실패: {e}{RESET}\n");
+        }
+    }
+}
+
+/// Simple URL encoding for form data.
+fn urlencoding_simple(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() * 3);
+    for byte in s.as_bytes() {
+        match *byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                result.push(*byte as char);
+            }
+            b' ' => result.push('+'),
+            _ => {
+                result.push_str(&format!("%{:02X}", byte));
+            }
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7267,5 +7543,119 @@ mod tests {
         let path = dir.path().join("bad.json");
         std::fs::write(&path, "not json at all").unwrap();
         assert!(load_glossary(path.to_str().unwrap()).is_empty());
+    }
+
+    // ── /spellcheck tests (Day 7) ────────────────────────────────────
+
+    #[test]
+    fn parse_spellcheck_response_extracts_corrections() {
+        let html = r#"<html><script>
+        data = [{"orgStr":"반갑읍니다","candWord":"반갑습니다","help":"<b>설명</b>: 맞춤법 오류"}];
+        </script></html>"#;
+        let corrections = parse_spellcheck_response(html);
+        assert_eq!(corrections.len(), 1);
+        assert_eq!(corrections[0].original, "반갑읍니다");
+        assert_eq!(corrections[0].replacement, "반갑습니다");
+        assert!(corrections[0].help.contains("맞춤법"));
+    }
+
+    #[test]
+    fn parse_spellcheck_response_empty_html() {
+        assert!(parse_spellcheck_response("").is_empty());
+        assert!(parse_spellcheck_response("<html></html>").is_empty());
+    }
+
+    #[test]
+    fn parse_spellcheck_response_no_corrections() {
+        let html = r#"<script>data = [];</script>"#;
+        let corrections = parse_spellcheck_response(html);
+        assert!(corrections.is_empty());
+    }
+
+    #[test]
+    fn parse_spellcheck_response_skips_identical() {
+        let html = r#"<script>data = [{"orgStr":"안녕","candWord":"안녕","help":""}];</script>"#;
+        let corrections = parse_spellcheck_response(html);
+        assert!(corrections.is_empty());
+    }
+
+    #[test]
+    fn parse_spellcheck_response_multiple_corrections() {
+        let html = r#"<script>
+        data = [
+            {"orgStr":"됬다","candWord":"됐다","help":"용언 활용"},
+            {"orgStr":"웃옷","candWord":"윗옷","help":"사이시옷"}
+        ];
+        </script>"#;
+        let corrections = parse_spellcheck_response(html);
+        assert_eq!(corrections.len(), 2);
+        assert_eq!(corrections[0].original, "됬다");
+        assert_eq!(corrections[1].replacement, "윗옷");
+    }
+
+    #[test]
+    fn format_spellcheck_results_empty() {
+        let result = format_spellcheck_results(&[]);
+        assert!(result.contains("오류가 발견되지 않았습니다"));
+    }
+
+    #[test]
+    fn format_spellcheck_results_with_corrections() {
+        let corrections = vec![SpellCorrection {
+            original: "됬다".to_string(),
+            replacement: "됐다".to_string(),
+            help: "<b>설명</b>: 용언 활용 오류".to_string(),
+        }];
+        let result = format_spellcheck_results(&corrections);
+        assert!(result.contains("1건"));
+        assert!(result.contains("됬다"));
+        assert!(result.contains("됐다"));
+        assert!(result.contains("용언 활용 오류"));
+        // HTML tags should be stripped
+        assert!(!result.contains("<b>"));
+    }
+
+    #[test]
+    fn strip_html_tags_in_spellcheck_help() {
+        use crate::commands_research::strip_html_tags;
+        assert_eq!(strip_html_tags("<b>bold</b>"), "bold");
+        assert_eq!(strip_html_tags("no tags"), "no tags");
+    }
+
+    #[test]
+    fn apply_spellcheck_corrections_replaces_text() {
+        let text = "반갑읍니다 오늘 됬다";
+        let corrections = vec![
+            SpellCorrection {
+                original: "반갑읍니다".to_string(),
+                replacement: "반갑습니다".to_string(),
+                help: String::new(),
+            },
+            SpellCorrection {
+                original: "됬다".to_string(),
+                replacement: "됐다".to_string(),
+                help: String::new(),
+            },
+        ];
+        let result = apply_spellcheck_corrections(text, &corrections);
+        assert_eq!(result, "반갑습니다 오늘 됐다");
+    }
+
+    #[test]
+    fn apply_spellcheck_corrections_empty() {
+        assert_eq!(apply_spellcheck_corrections("텍스트", &[]), "텍스트");
+    }
+
+    #[test]
+    fn urlencoding_simple_basic() {
+        assert_eq!(urlencoding_simple("hello"), "hello");
+        assert_eq!(urlencoding_simple("hello world"), "hello+world");
+        assert!(urlencoding_simple("한글").contains('%'));
+    }
+
+    #[test]
+    fn parse_spellcheck_response_malformed_json() {
+        let html = r#"<script>data = [not valid json];</script>"#;
+        assert!(parse_spellcheck_response(html).is_empty());
     }
 }

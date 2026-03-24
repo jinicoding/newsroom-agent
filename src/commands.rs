@@ -120,6 +120,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/rss",
     "/jsearch",
     "/monitor",
+    "/spellcheck",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -520,6 +521,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /proofread [text|--file <path>]  한국어 기사 교열 (맞춤법/문법/뉴스문체)\n",
+    );
+    out.push_str(
+        "  /spellcheck [text|--file <path>] 한국어 맞춤법·띄어쓰기 검사 (부산대 검사기)\n",
     );
     out.push_str(
         "  /translate [lang] [text|--file <path>] [--glossary <path>]  기사 번역 (방향 지정·용어사전)\n",
@@ -925,8 +929,8 @@ pub use crate::commands_writing::{
     handle_anonymize, handle_archive, handle_article, handle_checklist, handle_correction,
     handle_draft, handle_export, handle_headline, handle_improve, handle_legal,
     handle_multiformat, handle_proofread, handle_publish, handle_quality, handle_quote,
-    handle_readability, handle_rewrite, handle_stats, handle_summary, handle_template,
-    handle_template_use, handle_translate,
+    handle_readability, handle_rewrite, handle_spellcheck, handle_stats, handle_summary,
+    handle_template, handle_template_use, handle_translate,
 };
 
 // Workflow & management handlers

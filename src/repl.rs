@@ -697,6 +697,10 @@ pub async fn run_repl(
                     .await;
                 continue;
             }
+            s if s == "/spellcheck" || s.starts_with("/spellcheck ") => {
+                commands::handle_spellcheck(input);
+                continue;
+            }
             s if s == "/quote" || s.starts_with("/quote ") => {
                 commands::handle_quote(input);
                 continue;
