@@ -4668,7 +4668,7 @@ fn monitor_check() {
 }
 
 /// Fetch headlines from Naver news search for a keyword.
-fn fetch_naver_headlines(keyword: &str, max: usize) -> Result<Vec<String>, String> {
+pub fn fetch_naver_headlines(keyword: &str, max: usize) -> Result<Vec<String>, String> {
     let encoded = keyword
         .as_bytes()
         .iter()

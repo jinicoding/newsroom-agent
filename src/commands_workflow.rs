@@ -4,9 +4,9 @@
 use crate::commands::auto_compact_if_needed;
 use crate::commands_project::*;
 use crate::commands_research::{
-    days_until, ensure_sources_dir_at, load_all_contact_logs, load_followups_from,
-    load_notes_from, load_sources_from, notes_file_for_date, followups_path,
-    ContactLog, Followup, SOURCES_FILE,
+    days_until, ensure_sources_dir_at, fetch_naver_headlines, load_all_contact_logs,
+    load_followups_from, load_notes_from, load_sources_from, notes_file_for_date,
+    followups_path, ContactLog, Followup, SOURCES_FILE,
 };
 use crate::commands_writing::format_unix_timestamp;
 use crate::format::*;
@@ -3937,7 +3937,50 @@ pub fn collect_morning_data() -> String {
         sections.push(format!("## 최근 취재 컨텍스트\n{journalist_data}"));
     }
 
+    // 6. News headlines: fetch from Naver based on profile beat keywords
+    let headlines_section = collect_morning_headlines();
+    if !headlines_section.is_empty() {
+        sections.push(headlines_section);
+    }
+
     sections.join("\n")
+}
+
+/// Collect news headlines for the morning briefing.
+/// Uses profile beat keywords if set; falls back to general news ("종합뉴스").
+pub fn collect_morning_headlines() -> String {
+    let profile = load_profile();
+    let keywords: Vec<String> = if let Some(beat) = profile.get("beat").and_then(|v| v.as_str()) {
+        // Split beat by common delimiters (comma, slash, space)
+        beat.split(|c: char| c == ',' || c == '/' || c == '·')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else {
+        vec!["종합뉴스".to_string()]
+    };
+
+    let mut s = String::from("## 오늘의 뉴스 헤드라인\n");
+    let mut has_any = false;
+    let max_per_keyword = if keywords.len() <= 1 { 10 } else { 5 };
+
+    for kw in &keywords {
+        match fetch_naver_headlines(kw, max_per_keyword) {
+            Ok(headlines) if !headlines.is_empty() => {
+                s.push_str(&format!("### {kw}\n"));
+                for h in &headlines {
+                    s.push_str(&format!("- {h}\n"));
+                }
+                has_any = true;
+            }
+            _ => {}
+        }
+    }
+
+    if !has_any {
+        s.push_str("헤드라인을 가져올 수 없습니다.\n");
+    }
+    s
 }
 
 /// Build the prompt for the morning briefing AI call.
@@ -3961,8 +4004,11 @@ pub fn build_morning_prompt(data: &str) -> String {
 ### 📋 데스크 지시 대기 건
 대기 중인 업무가 있으면 요약하고 우선순위를 제안하세요.
 
+### 📰 뉴스 헤드라인 분석
+헤드라인 데이터가 있으면, 기자의 출입처/분야와 연관된 핵심 트렌드를 짚어주세요. 후속 취재 가치가 있는 건이 있으면 표시하세요.
+
 ### 🌐 오늘의 주요 이슈
-최근 취재 맥락을 고려하여, 오늘 주목할 만한 이슈나 뉴스 각도를 2-3개 제안하세요.
+최근 취재 맥락과 뉴스 헤드라인을 종합하여, 오늘 주목할 만한 이슈나 뉴스 각도를 2-3개 제안하세요.
 
 ### 🎯 오늘의 추천 액션
 위 모든 정보를 종합하여, 오늘 가장 먼저 해야 할 일 3가지를 제안하세요.
@@ -4028,6 +4074,7 @@ fn morning_print_help() {
     println!("{DIM}    • 마감 임박 (/deadline 3일 이내){RESET}");
     println!("{DIM}    • 후속보도 리마인드 (/follow remind){RESET}");
     println!("{DIM}    • 데스크 지시 대기 건 (/desk list pending){RESET}");
+    println!("{DIM}    • 분야별 최신 뉴스 헤드라인 (네이버 뉴스){RESET}");
     println!("{DIM}    • 오늘의 주요 이슈 요약 (AI 기반){RESET}");
     println!("{DIM}  사용법:{RESET}");
     println!("{DIM}    /morning              아침 브리핑 실행{RESET}");
@@ -7336,8 +7383,23 @@ mod tests {
         assert!(prompt.contains("마감 임박 경고"));
         assert!(prompt.contains("후속보도 리마인드"));
         assert!(prompt.contains("데스크 지시 대기 건"));
+        assert!(prompt.contains("뉴스 헤드라인 분석"));
         assert!(prompt.contains("오늘의 주요 이슈"));
         assert!(prompt.contains("오늘의 추천 액션"));
+    }
+
+    #[test]
+    fn collect_morning_headlines_returns_section_header() {
+        // Without network, headlines may fail but function should return a valid section
+        let section = collect_morning_headlines();
+        assert!(section.contains("오늘의 뉴스 헤드라인"));
+    }
+
+    #[test]
+    fn morning_data_includes_headlines_section() {
+        // collect_morning_data should include news headlines section
+        let data = collect_morning_data();
+        assert!(data.contains("오늘의 뉴스 헤드라인"));
     }
 
     #[test]

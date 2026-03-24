@@ -191,3 +191,14 @@ SESSION_PLAN.md 작성 완료.
   계획된 태스크: 3개
 
   ── Task 1 / 3 ──
+완료. `/spellcheck` 커맨드를 구현했습니다.
+
+**구현 내용:**
+- `commands_writing.rs`: `SpellCorrection` 구조체, 부산대 API HTML 응답 파싱(`parse_spellcheck_response`), 결과 포맷팅, 교정 적용, URL 인코딩, 결과 저장 기능
+- `commands.rs`: KNOWN_COMMANDS 등록, 도움말 추가, pub use 추가
+- `repl.rs`: 디스패치 추가
+
+**테스트 12개 추가:** JSON 파싱, 빈 입력, 동일 교정 스킵, 다중 교정, 포맷팅 출력, HTML 태그 제거, 교정 적용, URL 인코딩, 잘못된 JSON 처리 — 모두 통과 (67 passed).
+    Task 1: 검증 OK
+
+  ── Task 2 / 3 ──
