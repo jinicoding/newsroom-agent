@@ -122,6 +122,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/monitor",
     "/spellcheck",
     "/bigkinds",
+    "/dart",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -223,8 +224,8 @@ pub use crate::commands_writing::TEMPLATE_SUBCOMMANDS;
 
 /// Re-export subcommand constants from domain modules.
 pub use crate::commands_research::{
-    BIGKINDS_SUBCOMMANDS, CONTACT_SUBCOMMANDS, MONITOR_SUBCOMMANDS, RESEARCH_SUBCOMMANDS,
-    RSS_SUBCOMMANDS, WIRE_SUBCOMMANDS,
+    BIGKINDS_SUBCOMMANDS, CONTACT_SUBCOMMANDS, DART_SUBCOMMANDS, MONITOR_SUBCOMMANDS,
+    RESEARCH_SUBCOMMANDS, RSS_SUBCOMMANDS, WIRE_SUBCOMMANDS,
 };
 pub use crate::commands_workflow::{
     COVERAGE_SUBCOMMANDS, DIARY_SUBCOMMANDS, RECAP_SUBCOMMANDS, RIVAL_SUBCOMMANDS,
@@ -275,6 +276,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/research" => filter_candidates(RESEARCH_SUBCOMMANDS, &partial_lower),
         "/diary" => filter_candidates(DIARY_SUBCOMMANDS, &partial_lower),
         "/bigkinds" => filter_candidates(BIGKINDS_SUBCOMMANDS, &partial_lower),
+        "/dart" => filter_candidates(DART_SUBCOMMANDS, &partial_lower),
         "/recap" => filter_candidates(RECAP_SUBCOMMANDS, &partial_lower),
         "/multiformat" => {
             if partial_arg.starts_with("--format ") {
@@ -504,6 +506,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /bigkinds <cmd> <키워드>  빅카인즈 뉴스 빅데이터 검색 (search|trend|related)\n",
+    );
+    out.push_str(
+        "  /dart <cmd> <기업명>     DART 전자공시 검색 (search|report|watch)\n",
     );
     out.push('\n');
 
@@ -924,10 +929,10 @@ pub use crate::commands_project::{
 
 // Research & source management handlers
 pub use crate::commands_research::{
-    handle_alert, handle_bigkinds, handle_clip, handle_contact, handle_factcheck, handle_follow,
-    handle_jsearch, handle_law, handle_monitor, handle_network, handle_news, handle_note,
-    handle_press, handle_research, handle_sns, handle_rss, handle_sources, handle_trend,
-    handle_wire,
+    handle_alert, handle_bigkinds, handle_clip, handle_contact, handle_dart, handle_factcheck,
+    handle_follow, handle_jsearch, handle_law, handle_monitor, handle_network, handle_news,
+    handle_note, handle_press, handle_research, handle_sns, handle_rss, handle_sources,
+    handle_trend, handle_wire,
 };
 
 // Article writing & editing handlers

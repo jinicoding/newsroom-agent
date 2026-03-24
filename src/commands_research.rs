@@ -5328,6 +5328,411 @@ fn handle_bigkinds_related(keyword: &str) {
     }
 }
 
+// ── /dart — DART 전자공시 검색 ──────────────────────────────────────────
+
+/// Directory for cached DART disclosure results and watch lists.
+pub const DART_DIR: &str = ".journalist/dart";
+
+/// Subcommand names for `/dart <Tab>` completion.
+pub const DART_SUBCOMMANDS: &[&str] = &["search", "report", "watch"];
+
+/// A single DART disclosure item.
+#[derive(Debug, Clone)]
+pub struct DartItem {
+    pub corp_name: String,
+    pub report_nm: String,
+    pub rcept_no: String,
+    pub rcept_dt: String,
+    pub flr_nm: String,
+}
+
+/// Parse DART disclosure list JSON into items.
+/// DART API returns: {"status":"000","message":"정상","list":[{"corp_name":"...", "report_nm":"...", "rcept_no":"...", "rcept_dt":"...", "flr_nm":"..."}]}
+pub fn parse_dart_list(json: &str) -> Vec<DartItem> {
+    let list_start = match json.find("\"list\"") {
+        Some(pos) => pos,
+        None => return Vec::new(),
+    };
+    let after_list = &json[list_start..];
+    let arr_start = match after_list.find('[') {
+        Some(pos) => pos,
+        None => return Vec::new(),
+    };
+    let arr_content = &after_list[arr_start..];
+    let arr_end = find_matching_bracket(arr_content);
+    let arr_str = &arr_content[..arr_end + 1];
+
+    parse_dart_items_from_array(arr_str)
+}
+
+/// Parse individual items from a JSON array of DART disclosures.
+fn parse_dart_items_from_array(arr: &str) -> Vec<DartItem> {
+    let mut results = Vec::new();
+    let mut depth = 0;
+    let mut obj_start = None;
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    for (i, ch) in arr.char_indices() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        if ch == '\\' && in_string {
+            escape_next = true;
+            continue;
+        }
+        if ch == '"' {
+            in_string = !in_string;
+            continue;
+        }
+        if in_string {
+            continue;
+        }
+        match ch {
+            '{' => {
+                if depth == 0 {
+                    obj_start = Some(i);
+                }
+                depth += 1;
+            }
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    if let Some(start) = obj_start {
+                        let obj = &arr[start..=i];
+                        if let Some(item) = parse_single_dart_item(obj) {
+                            results.push(item);
+                        }
+                    }
+                    obj_start = None;
+                }
+            }
+            _ => {}
+        }
+    }
+    results
+}
+
+/// Parse a single DART disclosure JSON object.
+fn parse_single_dart_item(obj: &str) -> Option<DartItem> {
+    let corp_name = json_extract_string(obj, "corp_name").unwrap_or_default();
+    let report_nm = json_extract_string(obj, "report_nm").unwrap_or_default();
+    let rcept_no = json_extract_string(obj, "rcept_no").unwrap_or_default();
+    let rcept_dt = json_extract_string(obj, "rcept_dt").unwrap_or_default();
+    let flr_nm = json_extract_string(obj, "flr_nm").unwrap_or_default();
+
+    if corp_name.is_empty() && report_nm.is_empty() {
+        return None;
+    }
+
+    Some(DartItem {
+        corp_name,
+        report_nm,
+        rcept_no,
+        rcept_dt,
+        flr_nm,
+    })
+}
+
+/// Format DART date from "YYYYMMDD" to "YYYY-MM-DD".
+pub fn format_dart_date(raw: &str) -> String {
+    if raw.len() == 8 {
+        format!("{}-{}-{}", &raw[..4], &raw[4..6], &raw[6..8])
+    } else {
+        raw.to_string()
+    }
+}
+
+/// Build DART disclosure list API request via curl.
+fn dart_search(corp_name: &str) -> Result<String, String> {
+    let api_key = std::env::var("DART_API_KEY")
+        .map_err(|_| "DART_API_KEY 환경변수가 설정되지 않았습니다. https://opendart.fss.or.kr 에서 API 키를 발급받으세요.".to_string())?;
+
+    // URL-encode the corporation name
+    let encoded_name = url_encode(corp_name);
+
+    // Search recent disclosures (last 30 days)
+    let bgn_de = thirty_days_ago().replace('-', "");
+    let end_de = today_str().replace('-', "");
+
+    let url = format!(
+        "https://opendart.fss.or.kr/api/list.json?crtfc_key={}&corp_name={}&bgn_de={}&end_de={}&page_count=20&sort=date&sort_mth=desc",
+        api_key, encoded_name, bgn_de, end_de
+    );
+
+    let output = std::process::Command::new("curl")
+        .args(["-s", "--max-time", "15", &url])
+        .output()
+        .map_err(|e| format!("curl 실행 실패: {e}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "API 요청 실패: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let body = String::from_utf8_lossy(&output.stdout).to_string();
+
+    // Check DART API error status
+    if let Some(status) = json_extract_string(&body, "status") {
+        if status != "000" && status != "013" {
+            let msg = json_extract_string(&body, "message").unwrap_or_default();
+            return Err(format!("DART API 오류 ({}): {}", status, msg));
+        }
+    }
+
+    Ok(body)
+}
+
+/// Build DART single disclosure detail API request via curl.
+fn dart_report(rcept_no: &str) -> Result<String, String> {
+    let api_key = std::env::var("DART_API_KEY")
+        .map_err(|_| "DART_API_KEY 환경변수가 설정되지 않았습니다.".to_string())?;
+
+    let url = format!(
+        "https://opendart.fss.or.kr/api/document.xml?crtfc_key={}&rcept_no={}",
+        api_key, rcept_no
+    );
+
+    let output = std::process::Command::new("curl")
+        .args(["-s", "--max-time", "15", &url])
+        .output()
+        .map_err(|e| format!("curl 실행 실패: {e}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "API 요청 실패: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Simple URL encoding for Korean text.
+fn url_encode(s: &str) -> String {
+    let mut encoded = String::new();
+    for byte in s.as_bytes() {
+        match *byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(*byte as char);
+            }
+            _ => {
+                encoded.push_str(&format!("%{:02X}", byte));
+            }
+        }
+    }
+    encoded
+}
+
+/// Save DART cache to file.
+fn save_dart_cache(keyword: &str, subcommand: &str, content: &str) -> Result<(), std::io::Error> {
+    let dir = std::path::Path::new(DART_DIR);
+    std::fs::create_dir_all(dir)?;
+    let slug = topic_to_slug(keyword, 30);
+    let date = today_str();
+    let filename = format!("{date}_{subcommand}_{slug}.json");
+    std::fs::write(dir.join(filename), content)
+}
+
+/// Load DART watch list.
+fn load_dart_watchlist() -> Vec<String> {
+    let path = std::path::Path::new(DART_DIR).join("watchlist.json");
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            // Simple JSON array parsing: ["name1","name2"]
+            let trimmed = content.trim();
+            if !trimmed.starts_with('[') {
+                return Vec::new();
+            }
+            let inner = &trimmed[1..trimmed.len().saturating_sub(1)];
+            inner
+                .split(',')
+                .filter_map(|s| {
+                    let s = s.trim().trim_matches('"');
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some(s.to_string())
+                    }
+                })
+                .collect()
+        }
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Save DART watch list.
+fn save_dart_watchlist(list: &[String]) -> Result<(), std::io::Error> {
+    let dir = std::path::Path::new(DART_DIR);
+    std::fs::create_dir_all(dir)?;
+    let entries: Vec<String> = list.iter().map(|s| format!("\"{}\"", s)).collect();
+    let json = format!("[{}]", entries.join(","));
+    std::fs::write(dir.join("watchlist.json"), json)
+}
+
+/// Handle the `/dart` command.
+pub fn handle_dart(input: &str) {
+    let args = input.strip_prefix("/dart").unwrap_or("").trim();
+
+    if args.is_empty() || args == "help" {
+        println!("{DIM}  사용법: /dart search <기업명>       최근 공시 목록 조회{RESET}");
+        println!("{DIM}          /dart report <공시번호>     공시 상세 내용 조회{RESET}");
+        println!("{DIM}          /dart watch <기업명>        공시 모니터링 등록/해제{RESET}");
+        println!("{DIM}  환경변수: DART_API_KEY (https://opendart.fss.or.kr 에서 발급){RESET}");
+        println!("{DIM}  예시:   /dart search 삼성전자{RESET}");
+        println!("{DIM}          /dart report 20240315000123{RESET}");
+        println!("{DIM}          /dart watch LG에너지솔루션{RESET}\n");
+        return;
+    }
+
+    if let Some(corp) = args.strip_prefix("search") {
+        let corp = corp.trim();
+        if corp.is_empty() {
+            eprintln!("{RED}  기업명을 입력하세요. 예: /dart search 삼성전자{RESET}\n");
+            return;
+        }
+        handle_dart_search(corp);
+    } else if let Some(rcept_no) = args.strip_prefix("report") {
+        let rcept_no = rcept_no.trim();
+        if rcept_no.is_empty() {
+            eprintln!("{RED}  공시번호를 입력하세요. 예: /dart report 20240315000123{RESET}\n");
+            return;
+        }
+        handle_dart_report(rcept_no);
+    } else if let Some(corp) = args.strip_prefix("watch") {
+        let corp = corp.trim();
+        if corp.is_empty() {
+            // Show current watchlist
+            let list = load_dart_watchlist();
+            if list.is_empty() {
+                println!("{DIM}  등록된 모니터링 기업이 없습니다.{RESET}");
+                println!("{DIM}  사용법: /dart watch <기업명>{RESET}\n");
+            } else {
+                println!("\n  {BOLD}DART 공시 모니터링 목록{RESET}\n");
+                for (i, name) in list.iter().enumerate() {
+                    println!("  {DIM}{:>2}.{RESET} {BOLD}{}{RESET}", i + 1, name);
+                }
+                println!();
+            }
+            return;
+        }
+        handle_dart_watch(corp);
+    } else {
+        // Treat bare argument as search
+        handle_dart_search(args);
+    }
+}
+
+fn handle_dart_search(corp_name: &str) {
+    println!("{DIM}  DART에서 '{corp_name}' 공시 검색 중...{RESET}");
+    match dart_search(corp_name) {
+        Ok(json) => {
+            let items = parse_dart_list(&json);
+            if items.is_empty() {
+                println!("{DIM}  검색 결과가 없습니다.{RESET}\n");
+                return;
+            }
+            println!();
+            for (i, item) in items.iter().enumerate() {
+                println!(
+                    "  {BOLD}{YELLOW}[{}]{RESET} {BOLD}{}{RESET}",
+                    i + 1,
+                    item.report_nm
+                );
+                let date_fmt = format_dart_date(&item.rcept_dt);
+                let meta_parts: Vec<&str> = [item.corp_name.as_str(), date_fmt.as_str(), item.flr_nm.as_str()]
+                    .into_iter()
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if !meta_parts.is_empty() {
+                    println!("  {DIM}    {}{RESET}", meta_parts.join(" | "));
+                }
+                println!("  {DIM}    공시번호: {}{RESET}", item.rcept_no);
+                println!();
+            }
+            let _ = save_dart_cache(corp_name, "search", &json);
+            println!(
+                "{DIM}  총 {}건 | 최근 30일 | DART 전자공시{RESET}\n",
+                items.len()
+            );
+        }
+        Err(e) => {
+            eprintln!("{RED}  {e}{RESET}\n");
+        }
+    }
+}
+
+fn handle_dart_report(rcept_no: &str) {
+    // Validate: rcept_no should be numeric
+    if !rcept_no.chars().all(|c| c.is_ascii_digit()) {
+        eprintln!("{RED}  공시번호는 숫자만 입력하세요. 예: 20240315000123{RESET}\n");
+        return;
+    }
+    println!("{DIM}  DART 공시 '{rcept_no}' 상세 조회 중...{RESET}");
+    match dart_report(rcept_no) {
+        Ok(content) => {
+            // The document.xml endpoint returns XML/HTML content
+            // Extract text content, stripping HTML tags for readability
+            let text = strip_html_tags(&content);
+            let trimmed: String = text.chars().take(3000).collect();
+            if trimmed.is_empty() {
+                println!("{DIM}  공시 내용을 가져올 수 없습니다.{RESET}\n");
+                return;
+            }
+            println!("\n  {BOLD}공시 상세 내용 (공시번호: {rcept_no}){RESET}\n");
+            // Print with wrapping
+            for line in trimmed.lines().take(80) {
+                let line = line.trim();
+                if !line.is_empty() {
+                    println!("  {DIM}{}{RESET}", line);
+                }
+            }
+            if content.len() > 3000 {
+                println!("\n  {DIM}... (전체 내용 중 일부만 표시){RESET}");
+            }
+            println!();
+            let _ = save_dart_cache(rcept_no, "report", &content);
+        }
+        Err(e) => {
+            eprintln!("{RED}  {e}{RESET}\n");
+        }
+    }
+}
+
+fn handle_dart_watch(corp_name: &str) {
+    let mut list = load_dart_watchlist();
+
+    if let Some(pos) = list.iter().position(|s| s == corp_name) {
+        list.remove(pos);
+        match save_dart_watchlist(&list) {
+            Ok(()) => {
+                println!(
+                    "  {GREEN}'{corp_name}' 모니터링 해제 완료{RESET} (현재 {}개 기업 등록 중)\n",
+                    list.len()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  저장 실패: {e}{RESET}\n");
+            }
+        }
+    } else {
+        list.push(corp_name.to_string());
+        match save_dart_watchlist(&list) {
+            Ok(()) => {
+                println!(
+                    "  {GREEN}'{corp_name}' 모니터링 등록 완료{RESET} (현재 {}개 기업 등록 중)\n",
+                    list.len()
+                );
+                println!("{DIM}  저장 위치: {DART_DIR}/watchlist.json{RESET}\n");
+            }
+            Err(e) => {
+                eprintln!("{RED}  저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7471,22 +7876,6 @@ mod tests {
         assert!(items.is_empty());
     }
 
-    /// URL-encode a keyword (test helper).
-    fn url_encode(keyword: &str) -> String {
-        let mut encoded = String::new();
-        for byte in keyword.bytes() {
-            match byte {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                    encoded.push(byte as char);
-                }
-                _ => {
-                    encoded.push_str(&format!("%{:02X}", byte));
-                }
-            }
-        }
-        encoded
-    }
-
     #[test]
     fn bigkinds_url_encode_korean() {
         let encoded = url_encode("반도체");
@@ -7561,6 +7950,131 @@ mod tests {
         let json = r#"{"result":{"nodes":[]}}"#;
         let related = parse_bigkinds_related(json);
         assert!(related.is_empty());
+    }
+
+    // ── /dart tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn dart_parse_list_results() {
+        let json = r#"{"status":"000","message":"정상","list":[{"corp_name":"삼성전자","report_nm":"사업보고서 (2025.12)","rcept_no":"20260315000001","rcept_dt":"20260315","flr_nm":"삼성전자"},{"corp_name":"삼성전자","report_nm":"임원·주요주주특정증권등소유상황보고서","rcept_no":"20260314000002","rcept_dt":"20260314","flr_nm":"홍길동"}]}"#;
+        let items = parse_dart_list(json);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].corp_name, "삼성전자");
+        assert_eq!(items[0].report_nm, "사업보고서 (2025.12)");
+        assert_eq!(items[0].rcept_no, "20260315000001");
+        assert_eq!(items[0].rcept_dt, "20260315");
+        assert_eq!(items[0].flr_nm, "삼성전자");
+        assert_eq!(items[1].flr_nm, "홍길동");
+    }
+
+    #[test]
+    fn dart_parse_empty_list() {
+        let json = r#"{"status":"013","message":"조회된 데이터가 없습니다.","list":[]}"#;
+        let items = parse_dart_list(json);
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn dart_parse_no_list_key() {
+        let json = r#"{"status":"000","message":"정상"}"#;
+        let items = parse_dart_list(json);
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn dart_parse_error_response() {
+        let json = r#"{"status":"020","message":"잘못된 인증키"}"#;
+        let items = parse_dart_list(json);
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn dart_date_format() {
+        assert_eq!(format_dart_date("20260315"), "2026-03-15");
+        assert_eq!(format_dart_date("20251231"), "2025-12-31");
+        // Short/malformed dates pass through unchanged
+        assert_eq!(format_dart_date("2026"), "2026");
+        assert_eq!(format_dart_date(""), "");
+    }
+
+    #[test]
+    fn dart_url_encode_korean() {
+        let encoded = url_encode("삼성전자");
+        assert!(!encoded.contains(' '));
+        assert!(encoded.contains('%'));
+        // ASCII pass-through
+        assert_eq!(url_encode("SK"), "SK");
+    }
+
+    #[test]
+    fn dart_url_encode_spaces() {
+        let encoded = url_encode("LG 에너지솔루션");
+        assert!(encoded.contains("%20"));
+        assert!(!encoded.contains(' '));
+    }
+
+    #[test]
+    fn dart_strip_html_tags() {
+        let html = "<html><body><p>보고서 내용입니다.</p><br/><p>두번째 문단</p></body></html>";
+        let text = strip_html_tags(html);
+        assert!(text.contains("보고서 내용입니다."));
+        assert!(text.contains("두번째 문단"));
+        assert!(!text.contains('<'));
+        assert!(!text.contains('>'));
+    }
+
+    #[test]
+    fn dart_strip_html_empty() {
+        let text = strip_html_tags("");
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn dart_watchlist_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let watchlist_path = dir.path().join("watchlist.json");
+
+        let list = vec!["삼성전자".to_string(), "LG화학".to_string()];
+        let entries: Vec<String> = list.iter().map(|s| format!("\"{}\"", s)).collect();
+        let json = format!("[{}]", entries.join(","));
+        std::fs::write(&watchlist_path, &json).unwrap();
+
+        let content = std::fs::read_to_string(&watchlist_path).unwrap();
+        let trimmed = content.trim();
+        let inner = &trimmed[1..trimmed.len() - 1];
+        let loaded: Vec<String> = inner
+            .split(',')
+            .filter_map(|s| {
+                let s = s.trim().trim_matches('"');
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s.to_string())
+                }
+            })
+            .collect();
+
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0], "삼성전자");
+        assert_eq!(loaded[1], "LG화학");
+    }
+
+    #[test]
+    fn dart_parse_single_item_missing_fields() {
+        let obj = r#"{"corp_name":"테스트기업","report_nm":"보고서"}"#;
+        let item = parse_single_dart_item(obj);
+        assert!(item.is_some());
+        let item = item.unwrap();
+        assert_eq!(item.corp_name, "테스트기업");
+        assert_eq!(item.report_nm, "보고서");
+        assert!(item.rcept_no.is_empty());
+    }
+
+    #[test]
+    fn dart_parse_single_item_empty() {
+        let obj = r#"{}"#;
+        let item = parse_single_dart_item(obj);
+        assert!(item.is_none());
     }
 
     #[test]

@@ -834,6 +834,10 @@ pub async fn run_repl(
                 commands::handle_bigkinds(input);
                 continue;
             }
+            s if s == "/dart" || s.starts_with("/dart ") => {
+                commands::handle_dart(input);
+                continue;
+            }
             s if s == "/breaking" || s.starts_with("/breaking ") => {
                 commands::handle_breaking(agent, input, &mut session_total, &agent_config.model)
                     .await;
