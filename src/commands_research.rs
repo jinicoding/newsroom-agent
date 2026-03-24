@@ -5733,6 +5733,283 @@ fn handle_dart_watch(corp_name: &str) {
     }
 }
 
+// ── /assembly — 국회 입법정보 검색 ──────────────────────────────────────
+
+/// Subcommand names for `/assembly <Tab>` completion.
+pub const ASSEMBLY_SUBCOMMANDS: &[&str] = &["search", "recent", "bill"];
+
+/// A single National Assembly bill item.
+#[derive(Debug, Clone)]
+pub struct AssemblyBill {
+    pub bill_id: String,
+    pub bill_no: String,
+    pub bill_name: String,
+    pub proposer: String,
+    pub propose_dt: String,
+    pub committee: String,
+    pub proc_result: String,
+}
+
+/// Parse National Assembly bill list XML into items.
+/// LIKMS API returns XML with <row> elements containing bill fields.
+pub fn parse_assembly_list(xml: &str) -> Vec<AssemblyBill> {
+    let mut results = Vec::new();
+    let mut search_from = 0;
+
+    loop {
+        let row_start = match xml[search_from..].find("<row>") {
+            Some(pos) => search_from + pos,
+            None => break,
+        };
+        let row_end = match xml[row_start..].find("</row>") {
+            Some(pos) => row_start + pos + 6,
+            None => break,
+        };
+        let row = &xml[row_start..row_end];
+
+        let bill = AssemblyBill {
+            bill_id: xml_extract(row, "BILL_ID"),
+            bill_no: xml_extract(row, "BILL_NO"),
+            bill_name: xml_extract(row, "BILL_NAME"),
+            proposer: xml_extract(row, "PROPOSER"),
+            propose_dt: xml_extract(row, "PROPOSE_DT"),
+            committee: xml_extract(row, "COMMITTEE"),
+            proc_result: xml_extract(row, "PROC_RESULT"),
+        };
+
+        if !bill.bill_name.is_empty() {
+            results.push(bill);
+        }
+
+        search_from = row_end;
+    }
+
+    results
+}
+
+/// Extract text content from an XML tag. Returns empty string if not found.
+fn xml_extract(xml: &str, tag: &str) -> String {
+    let open = format!("<{}>", tag);
+    let close = format!("</{}>", tag);
+    let start = match xml.find(&open) {
+        Some(pos) => pos + open.len(),
+        None => return String::new(),
+    };
+    let end = match xml[start..].find(&close) {
+        Some(pos) => start + pos,
+        None => return String::new(),
+    };
+    xml[start..end].trim().to_string()
+}
+
+/// Format assembly date from "YYYY-MM-DD" or "YYYYMMDD" to display format.
+pub fn format_assembly_date(raw: &str) -> String {
+    if raw.len() == 8 && raw.chars().all(|c| c.is_ascii_digit()) {
+        format!("{}-{}-{}", &raw[..4], &raw[4..6], &raw[6..8])
+    } else {
+        raw.to_string()
+    }
+}
+
+/// Build National Assembly bill search API request via curl.
+fn assembly_search(keyword: &str) -> Result<String, String> {
+    let api_key = std::env::var("ASSEMBLY_API_KEY")
+        .map_err(|_| "ASSEMBLY_API_KEY 환경변수를 설정하세요 (https://open.assembly.go.kr 에서 발급)".to_string())?;
+    let encoded = url_encode(keyword);
+    let url = format!(
+        "https://open.assembly.go.kr/portal/openapi/nzmimeepazxkubdpn?KEY={}&Type=xml&pSize=20&BILL_NAME={}",
+        api_key, encoded
+    );
+    run_curl(&url)
+}
+
+/// Fetch recent bills from National Assembly API.
+fn assembly_recent() -> Result<String, String> {
+    let api_key = std::env::var("ASSEMBLY_API_KEY")
+        .map_err(|_| "ASSEMBLY_API_KEY 환경변수를 설정하세요 (https://open.assembly.go.kr 에서 발급)".to_string())?;
+    let url = format!(
+        "https://open.assembly.go.kr/portal/openapi/nzmimeepazxkubdpn?KEY={}&Type=xml&pSize=20&AGE=22",
+        api_key
+    );
+    run_curl(&url)
+}
+
+/// Fetch bill detail from National Assembly API.
+fn assembly_bill_detail(bill_no: &str) -> Result<String, String> {
+    let api_key = std::env::var("ASSEMBLY_API_KEY")
+        .map_err(|_| "ASSEMBLY_API_KEY 환경변수를 설정하세요 (https://open.assembly.go.kr 에서 발급)".to_string())?;
+    let encoded = url_encode(bill_no);
+    let url = format!(
+        "https://open.assembly.go.kr/portal/openapi/nzmimeepazxkubdpn?KEY={}&Type=xml&pSize=5&BILL_NO={}",
+        api_key, encoded
+    );
+    run_curl(&url)
+}
+
+/// Run curl and return the response body.
+fn run_curl(url: &str) -> Result<String, String> {
+    let output = std::process::Command::new("curl")
+        .args(["-s", "--max-time", "15", url])
+        .output()
+        .map_err(|e| format!("curl 실행 실패: {e}"))?;
+    if !output.status.success() {
+        return Err(format!("HTTP 요청 실패 (status: {:?})", output.status.code()));
+    }
+    String::from_utf8(output.stdout).map_err(|e| format!("응답 디코딩 실패: {e}"))
+}
+
+/// Handle the `/assembly` command.
+pub fn handle_assembly(input: &str) {
+    let args = input.strip_prefix("/assembly").unwrap_or("").trim();
+
+    if args.is_empty() || args == "help" {
+        println!("{DIM}  사용법: /assembly search <키워드>    법안명 검색{RESET}");
+        println!("{DIM}          /assembly recent             최근 발의 법안{RESET}");
+        println!("{DIM}          /assembly bill <의안번호>     법안 상세 조회{RESET}");
+        println!("{DIM}  환경변수: ASSEMBLY_API_KEY (https://open.assembly.go.kr 에서 발급){RESET}");
+        println!("{DIM}  예시:   /assembly search 반도체{RESET}");
+        println!("{DIM}          /assembly bill 2200001{RESET}\n");
+        return;
+    }
+
+    if let Some(keyword) = args.strip_prefix("search") {
+        let keyword = keyword.trim();
+        if keyword.is_empty() {
+            eprintln!("{RED}  검색 키워드를 입력하세요. 예: /assembly search 반도체{RESET}\n");
+            return;
+        }
+        handle_assembly_search(keyword);
+    } else if args == "recent" || args.starts_with("recent ") {
+        handle_assembly_recent();
+    } else if let Some(bill_no) = args.strip_prefix("bill") {
+        let bill_no = bill_no.trim();
+        if bill_no.is_empty() {
+            eprintln!("{RED}  의안번호를 입력하세요. 예: /assembly bill 2200001{RESET}\n");
+            return;
+        }
+        handle_assembly_bill(bill_no);
+    } else {
+        // Treat bare argument as search
+        handle_assembly_search(args);
+    }
+}
+
+fn print_assembly_bills(bills: &[AssemblyBill]) {
+    for (i, bill) in bills.iter().enumerate() {
+        println!(
+            "  {BOLD}{YELLOW}[{}]{RESET} {BOLD}{}{RESET}",
+            i + 1,
+            bill.bill_name
+        );
+        let date_fmt = format_assembly_date(&bill.propose_dt);
+        let mut meta_parts: Vec<&str> = Vec::new();
+        if !bill.proposer.is_empty() {
+            meta_parts.push(&bill.proposer);
+        }
+        if !bill.propose_dt.is_empty() {
+            meta_parts.push(&date_fmt);
+        }
+        if !bill.committee.is_empty() {
+            meta_parts.push(&bill.committee);
+        }
+        if !meta_parts.is_empty() {
+            println!("  {DIM}    {}{RESET}", meta_parts.join(" | "));
+        }
+        if !bill.proc_result.is_empty() {
+            println!("  {DIM}    처리상태: {}{RESET}", bill.proc_result);
+        }
+        if !bill.bill_no.is_empty() {
+            println!("  {DIM}    의안번호: {}{RESET}", bill.bill_no);
+        }
+        println!();
+    }
+}
+
+fn handle_assembly_search(keyword: &str) {
+    println!("{DIM}  국회의안정보에서 '{keyword}' 검색 중...{RESET}");
+    match assembly_search(keyword) {
+        Ok(xml) => {
+            let bills = parse_assembly_list(&xml);
+            if bills.is_empty() {
+                println!("{DIM}  검색 결과가 없습니다.{RESET}\n");
+                return;
+            }
+            println!();
+            print_assembly_bills(&bills);
+            println!(
+                "{DIM}  총 {}건 | 국회의안정보시스템{RESET}\n",
+                bills.len()
+            );
+        }
+        Err(e) => {
+            eprintln!("{RED}  {e}{RESET}\n");
+        }
+    }
+}
+
+fn handle_assembly_recent() {
+    println!("{DIM}  최근 발의 법안 조회 중...{RESET}");
+    match assembly_recent() {
+        Ok(xml) => {
+            let bills = parse_assembly_list(&xml);
+            if bills.is_empty() {
+                println!("{DIM}  조회 결과가 없습니다.{RESET}\n");
+                return;
+            }
+            println!();
+            print_assembly_bills(&bills);
+            println!(
+                "{DIM}  총 {}건 | 제22대 국회 | 국회의안정보시스템{RESET}\n",
+                bills.len()
+            );
+        }
+        Err(e) => {
+            eprintln!("{RED}  {e}{RESET}\n");
+        }
+    }
+}
+
+fn handle_assembly_bill(bill_no: &str) {
+    println!("{DIM}  의안번호 '{bill_no}' 상세 조회 중...{RESET}");
+    match assembly_bill_detail(bill_no) {
+        Ok(xml) => {
+            let bills = parse_assembly_list(&xml);
+            if bills.is_empty() {
+                println!("{DIM}  해당 의안을 찾을 수 없습니다.{RESET}\n");
+                return;
+            }
+            let bill = &bills[0];
+            println!("\n  {BOLD}법안 상세 정보 (의안번호: {}){RESET}\n", bill.bill_no);
+            println!("  {BOLD}법안명:{RESET}   {}", bill.bill_name);
+            if !bill.proposer.is_empty() {
+                println!("  {BOLD}발의자:{RESET}   {}", bill.proposer);
+            }
+            if !bill.propose_dt.is_empty() {
+                println!(
+                    "  {BOLD}발의일:{RESET}   {}",
+                    format_assembly_date(&bill.propose_dt)
+                );
+            }
+            if !bill.committee.is_empty() {
+                println!("  {BOLD}소관위:{RESET}   {}", bill.committee);
+            }
+            if !bill.proc_result.is_empty() {
+                println!("  {BOLD}처리상태:{RESET} {}", bill.proc_result);
+            }
+            if !bill.bill_id.is_empty() {
+                println!(
+                    "  {BOLD}상세URL:{RESET}  https://likms.assembly.go.kr/bill/billDetail.do?billId={}",
+                    bill.bill_id
+                );
+            }
+            println!();
+        }
+        Err(e) => {
+            eprintln!("{RED}  {e}{RESET}\n");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -8095,5 +8372,69 @@ mod tests {
         assert_eq!(h2.len(), 1);
         assert_eq!(h1[0]["headlines"][0].as_str().unwrap(), "a");
         assert_eq!(h2[0]["headlines"][0].as_str().unwrap(), "b");
+    }
+
+    // ── /assembly tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn assembly_parse_list_results() {
+        let xml = r#"<response><body><row><BILL_ID>PRC_A1B2C3</BILL_ID><BILL_NO>2200001</BILL_NO><BILL_NAME>반도체산업 경쟁력 강화 특별법안</BILL_NAME><PROPOSER>홍길동의원 등 10인</PROPOSER><PROPOSE_DT>2026-03-15</PROPOSE_DT><COMMITTEE>산업통상자원중소벤처기업위원회</COMMITTEE><PROC_RESULT>위원회 심사</PROC_RESULT></row><row><BILL_ID>PRC_D4E5F6</BILL_ID><BILL_NO>2200002</BILL_NO><BILL_NAME>반도체 클러스터 지원에 관한 법률안</BILL_NAME><PROPOSER>김철수의원 등 15인</PROPOSER><PROPOSE_DT>2026-03-10</PROPOSE_DT><COMMITTEE>산업통상자원중소벤처기업위원회</COMMITTEE><PROC_RESULT></PROC_RESULT></row></body></response>"#;
+        let bills = parse_assembly_list(xml);
+        assert_eq!(bills.len(), 2);
+        assert_eq!(bills[0].bill_id, "PRC_A1B2C3");
+        assert_eq!(bills[0].bill_no, "2200001");
+        assert_eq!(bills[0].bill_name, "반도체산업 경쟁력 강화 특별법안");
+        assert_eq!(bills[0].proposer, "홍길동의원 등 10인");
+        assert_eq!(bills[0].propose_dt, "2026-03-15");
+        assert_eq!(bills[0].committee, "산업통상자원중소벤처기업위원회");
+        assert_eq!(bills[0].proc_result, "위원회 심사");
+        assert_eq!(bills[1].bill_no, "2200002");
+        assert!(bills[1].proc_result.is_empty());
+    }
+
+    #[test]
+    fn assembly_parse_empty_response() {
+        let xml = r#"<response><body></body></response>"#;
+        let bills = parse_assembly_list(xml);
+        assert!(bills.is_empty());
+    }
+
+    #[test]
+    fn assembly_parse_no_row() {
+        let xml = r#"<response><header><result_code>INFO-200</result_code><result_message>해당 데이터 없음</result_message></header></response>"#;
+        let bills = parse_assembly_list(xml);
+        assert!(bills.is_empty());
+    }
+
+    #[test]
+    fn assembly_parse_missing_fields() {
+        let xml = r#"<response><body><row><BILL_ID></BILL_ID><BILL_NO>2200099</BILL_NO><BILL_NAME>테스트법안</BILL_NAME><PROPOSER></PROPOSER><PROPOSE_DT></PROPOSE_DT><COMMITTEE></COMMITTEE><PROC_RESULT></PROC_RESULT></row></body></response>"#;
+        let bills = parse_assembly_list(xml);
+        assert_eq!(bills.len(), 1);
+        assert_eq!(bills[0].bill_name, "테스트법안");
+        assert_eq!(bills[0].bill_no, "2200099");
+        assert!(bills[0].proposer.is_empty());
+    }
+
+    #[test]
+    fn assembly_xml_extract_basic() {
+        let xml = "<row><BILL_NAME>테스트 법안</BILL_NAME><BILL_NO>123</BILL_NO></row>";
+        assert_eq!(xml_extract(xml, "BILL_NAME"), "테스트 법안");
+        assert_eq!(xml_extract(xml, "BILL_NO"), "123");
+        assert_eq!(xml_extract(xml, "MISSING"), "");
+    }
+
+    #[test]
+    fn assembly_date_format() {
+        assert_eq!(format_assembly_date("20260315"), "2026-03-15");
+        assert_eq!(format_assembly_date("2026-03-15"), "2026-03-15");
+        assert_eq!(format_assembly_date(""), "");
+    }
+
+    #[test]
+    fn assembly_parse_row_with_empty_name_skipped() {
+        let xml = r#"<response><body><row><BILL_ID>X</BILL_ID><BILL_NO>1</BILL_NO><BILL_NAME></BILL_NAME><PROPOSER></PROPOSER><PROPOSE_DT></PROPOSE_DT><COMMITTEE></COMMITTEE><PROC_RESULT></PROC_RESULT></row></body></response>"#;
+        let bills = parse_assembly_list(xml);
+        assert!(bills.is_empty());
     }
 }

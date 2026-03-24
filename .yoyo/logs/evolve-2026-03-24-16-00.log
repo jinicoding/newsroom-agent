@@ -87,3 +87,7 @@ SESSION_PLAN.md 작성 완료.
   계획된 태스크: 3개
 
   ── Task 1 / 3 ──
+완료. 미사용 헬퍼 함수 9개(`temp_sources_path`, `temp_deadlines_path`, `temp_embargoes_path`, `temp_archive_paths`, `temp_desk_path`, `temp_collab_dir`, `temp_coverage_path`, `temp_calendar_path`, `temp_performance_path`)를 제거했습니다. 빌드 성공, 67개 테스트 전부 통과.
+    Task 1: 검증 OK
+
+  ── Task 2 / 3 ──
