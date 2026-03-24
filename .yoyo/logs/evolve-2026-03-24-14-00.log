@@ -1,0 +1,98 @@
+=== Day 7 (2026-03-24 14:00) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+warning: function `temp_sources_path` is never used
+    --> src/commands_project.rs:1701:8
+     |
+1701 |     fn temp_sources_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `temp_deadlines_path` is never used
+    --> src/commands_project.rs:2030:8
+     |
+2030 |     fn temp_deadlines_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_embargoes_path` is never used
+    --> src/commands_project.rs:2036:8
+     |
+2036 |     fn temp_embargoes_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_archive_paths` is never used
+    --> src/commands_project.rs:2042:8
+     |
+2042 |     fn temp_archive_paths() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_desk_path` is never used
+    --> src/commands_project.rs:2050:8
+     |
+2050 |     fn temp_desk_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^
+
+warning: function `temp_collab_dir` is never used
+    --> src/commands_project.rs:2056:8
+     |
+2056 |     fn temp_collab_dir() -> tempfile::TempDir {
+     |        ^^^^^^^^^^^^^^^
+
+warning: function `temp_coverage_path` is never used
+    --> src/commands_project.rs:2060:8
+     |
+2060 |     fn temp_coverage_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_calendar_path` is never used
+    --> src/commands_project.rs:2119:8
+     |
+2119 |     fn temp_calendar_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_performance_path` is never used
+    --> src/commands_project.rs:2190:8
+     |
+2190 |     fn temp_performance_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^^^^
+
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  커뮤니티 이슈 0
+0개 로드.
+→ self 이슈 확인...
+  self 이슈 없음.
+→ help-wanted 이슈 확인...
+  help-wanted 이슈 없음.
+→ 대기 답변 스캔...
+  대기 답변 없음.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md 작성 완료. 3개 태스크 계획:
+
+1. **`/dart` 전자공시 검색 커맨드 신설** — DART OpenAPI 연동으로 경제부 기자의 핵심 1차 소스인 기업 공시 검색/조회/모니터링. /bigkinds(뉴스 빅데이터)에 이어 /dart(기업 공시)로 "기자의 공적 데이터베이스 접근"을 확장.
+
+2. **`/recap` 퇴근 루틴 강화** — .journalist/ 데이터 자동 집계로 "오늘 뭘 했는가" 구조화. /morning(아침) ↔ /recap(퇴근) 대칭 루틴 완성.
+
+3. **저널 엔트리** — 세션 기록.
+
+커뮤니티 이슈 없음. 여기서 멈춘다 — 계획만 세우고 구현은 하지 않는다.
+
+→ Phase B: 구현...
+  계획된 태스크: 3개
+
+  ── Task 1 / 3 ──
+완료. `/dart` 전자공시 검색 커맨드를 구현하고 커밋했습니다.
+
+**구현 내용:**
+- `dart search <기업명>` — DART OpenAPI로 최근 30일 공시 목록 조회 (기업명, 보고서명, 공시일, 제출인, 공시번호 표시)
+- `dart report <공시번호>` — 공시 상세 XML 내용 조회 및 텍스트 추출
+- `dart watch <기업명>` — `.journalist/dart/watchlist.json`에 모니터링 기업 등록/해제 (토글)
+
+**테스트 10개 추가:** JSON 파싱, 빈 결과, 에러 응답, 날짜 포맷팅, URL 인코딩, HTML 태그 제거, 워치리스트 라운드트립, 누락 필드, 빈 객체 처리
+    Task 1: 검증 OK
+
+  ── Task 2 / 3 ──

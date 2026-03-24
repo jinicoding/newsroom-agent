@@ -6,7 +6,7 @@ use crate::commands_project::*;
 use crate::commands_research::{
     days_until, ensure_sources_dir_at, fetch_naver_headlines, load_all_contact_logs,
     load_followups_from, load_notes_from, load_sources_from, notes_file_for_date,
-    followups_path, ContactLog, Followup, SOURCES_FILE,
+    followups_path, ContactLog, Followup, RESEARCH_DIR, SOURCES_FILE,
 };
 use crate::commands_writing::format_unix_timestamp;
 use crate::format::*;
@@ -4366,10 +4366,37 @@ fn print_breaking_list() {
 
 const RECAP_DIR: &str = ".journalist/recap";
 
+/// List file names (stem only) in `dir` whose name starts with `date_prefix` and ends with `ext`.
+pub fn list_files_for_date(
+    dir: &std::path::Path,
+    date_prefix: &str,
+    ext: &str,
+) -> Vec<String> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let name = e.file_name();
+            let name_str = name.to_string_lossy().to_string();
+            if name_str.starts_with(date_prefix) && name_str.ends_with(ext) {
+                let stem = name_str.strip_suffix(ext).unwrap_or(&name_str).to_string();
+                Some(stem)
+            } else {
+                None
+            }
+        })
+        .collect();
+    names.sort();
+    names
+}
+
 /// Collect today's journalist data for the daily recap.
 ///
 /// Gathers: notes, contacts, calendar (done/undone), drafts modified today,
-/// deadline status changes, and desk assignment status.
+/// research saved today, follow-up status, deadline status changes, and desk assignment status.
 pub fn collect_recap_data() -> String {
     let mut sections = Vec::new();
     let today = today_date_string();
@@ -4476,7 +4503,60 @@ pub fn collect_recap_data() -> String {
         sections.push("## 오늘 작업한 초고\n작업한 초고 없음\n".to_string());
     }
 
-    // 5. Deadline status
+    // 5. Research saved today (by filename date prefix)
+    let research_dir = std::path::Path::new(RESEARCH_DIR);
+    let today_research = list_files_for_date(research_dir, &today, ".md");
+    if !today_research.is_empty() {
+        let mut s = format!("## 오늘 저장한 리서치 ({}건)\n", today_research.len());
+        for name in &today_research {
+            // Strip date prefix for cleaner display (e.g. "2026-03-24_반도체-수출" → "반도체-수출")
+            let display = name
+                .strip_prefix(&today)
+                .and_then(|s| s.strip_prefix('_'))
+                .unwrap_or(name);
+            s.push_str(&format!("- {display}\n"));
+        }
+        sections.push(s);
+    } else {
+        sections.push("## 오늘 저장한 리서치\n저장한 리서치 없음\n".to_string());
+    }
+
+    // 6. Follow-up status
+    let followups = load_followups_from(&followups_path());
+    let pending_followups: Vec<&crate::commands_research::Followup> = followups
+        .iter()
+        .filter(|f| !f.done)
+        .collect();
+    let today_created: Vec<&crate::commands_research::Followup> = followups
+        .iter()
+        .filter(|f| f.created_at.starts_with(&today))
+        .collect();
+    if !pending_followups.is_empty() || !today_created.is_empty() {
+        let mut s = String::from("## 후속취재 현황\n");
+        if !today_created.is_empty() {
+            s.push_str(&format!("오늘 등록: {}건\n", today_created.len()));
+            for f in &today_created {
+                let mark = if f.done { "✅" } else { "⬜" };
+                let due = f.due.as_deref().unwrap_or("기한 미정");
+                s.push_str(&format!("- {mark} {} (마감: {due})\n", f.topic));
+            }
+        }
+        if !pending_followups.is_empty() {
+            s.push_str(&format!("대기 중: {}건\n", pending_followups.len()));
+            for f in &pending_followups {
+                if f.created_at.starts_with(&today) {
+                    continue; // already listed above
+                }
+                let due = f.due.as_deref().unwrap_or("기한 미정");
+                s.push_str(&format!("- ⬜ {} (마감: {due})\n", f.topic));
+            }
+        }
+        sections.push(s);
+    } else {
+        sections.push("## 후속취재 현황\n등록된 후속취재 없음\n".to_string());
+    }
+
+    // 7. Deadline status
     let deadlines = load_deadlines_from(&deadlines_path());
     let mut deadline_info: Vec<String> = Vec::new();
     for dl in &deadlines {
@@ -4507,7 +4587,7 @@ pub fn collect_recap_data() -> String {
         sections.push("## 마감 상태\n임박한 마감 없음\n".to_string());
     }
 
-    // 6. Desk assignment status
+    // 8. Desk assignment status
     let desk = load_desk_from(&desk_path());
     if !desk.is_empty() {
         let completed: Vec<&DeskAssignment> = desk
@@ -4623,6 +4703,8 @@ fn recap_print_help() {
     println!("{DIM}    • 오늘 접촉한 취재원 (contacts){RESET}");
     println!("{DIM}    • 오늘 일정 완료 여부 (calendar){RESET}");
     println!("{DIM}    • 오늘 작업한 초고 (drafts){RESET}");
+    println!("{DIM}    • 오늘 저장한 리서치 (research){RESET}");
+    println!("{DIM}    • 후속취재 현황 (followups){RESET}");
     println!("{DIM}    • 마감 상태 변화 (deadlines){RESET}");
     println!("{DIM}    • 데스크 지시 처리 현황 (desk){RESET}");
     println!("{DIM}  사용법:{RESET}");
@@ -7531,6 +7613,45 @@ mod tests {
     }
 
     #[test]
+    fn list_files_for_date_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = list_files_for_date(tmp.path(), "2026-03-24", ".md");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn list_files_for_date_nonexistent_dir() {
+        let path = std::path::Path::new("/tmp/nonexistent_recap_list_test_dir");
+        let result = list_files_for_date(path, "2026-03-24", ".md");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn list_files_for_date_filters_and_sorts() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("2026-03-24_반도체-수출.md"), "r1").unwrap();
+        std::fs::write(tmp.path().join("2026-03-24_부동산-시장.md"), "r2").unwrap();
+        std::fs::write(tmp.path().join("2026-03-23_old-topic.md"), "old").unwrap();
+        std::fs::write(tmp.path().join("2026-03-24_data.json"), "json").unwrap();
+
+        let result = list_files_for_date(tmp.path(), "2026-03-24", ".md");
+        assert_eq!(result.len(), 2);
+        // Should be sorted
+        assert_eq!(result[0], "2026-03-24_반도체-수출");
+        assert_eq!(result[1], "2026-03-24_부동산-시장");
+    }
+
+    #[test]
+    fn list_files_for_date_returns_stems_without_ext() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("2026-03-24_test.md"), "content").unwrap();
+
+        let result = list_files_for_date(tmp.path(), "2026-03-24", ".md");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], "2026-03-24_test");
+    }
+
+    #[test]
     fn collect_recap_data_graceful_when_empty() {
         // When no .journalist/ data files exist, should still return structured sections
         let data = collect_recap_data();
@@ -7538,6 +7659,8 @@ mod tests {
         assert!(data.contains("오늘 접촉한 취재원"));
         assert!(data.contains("오늘 일정"));
         assert!(data.contains("오늘 작업한 초고"));
+        assert!(data.contains("오늘 저장한 리서치"));
+        assert!(data.contains("후속취재 현황"));
         assert!(data.contains("마감 상태"));
         assert!(data.contains("데스크 지시 현황"));
     }
