@@ -1698,12 +1698,6 @@ pub fn handle_profile(input: &str) {
 mod tests {
     use super::*;
 
-    fn temp_sources_path() -> (tempfile::TempDir, std::path::PathBuf) {
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join("sources.json");
-        (dir, path)
-    }
-
     #[test]
     fn topic_to_slug_basic() {
         assert_eq!(topic_to_slug("반도체 수출 동향", 50), "반도체-수출-동향");
@@ -2027,42 +2021,6 @@ mod tests {
         assert!(!news_matches("/newsletter"));
     }
 
-    fn temp_deadlines_path() -> (tempfile::TempDir, std::path::PathBuf) {
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join("deadlines.json");
-        (dir, path)
-    }
-
-    fn temp_embargoes_path() -> (tempfile::TempDir, std::path::PathBuf) {
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join("embargoes.json");
-        (dir, path)
-    }
-
-    fn temp_archive_paths() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
-        let dir = tempfile::TempDir::new().unwrap();
-        let archive_dir = dir.path().join("archive");
-        std::fs::create_dir_all(&archive_dir).unwrap();
-        let index_path = archive_dir.join("index.json");
-        (dir, index_path, archive_dir)
-    }
-
-    fn temp_desk_path() -> (tempfile::TempDir, std::path::PathBuf) {
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join("desk").join("assignments.json");
-        (dir, path)
-    }
-
-    fn temp_collab_dir() -> tempfile::TempDir {
-        tempfile::TempDir::new().unwrap()
-    }
-
-    fn temp_coverage_path() -> (tempfile::TempDir, std::path::PathBuf) {
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join("coverage.json");
-        (dir, path)
-    }
-
     #[test]
     fn coverage_known_command() {
         use crate::commands::KNOWN_COMMANDS;
@@ -2114,12 +2072,6 @@ mod tests {
             crate::commands::KNOWN_COMMANDS.contains(&"/improve"),
             "/improve should be in KNOWN_COMMANDS"
         );
-    }
-
-    fn temp_calendar_path() -> (tempfile::TempDir, std::path::PathBuf) {
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join("calendar.json");
-        (dir, path)
     }
 
     #[test]
@@ -2185,12 +2137,6 @@ mod tests {
         std::fs::write(&path, "test content").unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert_eq!(content, "test content");
-    }
-
-    fn temp_performance_path() -> (tempfile::TempDir, std::path::PathBuf) {
-        let dir = tempfile::TempDir::new().unwrap();
-        let path = dir.path().join("performance.json");
-        (dir, path)
     }
 
     #[test]

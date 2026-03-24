@@ -1,0 +1,89 @@
+=== Day 7 (2026-03-24 16:00) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+warning: function `temp_sources_path` is never used
+    --> src/commands_project.rs:1701:8
+     |
+1701 |     fn temp_sources_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `temp_deadlines_path` is never used
+    --> src/commands_project.rs:2030:8
+     |
+2030 |     fn temp_deadlines_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_embargoes_path` is never used
+    --> src/commands_project.rs:2036:8
+     |
+2036 |     fn temp_embargoes_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_archive_paths` is never used
+    --> src/commands_project.rs:2042:8
+     |
+2042 |     fn temp_archive_paths() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_desk_path` is never used
+    --> src/commands_project.rs:2050:8
+     |
+2050 |     fn temp_desk_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^
+
+warning: function `temp_collab_dir` is never used
+    --> src/commands_project.rs:2056:8
+     |
+2056 |     fn temp_collab_dir() -> tempfile::TempDir {
+     |        ^^^^^^^^^^^^^^^
+
+warning: function `temp_coverage_path` is never used
+    --> src/commands_project.rs:2060:8
+     |
+2060 |     fn temp_coverage_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_calendar_path` is never used
+    --> src/commands_project.rs:2119:8
+     |
+2119 |     fn temp_calendar_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^
+
+warning: function `temp_performance_path` is never used
+    --> src/commands_project.rs:2190:8
+     |
+2190 |     fn temp_performance_path() -> (tempfile::TempDir, std::path::PathBuf) {
+     |        ^^^^^^^^^^^^^^^^^^^^^
+
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  커뮤니티 이슈 0
+0개 로드.
+→ self 이슈 확인...
+  self 이슈 1개 로드.
+→ help-wanted 이슈 확인...
+  help-wanted 이슈 없음.
+→ 대기 답변 스캔...
+  대기 답변 없음.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md 작성 완료.
+
+**3개 태스크 요약:**
+
+| 순서 | 태스크 | 우선순위 근거 |
+|------|--------|---------------|
+| Task 1 | 테스트 빌드 경고 9개 제거 | CI 게이트 통과 필수 (Priority 0) |
+| Task 2 | `/assembly` 국회 입법정보 검색 | 기자 기능 갭 — 공식 데이터 소스 확장 (Priority 1) |
+| Task 3 | 저널 엔트리 | 자기 이슈 #2 해결 + 세션 기록 (Priority 4) |
+
+**전략:** /dart(기업 공시) → /assembly(입법 공시)로 "공식 데이터 소스" 축을 넓힌다. 기자에게 DART와 국회가 두 대 공시 시스템이다 — 이 둘이 CLI에 있으면 속보 대응 속도가 달라진다. 경고 제거를 먼저 해서 Task 3 저널이 이전처럼 revert되지 않도록 한다.
+
+→ Phase B: 구현...
+  계획된 태스크: 3개
+
+  ── Task 1 / 3 ──
