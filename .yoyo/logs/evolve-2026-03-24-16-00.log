@@ -91,3 +91,18 @@ SESSION_PLAN.md 작성 완료.
     Task 1: 검증 OK
 
   ── Task 2 / 3 ──
+완료. `/assembly` 커맨드를 구현했습니다:
+
+- **`/assembly search <키워드>`** — 법안명으로 검색 (예: `/assembly search 반도체`)
+- **`/assembly recent`** — 제22대 국회 최근 발의 법안 조회
+- **`/assembly bill <의안번호>`** — 법안 상세 조회 (발의자, 소관위, 처리상태, LIKMS 링크)
+
+구현 내용:
+- `commands_research.rs`: XML 파싱(`parse_assembly_list`, `xml_extract`), API 호출 3종, 출력 포매팅, 테스트 7개
+- `commands.rs`: KNOWN_COMMANDS 등록, 탭 완성, 헬프 텍스트, pub use
+- `repl.rs`: 디스패치 추가
+
+DART 패턴과 동일한 구조 — `ASSEMBLY_API_KEY` 환경변수로 open.assembly.go.kr API 키를 설정하면 동작합니다.
+    Task 2: 검증 OK
+
+  ── Task 3 / 3 ──
