@@ -4,6 +4,7 @@
 use crate::commands::auto_compact_if_needed;
 use crate::commands_project::*;
 use crate::commands_research::{ensure_sources_dir_at, load_sources};
+use crate::commands_workflow::{extract_story_arg, link_file_to_story, STORIES_DIR};
 use crate::format::*;
 use crate::prompt::*;
 
@@ -23,7 +24,8 @@ pub async fn handle_article(
         .unwrap_or("")
         .trim();
 
-    let (article_type, topic) = parse_article_args(raw_args);
+    let (story_slug, args_without_story) = extract_story_arg(raw_args);
+    let (article_type, topic) = parse_article_args(&args_without_story);
     let topic = topic.as_str();
 
     // Search for related research files
@@ -53,6 +55,20 @@ pub async fn handle_article(
                     "{GREEN}  ✓ 초안 저장: {}{RESET}\n",
                     path.display()
                 );
+                // Link to story if --story was given
+                if let Some(ref slug) = story_slug {
+                    let stories_base = std::path::Path::new(STORIES_DIR);
+                    match link_file_to_story(slug, &path, "기사초안", stories_base) {
+                        Ok(_) => {
+                            println!(
+                                "{GREEN}  ✓ 스토리 연결: {slug}{RESET}\n"
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("{RED}  스토리 연결 실패: {e}{RESET}\n");
+                        }
+                    }
+                }
             }
             Err(e) => {
                 eprintln!("{RED}  초안 저장 실패: {e}{RESET}\n");

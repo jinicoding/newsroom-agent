@@ -5734,6 +5734,54 @@ pub fn list_stories(base: &std::path::Path) -> Vec<StoryMeta> {
     stories
 }
 
+/// Extract `--story <slug>` from an argument string.
+/// Returns `(Option<slug>, remaining_args)`.
+pub fn extract_story_arg(args: &str) -> (Option<String>, String) {
+    let tokens: Vec<&str> = args.split_whitespace().collect();
+    let mut story_slug: Option<String> = None;
+    let mut remaining: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        if tokens[i] == "--story" {
+            if i + 1 < tokens.len() {
+                story_slug = Some(tokens[i + 1].to_string());
+                i += 2;
+            } else {
+                i += 1;
+            }
+        } else {
+            remaining.push(tokens[i].to_string());
+            i += 1;
+        }
+    }
+    (story_slug, remaining.join(" "))
+}
+
+/// Link a file to a story project workspace.
+/// Copies the file into `.journalist/stories/<slug>/` and adds a note to story.md.
+pub fn link_file_to_story(
+    slug: &str,
+    source_path: &std::path::Path,
+    label: &str,
+    base: &std::path::Path,
+) -> Result<(), String> {
+    let story_dir = base.join(slug);
+    let meta_path = story_dir.join("story.md");
+    if !meta_path.exists() {
+        return Err(format!("스토리를 찾을 수 없습니다: {slug}"));
+    }
+    let file_name = source_path
+        .file_name()
+        .ok_or_else(|| "파일명을 알 수 없습니다".to_string())?
+        .to_string_lossy()
+        .to_string();
+    let dest = story_dir.join(&file_name);
+    std::fs::copy(source_path, &dest).map_err(|e| format!("파일 복사 실패: {e}"))?;
+    let note = format!("[{label}] {file_name}");
+    add_story_note(slug, &note, base)?;
+    Ok(())
+}
+
 /// Handle the `/story` command: journalist project workspace management.
 pub fn handle_story(input: &str) {
     let args = input.strip_prefix("/story").unwrap_or("").trim();
@@ -8698,5 +8746,70 @@ mod tests {
         let (beat, rest) = parse_autopitch_args("--beat");
         assert!(beat.is_none());
         assert!(rest.is_empty());
+    }
+
+    // ── --story 연동 tests ──────────────────────────────────────────────
+
+    #[test]
+    fn extract_story_arg_basic() {
+        let (slug, rest) = extract_story_arg("--story my-slug 반도체 수출");
+        assert_eq!(slug, Some("my-slug".to_string()));
+        assert_eq!(rest, "반도체 수출");
+    }
+
+    #[test]
+    fn extract_story_arg_at_end() {
+        let (slug, rest) = extract_story_arg("반도체 수출 --story my-slug");
+        assert_eq!(slug, Some("my-slug".to_string()));
+        assert_eq!(rest, "반도체 수출");
+    }
+
+    #[test]
+    fn extract_story_arg_missing() {
+        let (slug, rest) = extract_story_arg("반도체 수출");
+        assert!(slug.is_none());
+        assert_eq!(rest, "반도체 수출");
+    }
+
+    #[test]
+    fn extract_story_arg_no_value() {
+        let (slug, rest) = extract_story_arg("--story");
+        assert!(slug.is_none());
+        assert!(rest.is_empty());
+    }
+
+    #[test]
+    fn link_file_to_story_copies_and_notes() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let base = dir.path();
+        let meta = create_story("테스트 취재", base, "2026-03-25").unwrap();
+
+        // Create a source file to link
+        let src_dir = dir.path().join("research");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let src_file = src_dir.join("2026-03-25_test.md");
+        std::fs::write(&src_file, "# 리서치 내용").unwrap();
+
+        link_file_to_story(&meta.slug, &src_file, "리서치", base).unwrap();
+
+        // Verify file was copied
+        let copied = base.join(&meta.slug).join("2026-03-25_test.md");
+        assert!(copied.exists());
+        assert_eq!(std::fs::read_to_string(&copied).unwrap(), "# 리서치 내용");
+
+        // Verify note was added
+        let loaded = load_story_meta(&story_meta_path_at(base, &meta.slug)).unwrap();
+        assert_eq!(loaded.notes.len(), 1);
+        assert_eq!(loaded.notes[0], "[리서치] 2026-03-25_test.md");
+    }
+
+    #[test]
+    fn link_file_to_story_nonexistent_slug() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let src_file = dir.path().join("test.md");
+        std::fs::write(&src_file, "test").unwrap();
+        let result = link_file_to_story("없는스토리", &src_file, "리서치", dir.path());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("찾을 수 없습니다"));
     }
 }

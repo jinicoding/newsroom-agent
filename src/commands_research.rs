@@ -3,7 +3,7 @@
 
 use crate::commands::auto_compact_if_needed;
 use crate::commands_project::*;
-use crate::commands_workflow::today_date_string;
+use crate::commands_workflow::{extract_story_arg, link_file_to_story, today_date_string, STORIES_DIR};
 use crate::commands_writing::format_unix_timestamp;
 use crate::format::*;
 use crate::prompt::*;
@@ -221,10 +221,13 @@ pub async fn handle_research(
     session_total: &mut Usage,
     model: &str,
 ) {
-    let topic = input
+    let raw_args = input
         .strip_prefix("/research")
         .unwrap_or("")
         .trim();
+
+    let (story_slug, topic_str) = extract_story_arg(raw_args);
+    let topic = topic_str.as_str();
 
     if topic.is_empty() {
         println!("{DIM}  사용법: /research <주제>{RESET}");
@@ -275,6 +278,20 @@ pub async fn handle_research(
                     "{GREEN}  ✓ 리서치 저장: {}{RESET}\n",
                     path.display()
                 );
+                // Link to story if --story was given
+                if let Some(ref slug) = story_slug {
+                    let stories_base = std::path::Path::new(STORIES_DIR);
+                    match link_file_to_story(slug, &path, "리서치", stories_base) {
+                        Ok(_) => {
+                            println!(
+                                "{GREEN}  ✓ 스토리 연결: {slug}{RESET}\n"
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("{RED}  스토리 연결 실패: {e}{RESET}\n");
+                        }
+                    }
+                }
             }
             Err(e) => {
                 eprintln!("{RED}  리서치 저장 실패: {e}{RESET}\n");
