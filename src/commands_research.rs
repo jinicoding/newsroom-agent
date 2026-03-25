@@ -6010,6 +6010,145 @@ fn handle_assembly_bill(bill_no: &str) {
     }
 }
 
+// ── /verify ──────────────────────────────────────────────────────────────
+
+/// Directory for cross-verification reports.
+pub const VERIFY_DIR: &str = ".journalist/verify";
+
+/// Build the verify file path: `.journalist/verify/YYYY-MM-DD_<slug>.md`
+pub fn verify_file_path(claim: &str) -> std::path::PathBuf {
+    verify_file_path_with_date(claim, &today_str())
+}
+
+/// Build the verify file path with an explicit date string (for testing).
+pub fn verify_file_path_with_date(claim: &str, date: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(claim, 50);
+    let filename = if slug.is_empty() {
+        format!("{date}_verify.md")
+    } else {
+        format!("{date}_{slug}.md")
+    };
+    std::path::PathBuf::from(VERIFY_DIR).join(filename)
+}
+
+/// Save verification report to file. Creates the verify directory if needed.
+fn save_verify(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
+/// List existing verification reports in `.journalist/verify/`.
+fn verify_list() {
+    let dir = std::path::Path::new(VERIFY_DIR);
+    if !dir.exists() {
+        println!("{DIM}  저장된 교차검증 보고서가 없습니다.{RESET}\n");
+        return;
+    }
+    let mut entries: Vec<_> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+            .collect(),
+        Err(_) => {
+            println!("{DIM}  교차검증 디렉토리를 읽을 수 없습니다.{RESET}\n");
+            return;
+        }
+    };
+    if entries.is_empty() {
+        println!("{DIM}  저장된 교차검증 보고서가 없습니다.{RESET}\n");
+        return;
+    }
+    entries.sort_by_key(|e| e.file_name());
+    println!("{BOLD}  📋 교차검증 보고서 목록:{RESET}");
+    for entry in &entries {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        println!("    {name}");
+    }
+    println!();
+}
+
+/// Build the verification prompt for a given claim.
+///
+/// Unlike `/factcheck` which relies on AI judgment, `/verify` instructs the agent
+/// to query concrete data sources (news APIs, DART, BIG Kinds, public data portals)
+/// and compile a structured cross-verification report with source citations.
+pub fn build_verify_prompt(claim: &str) -> Option<String> {
+    if claim.is_empty() {
+        return None;
+    }
+    let ctx = profile_context();
+    Some(format!(
+        "다음 주장을 실제 데이터 소스를 활용해 교차검증해주세요: \"{claim}\"{ctx}\n\n\
+         **반드시 다음 데이터 소스를 순서대로 조회하세요:**\n\n\
+         1. **뉴스 검색**: 네이버 뉴스 API 또는 DuckDuckGo로 관련 보도 검색\n\
+         2. **BIG Kinds (빅카인즈)**: 한국언론진흥재단 뉴스 빅데이터 — 해당 주장과 관련된 기사 건수·추이 확인\n\
+         3. **DART (전자공시)**: 관련 기업이 있다면 금융감독원 전자공시 시스템에서 공시 자료 확인\n\
+         4. **공공데이터**: data.go.kr 등 정부·공공 통계에서 수치 확인\n\
+         5. **기타**: 학술자료, 국회 의안정보, 해외 통신사 등 추가 소스\n\n\
+         **보고서 형식:**\n\n\
+         ## 교차검증 보고서\n\n\
+         ### 검증 대상\n\
+         > {claim}\n\n\
+         ### 소스별 검증 결과\n\
+         각 소스에서 발견한 내용을 구체적으로 기술 (URL, 날짜, 수치 포함)\n\n\
+         ### 소스 간 일치/불일치\n\
+         소스들이 일치하는 부분과 불일치하는 부분을 명확히 표시\n\n\
+         ### 종합 판정\n\
+         - ✅ 확인됨 / ⚠️ 부분 확인 / ❌ 반박됨 / ❓ 검증 불가\n\
+         - 근거 요약\n\
+         - 추가 검증이 필요한 부분\n\n\
+         **중요**: 조회하지 못한 소스도 \"조회 실패\" 또는 \"해당 없음\"으로 명시하세요. \
+         기자가 어떤 소스를 확인했고 어떤 소스를 확인하지 못했는지 아는 것이 중요합니다."
+    ))
+}
+
+/// Handle the `/verify` command.
+pub async fn handle_verify(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let claim = input.strip_prefix("/verify").unwrap_or("").trim();
+
+    if claim == "list" {
+        verify_list();
+        return;
+    }
+
+    let prompt = match build_verify_prompt(claim) {
+        Some(p) => p,
+        None => {
+            println!("{DIM}  사용법: /verify <주장 또는 사실>{RESET}");
+            println!("{DIM}  예시: /verify 삼성전자가 2025년 반도체 매출 100조원을 달성했다{RESET}");
+            println!("{DIM}  /verify list — 저장된 교차검증 보고서 목록{RESET}\n");
+            return;
+        }
+    };
+
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    // Save verification report to file
+    if !response.trim().is_empty() {
+        let path = verify_file_path(claim);
+        match save_verify(&path, &response) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 교차검증 보고서 저장: {}{RESET}\n",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  교차검증 보고서 저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -8436,5 +8575,58 @@ mod tests {
         let xml = r#"<response><body><row><BILL_ID>X</BILL_ID><BILL_NO>1</BILL_NO><BILL_NAME></BILL_NAME><PROPOSER></PROPOSER><PROPOSE_DT></PROPOSE_DT><COMMITTEE></COMMITTEE><PROC_RESULT></PROC_RESULT></row></body></response>"#;
         let bills = parse_assembly_list(xml);
         assert!(bills.is_empty());
+    }
+
+    // ── /verify tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn verify_prompt_empty_rejected() {
+        assert!(build_verify_prompt("").is_none());
+    }
+
+    #[test]
+    fn verify_prompt_with_claim() {
+        let prompt = build_verify_prompt("삼성전자 반도체 매출 100조").unwrap();
+        assert!(prompt.contains("삼성전자 반도체 매출 100조"));
+        assert!(prompt.contains("교차검증"));
+        assert!(prompt.contains("BIG Kinds"));
+        assert!(prompt.contains("DART"));
+        assert!(prompt.contains("data.go.kr"));
+    }
+
+    #[test]
+    fn verify_prompt_has_structured_report_format() {
+        let prompt = build_verify_prompt("테스트 주장").unwrap();
+        assert!(prompt.contains("소스별 검증 결과"), "소스별 검증 결과 섹션 누락");
+        assert!(prompt.contains("일치/불일치"), "일치/불일치 분석 섹션 누락");
+        assert!(prompt.contains("종합 판정"), "종합 판정 섹션 누락");
+    }
+
+    #[test]
+    fn verify_file_path_with_claim() {
+        let path = verify_file_path_with_date("삼성전자 반도체 매출", "2026-03-25");
+        let path_str = path.to_string_lossy();
+        assert!(path_str.starts_with(".journalist/verify/"));
+        assert!(path_str.contains("2026-03-25"));
+        assert!(path_str.contains("삼성전자-반도체-매출"));
+        assert!(path_str.ends_with(".md"));
+    }
+
+    #[test]
+    fn verify_file_path_empty_claim() {
+        let path = verify_file_path_with_date("", "2026-03-25");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/verify/2026-03-25_verify.md"
+        );
+    }
+
+    #[test]
+    fn save_verify_creates_dirs_and_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("verify").join("test.md");
+        save_verify(&path, "# 교차검증 보고서\n내용").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "# 교차검증 보고서\n내용");
     }
 }

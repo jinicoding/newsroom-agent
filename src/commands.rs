@@ -125,6 +125,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/dart",
     "/assembly",
     "/transcript",
+    "/verify",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -450,6 +451,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /factcheck <claim> 팩트체크 (다중 소스 검증)\n",
+    );
+    out.push_str(
+        "  /verify <claim>    교차검증 (실제 데이터 소스 조회 기반)\n",
     );
     out.push_str(
         "  /sources [cmd]     취재원 DB 관리 (add|list|search|remove|edit)\n",
@@ -943,7 +947,7 @@ pub use crate::commands_research::{
     handle_factcheck,
     handle_follow, handle_jsearch, handle_law, handle_monitor, handle_network, handle_news,
     handle_note, handle_press, handle_research, handle_sns, handle_rss, handle_sources,
-    handle_trend, handle_wire,
+    handle_trend, handle_verify, handle_wire,
 };
 
 // Article writing & editing handlers
