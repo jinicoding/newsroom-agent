@@ -781,3 +781,259 @@ pub async fn handle_review(
         None => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── parse_diff_stat tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_diff_stat_single_file() {
+        let input = " src/main.rs | 5 +++--\n 1 file changed, 3 insertions(+), 2 deletions(-)\n";
+        let summary = parse_diff_stat(input);
+        assert_eq!(summary.entries.len(), 1);
+        assert_eq!(summary.entries[0].file, "src/main.rs");
+        assert_eq!(summary.entries[0].insertions, 3);
+        assert_eq!(summary.entries[0].deletions, 2);
+        assert_eq!(summary.total_insertions, 3);
+        assert_eq!(summary.total_deletions, 2);
+    }
+
+    #[test]
+    fn test_parse_diff_stat_multiple_files() {
+        let input = "\
+ src/a.rs    | 10 +++++++---
+ src/b.rs    |  3 ++-
+ 2 files changed, 9 insertions(+), 4 deletions(-)\n";
+        let summary = parse_diff_stat(input);
+        assert_eq!(summary.entries.len(), 2);
+        assert_eq!(summary.entries[0].file, "src/a.rs");
+        assert_eq!(summary.entries[1].file, "src/b.rs");
+        assert_eq!(summary.total_insertions, 9);
+        assert_eq!(summary.total_deletions, 4);
+    }
+
+    #[test]
+    fn test_parse_diff_stat_insertions_only() {
+        let input = " new_file.rs | 20 ++++++++++++++++++++\n 1 file changed, 20 insertions(+)\n";
+        let summary = parse_diff_stat(input);
+        assert_eq!(summary.entries.len(), 1);
+        assert_eq!(summary.total_insertions, 20);
+        assert_eq!(summary.total_deletions, 0);
+    }
+
+    #[test]
+    fn test_parse_diff_stat_deletions_only() {
+        let input = " old_file.rs | 5 -----\n 1 file changed, 5 deletions(-)\n";
+        let summary = parse_diff_stat(input);
+        assert_eq!(summary.entries.len(), 1);
+        assert_eq!(summary.total_insertions, 0);
+        assert_eq!(summary.total_deletions, 5);
+    }
+
+    #[test]
+    fn test_parse_diff_stat_empty_input() {
+        let summary = parse_diff_stat("");
+        assert!(summary.entries.is_empty());
+        assert_eq!(summary.total_insertions, 0);
+        assert_eq!(summary.total_deletions, 0);
+    }
+
+    #[test]
+    fn test_parse_diff_stat_no_summary_line() {
+        // When no summary line is present, totals are computed from entries
+        let input = " src/main.rs | 3 ++-\n";
+        let summary = parse_diff_stat(input);
+        assert_eq!(summary.entries.len(), 1);
+        assert_eq!(summary.entries[0].insertions, 2);
+        assert_eq!(summary.entries[0].deletions, 1);
+        // Totals computed from entries
+        assert_eq!(summary.total_insertions, 2);
+        assert_eq!(summary.total_deletions, 1);
+    }
+
+    #[test]
+    fn test_parse_diff_stat_binary_file() {
+        let input =
+            " image.png | Bin 0 -> 1234 bytes\n 1 file changed, 0 insertions(+), 0 deletions(-)\n";
+        let summary = parse_diff_stat(input);
+        assert_eq!(summary.entries.len(), 1);
+        assert_eq!(summary.entries[0].file, "image.png");
+        // Binary "Bin 0 -> 1234 bytes" contains a '-' in "->", so deletions=1
+        // This is a known quirk of counting visual chars
+        assert_eq!(summary.entries[0].insertions, 0);
+        assert_eq!(summary.entries[0].deletions, 1);
+    }
+
+    // ── format_diff_stat tests ───────────────────────────────────────────
+
+    #[test]
+    fn test_format_diff_stat_empty() {
+        let summary = DiffStatSummary {
+            entries: vec![],
+            total_insertions: 0,
+            total_deletions: 0,
+        };
+        let output = format_diff_stat(&summary);
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn test_format_diff_stat_single_entry() {
+        let summary = DiffStatSummary {
+            entries: vec![DiffStatEntry {
+                file: "src/main.rs".to_string(),
+                insertions: 5,
+                deletions: 2,
+            }],
+            total_insertions: 5,
+            total_deletions: 2,
+        };
+        let output = format_diff_stat(&summary);
+        assert!(output.contains("src/main.rs"), "Should contain filename");
+        assert!(output.contains("+5"), "Should contain insertion count");
+        assert!(output.contains("-2"), "Should contain deletion count");
+        assert!(output.contains("1 file changed"), "Should show file count");
+    }
+
+    #[test]
+    fn test_format_diff_stat_plural_files() {
+        let summary = DiffStatSummary {
+            entries: vec![
+                DiffStatEntry {
+                    file: "a.rs".to_string(),
+                    insertions: 1,
+                    deletions: 0,
+                },
+                DiffStatEntry {
+                    file: "b.rs".to_string(),
+                    insertions: 0,
+                    deletions: 1,
+                },
+            ],
+            total_insertions: 1,
+            total_deletions: 1,
+        };
+        let output = format_diff_stat(&summary);
+        assert!(output.contains("2 files changed"), "Should pluralize 'files'");
+    }
+
+    #[test]
+    fn test_format_diff_stat_insertions_only_no_deletion_text() {
+        let summary = DiffStatSummary {
+            entries: vec![DiffStatEntry {
+                file: "new.rs".to_string(),
+                insertions: 10,
+                deletions: 0,
+            }],
+            total_insertions: 10,
+            total_deletions: 0,
+        };
+        let output = format_diff_stat(&summary);
+        assert!(output.contains("+10"), "Should show insertions");
+        // The entry-level deletion string should be empty (no -0)
+        // Just check it doesn't show "-0" in the entry line
+        assert!(!output.contains("-0"), "Should not show -0 for zero deletions");
+    }
+
+    // ── parse_pr_args tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_pr_args_empty() {
+        assert_eq!(parse_pr_args(""), PrSubcommand::List);
+        assert_eq!(parse_pr_args("   "), PrSubcommand::List);
+    }
+
+    #[test]
+    fn test_parse_pr_args_create() {
+        assert_eq!(
+            parse_pr_args("create"),
+            PrSubcommand::Create { draft: false }
+        );
+        assert_eq!(
+            parse_pr_args("CREATE"),
+            PrSubcommand::Create { draft: false }
+        );
+    }
+
+    #[test]
+    fn test_parse_pr_args_create_draft() {
+        assert_eq!(
+            parse_pr_args("create --draft"),
+            PrSubcommand::Create { draft: true }
+        );
+        assert_eq!(
+            parse_pr_args("create -draft"),
+            PrSubcommand::Create { draft: true }
+        );
+    }
+
+    #[test]
+    fn test_parse_pr_args_view() {
+        assert_eq!(parse_pr_args("42"), PrSubcommand::View(42));
+        assert_eq!(parse_pr_args("1"), PrSubcommand::View(1));
+    }
+
+    #[test]
+    fn test_parse_pr_args_diff() {
+        assert_eq!(parse_pr_args("42 diff"), PrSubcommand::Diff(42));
+    }
+
+    #[test]
+    fn test_parse_pr_args_checkout() {
+        assert_eq!(parse_pr_args("7 checkout"), PrSubcommand::Checkout(7));
+    }
+
+    #[test]
+    fn test_parse_pr_args_comment() {
+        assert_eq!(
+            parse_pr_args("10 comment LGTM!"),
+            PrSubcommand::Comment(10, "LGTM!".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_pr_args_comment_empty_body() {
+        // Comment without text should return Help
+        assert_eq!(parse_pr_args("10 comment"), PrSubcommand::Help);
+    }
+
+    #[test]
+    fn test_parse_pr_args_invalid_number() {
+        assert_eq!(parse_pr_args("abc"), PrSubcommand::Help);
+        assert_eq!(parse_pr_args("abc diff"), PrSubcommand::Help);
+    }
+
+    #[test]
+    fn test_parse_pr_args_unknown_subcommand() {
+        assert_eq!(parse_pr_args("42 unknown"), PrSubcommand::Help);
+    }
+
+    // ── build_review_prompt tests ────────────────────────────────────────
+
+    #[test]
+    fn test_build_review_prompt_contains_label_and_content() {
+        let prompt = build_review_prompt("staged changes", "fn main() {}");
+        assert!(prompt.contains("staged changes"));
+        assert!(prompt.contains("fn main() {}"));
+        assert!(prompt.contains("Bugs"));
+        assert!(prompt.contains("Security"));
+    }
+
+    #[test]
+    fn test_build_review_prompt_truncates_large_content() {
+        let large_content = "x".repeat(50_000);
+        let prompt = build_review_prompt("test", &large_content);
+        assert!(prompt.contains("truncated"));
+        assert!(prompt.len() < 50_000, "Prompt should be truncated");
+    }
+
+    #[test]
+    fn test_build_review_prompt_small_content_not_truncated() {
+        let small_content = "fn hello() { println!(\"hi\"); }";
+        let prompt = build_review_prompt("test.rs", small_content);
+        assert!(!prompt.contains("truncated"));
+        assert!(prompt.contains(small_content));
+    }
+}
