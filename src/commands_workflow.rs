@@ -1,5 +1,5 @@
 //! Workflow & management command handlers (워크플로우·관리 도메인)
-//! Commands: /autopitch, /breaking, /briefing, /calendar, /collaborate, /compare, /coverage, /dashboard, /data, /deadline, /desk, /diary, /embargo, /interview, /morning, /performance, /recap, /rival, /timeline
+//! Commands: /autopitch, /breaking, /briefing, /calendar, /collaborate, /compare, /coverage, /dashboard, /data, /deadline, /desk, /diary, /embargo, /interview, /morning, /performance, /recap, /rival, /story, /timeline
 
 use crate::commands::auto_compact_if_needed;
 use crate::commands_project::*;
@@ -5544,6 +5544,397 @@ pub fn handle_pipeline(input: &str) -> Option<String> {
     }
 }
 
+// ── /story ──────────────────────────────────────────────────────────────
+
+/// Base directory for story project workspaces.
+pub const STORIES_DIR: &str = ".journalist/stories";
+
+/// Subcommand names for `/story <Tab>` completion.
+pub const STORY_SUBCOMMANDS: &[&str] = &["new", "add", "list", "show", "status"];
+
+/// Valid story statuses.
+const STORY_STATUSES: &[&str] = &["취재중", "초고", "검증", "완료"];
+
+/// Metadata for a story project.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StoryMeta {
+    pub title: String,
+    pub slug: String,
+    pub status: String,
+    pub created: String,
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+/// Return the stories base directory path (configurable for testing).
+fn stories_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(STORIES_DIR)
+}
+
+/// Build the path to a story's metadata file under a given base dir.
+#[cfg(test)]
+pub fn story_meta_path_at(base: &std::path::Path, slug: &str) -> std::path::PathBuf {
+    base.join(slug).join("story.md")
+}
+
+/// Load story metadata from a story.md file.
+pub fn load_story_meta(path: &std::path::Path) -> Option<StoryMeta> {
+    let content = std::fs::read_to_string(path).ok()?;
+    parse_story_meta(&content)
+}
+
+/// Parse story metadata from story.md content.
+pub fn parse_story_meta(content: &str) -> Option<StoryMeta> {
+    // Format: YAML-like frontmatter between --- lines
+    let content = content.trim();
+    if !content.starts_with("---") {
+        return None;
+    }
+    let after_first = &content[3..];
+    let end_idx = after_first.find("\n---")?;
+    let frontmatter = &after_first[..end_idx];
+
+    let mut title = String::new();
+    let mut slug = String::new();
+    let mut status = String::new();
+    let mut created = String::new();
+    let mut notes = Vec::new();
+    let mut in_notes = false;
+
+    for line in frontmatter.lines() {
+        let line = line.trim();
+        if line.starts_with("title:") {
+            title = line.strip_prefix("title:")?.trim().to_string();
+            in_notes = false;
+        } else if line.starts_with("slug:") {
+            slug = line.strip_prefix("slug:")?.trim().to_string();
+            in_notes = false;
+        } else if line.starts_with("status:") {
+            status = line.strip_prefix("status:")?.trim().to_string();
+            in_notes = false;
+        } else if line.starts_with("created:") {
+            created = line.strip_prefix("created:")?.trim().to_string();
+            in_notes = false;
+        } else if line.starts_with("notes:") {
+            in_notes = true;
+        } else if in_notes && line.starts_with("- ") {
+            notes.push(line[2..].to_string());
+        }
+    }
+
+    if title.is_empty() || slug.is_empty() {
+        return None;
+    }
+
+    Some(StoryMeta {
+        title,
+        slug,
+        status,
+        created,
+        notes,
+    })
+}
+
+/// Serialize story metadata to story.md content.
+pub fn serialize_story_meta(meta: &StoryMeta) -> String {
+    let mut out = String::from("---\n");
+    out.push_str(&format!("title: {}\n", meta.title));
+    out.push_str(&format!("slug: {}\n", meta.slug));
+    out.push_str(&format!("status: {}\n", meta.status));
+    out.push_str(&format!("created: {}\n", meta.created));
+    if !meta.notes.is_empty() {
+        out.push_str("notes:\n");
+        for note in &meta.notes {
+            out.push_str(&format!("- {note}\n"));
+        }
+    }
+    out.push_str("---\n");
+    out
+}
+
+/// Create a new story project workspace.
+pub fn create_story(title: &str, base: &std::path::Path, date: &str) -> Result<StoryMeta, String> {
+    if title.trim().is_empty() {
+        return Err("스토리 제목을 입력하세요".to_string());
+    }
+    let slug = topic_to_slug(title, 50);
+    if slug.is_empty() {
+        return Err("유효한 제목을 입력하세요".to_string());
+    }
+    let story_dir = base.join(&slug);
+    if story_dir.exists() {
+        return Err(format!("이미 존재하는 스토리입니다: {slug}"));
+    }
+    std::fs::create_dir_all(&story_dir).map_err(|e| format!("디렉토리 생성 실패: {e}"))?;
+
+    let meta = StoryMeta {
+        title: title.to_string(),
+        slug: slug.clone(),
+        status: "취재중".to_string(),
+        created: date.to_string(),
+        notes: Vec::new(),
+    };
+
+    let meta_path = story_dir.join("story.md");
+    let content = serialize_story_meta(&meta);
+    std::fs::write(&meta_path, content).map_err(|e| format!("메타파일 저장 실패: {e}"))?;
+
+    Ok(meta)
+}
+
+/// Add a note to a story.
+pub fn add_story_note(slug: &str, note: &str, base: &std::path::Path) -> Result<(), String> {
+    let meta_path = base.join(slug).join("story.md");
+    let mut meta =
+        load_story_meta(&meta_path).ok_or_else(|| format!("스토리를 찾을 수 없습니다: {slug}"))?;
+    meta.notes.push(note.to_string());
+    let content = serialize_story_meta(&meta);
+    std::fs::write(&meta_path, content).map_err(|e| format!("저장 실패: {e}"))?;
+    Ok(())
+}
+
+/// Change a story's status.
+pub fn change_story_status(
+    slug: &str,
+    new_status: &str,
+    base: &std::path::Path,
+) -> Result<String, String> {
+    if !STORY_STATUSES.contains(&new_status) {
+        return Err(format!(
+            "유효하지 않은 상태: {new_status}\n  사용 가능: {}",
+            STORY_STATUSES.join(", ")
+        ));
+    }
+    let meta_path = base.join(slug).join("story.md");
+    let mut meta =
+        load_story_meta(&meta_path).ok_or_else(|| format!("스토리를 찾을 수 없습니다: {slug}"))?;
+    let old_status = meta.status.clone();
+    meta.status = new_status.to_string();
+    let content = serialize_story_meta(&meta);
+    std::fs::write(&meta_path, content).map_err(|e| format!("저장 실패: {e}"))?;
+    Ok(old_status)
+}
+
+/// List all stories under a base directory, grouped by status.
+pub fn list_stories(base: &std::path::Path) -> Vec<StoryMeta> {
+    let mut stories = Vec::new();
+    let entries = match std::fs::read_dir(base) {
+        Ok(e) => e,
+        Err(_) => return stories,
+    };
+    for entry in entries.flatten() {
+        if entry.path().is_dir() {
+            let meta_path = entry.path().join("story.md");
+            if let Some(meta) = load_story_meta(&meta_path) {
+                stories.push(meta);
+            }
+        }
+    }
+    stories.sort_by(|a, b| a.created.cmp(&b.created));
+    stories
+}
+
+/// Handle the `/story` command: journalist project workspace management.
+pub fn handle_story(input: &str) {
+    let args = input.strip_prefix("/story").unwrap_or("").trim();
+
+    if args.is_empty() {
+        handle_story_list_cmd(&stories_dir());
+        return;
+    }
+
+    let (sub, rest) = match args.split_once(char::is_whitespace) {
+        Some((s, r)) => (s, r.trim()),
+        None => (args, ""),
+    };
+
+    match sub {
+        "new" => handle_story_new_cmd(rest),
+        "add" => handle_story_add_cmd(rest),
+        "list" => handle_story_list_cmd(&stories_dir()),
+        "show" => handle_story_show_cmd(rest),
+        "status" => handle_story_status_cmd(rest),
+        _ => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {sub}{RESET}");
+            print_story_usage();
+        }
+    }
+}
+
+fn print_story_usage() {
+    println!("{DIM}  사용법:");
+    println!("    /story new <제목>          새 취재 프로젝트 생성");
+    println!("    /story add <메모>          활성 스토리에 메모 추가");
+    println!("    /story list                스토리 목록 (상태별)");
+    println!("    /story show [제목]         스토리 상세 표시");
+    println!("    /story status <상태>       상태 변경 (취재중/초고/검증/완료)");
+    println!("    /story                     (list와 동일){RESET}\n");
+}
+
+fn handle_story_new_cmd(title: &str) {
+    let base = stories_dir();
+    let date = today_str();
+    match create_story(title, &base, &date) {
+        Ok(meta) => {
+            println!(
+                "{GREEN}  ✓ 스토리 생성: {}{RESET}",
+                meta.title
+            );
+            println!(
+                "{DIM}    경로: {}/{}{RESET}\n",
+                STORIES_DIR, meta.slug
+            );
+        }
+        Err(e) => eprintln!("{RED}  {e}{RESET}\n"),
+    }
+}
+
+fn handle_story_add_cmd(args: &str) {
+    if args.is_empty() {
+        eprintln!("{RED}  사용법: /story add <메모>{RESET}\n");
+        return;
+    }
+
+    let base = stories_dir();
+    // Find the most recent 취재중 story
+    let stories = list_stories(&base);
+    let active = stories.iter().rev().find(|s| s.status == "취재중");
+
+    match active {
+        Some(story) => {
+            let slug = story.slug.clone();
+            let title = story.title.clone();
+            match add_story_note(&slug, args, &base) {
+                Ok(()) => {
+                    println!(
+                        "{GREEN}  ✓ [{title}]에 메모 추가됨{RESET}\n"
+                    );
+                }
+                Err(e) => eprintln!("{RED}  {e}{RESET}\n"),
+            }
+        }
+        None => {
+            eprintln!("{RED}  활성 스토리(취재중)가 없습니다. /story new <제목>으로 생성하세요{RESET}\n");
+        }
+    }
+}
+
+fn handle_story_list_cmd(base: &std::path::Path) {
+    let stories = list_stories(base);
+    if stories.is_empty() {
+        println!("{DIM}  진행 중인 스토리가 없습니다.");
+        println!("  /story new <제목>으로 시작하세요{RESET}\n");
+        return;
+    }
+
+    // Group by status
+    let mut by_status: std::collections::BTreeMap<String, Vec<&StoryMeta>> =
+        std::collections::BTreeMap::new();
+    for story in &stories {
+        by_status
+            .entry(story.status.clone())
+            .or_default()
+            .push(story);
+    }
+
+    // Display in priority order
+    for status in STORY_STATUSES {
+        if let Some(items) = by_status.get(*status) {
+            println!("  {BOLD}[{status}]{RESET}");
+            for s in items {
+                let note_count = s.notes.len();
+                println!(
+                    "    {CYAN}{}{RESET}  ({}, 메모 {}건)",
+                    s.title, s.created, note_count
+                );
+            }
+        }
+    }
+    println!();
+}
+
+fn handle_story_show_cmd(args: &str) {
+    let base = stories_dir();
+    let stories = list_stories(&base);
+
+    if stories.is_empty() {
+        println!("{DIM}  스토리가 없습니다{RESET}\n");
+        return;
+    }
+
+    let story = if args.is_empty() {
+        // Show the most recent active story
+        stories
+            .iter()
+            .rev()
+            .find(|s| s.status == "취재중")
+            .or_else(|| stories.last())
+    } else {
+        // Find by title match
+        let query = args.to_lowercase();
+        stories
+            .iter()
+            .find(|s| s.title.to_lowercase().contains(&query) || s.slug.contains(&query))
+    };
+
+    match story {
+        Some(s) => {
+            println!("  {BOLD}{}{RESET}", s.title);
+            println!("  상태: {}  |  생성: {}", s.status, s.created);
+            println!("  경로: {}/{}", STORIES_DIR, s.slug);
+            if s.notes.is_empty() {
+                println!("  {DIM}메모 없음{RESET}");
+            } else {
+                println!("  {DIM}── 메모 ({}건) ──{RESET}", s.notes.len());
+                for (i, note) in s.notes.iter().enumerate() {
+                    println!("  {}. {note}", i + 1);
+                }
+            }
+            println!();
+        }
+        None => {
+            if args.is_empty() {
+                println!("{DIM}  활성 스토리가 없습니다{RESET}\n");
+            } else {
+                eprintln!("{RED}  스토리를 찾을 수 없습니다: {args}{RESET}\n");
+            }
+        }
+    }
+}
+
+fn handle_story_status_cmd(args: &str) {
+    if args.is_empty() {
+        eprintln!("{RED}  사용법: /story status <상태>{RESET}");
+        eprintln!(
+            "{DIM}  사용 가능: {}{RESET}\n",
+            STORY_STATUSES.join(", ")
+        );
+        return;
+    }
+
+    let base = stories_dir();
+    let stories = list_stories(&base);
+    let active = stories.iter().rev().find(|s| s.status != "완료");
+
+    match active {
+        Some(story) => {
+            let slug = story.slug.clone();
+            let title = story.title.clone();
+            match change_story_status(&slug, args, &base) {
+                Ok(old) => {
+                    println!(
+                        "{GREEN}  ✓ [{title}] {old} → {args}{RESET}\n"
+                    );
+                }
+                Err(e) => eprintln!("{RED}  {e}{RESET}\n"),
+            }
+        }
+        None => {
+            eprintln!("{RED}  상태를 변경할 스토리가 없습니다{RESET}\n");
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 
@@ -8041,5 +8432,144 @@ mod tests {
         let top = top_performance_articles(&path, 5);
         assert_eq!(top.len(), 1);
         assert_eq!(top[0].1, 60); // 10+20+30
+    }
+
+    // ── /story tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn story_create_basic() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let base = dir.path();
+        let meta = create_story("반도체 수출 동향", base, "2026-03-25").unwrap();
+        assert_eq!(meta.title, "반도체 수출 동향");
+        assert_eq!(meta.slug, "반도체-수출-동향");
+        assert_eq!(meta.status, "취재중");
+        assert_eq!(meta.created, "2026-03-25");
+        assert!(meta.notes.is_empty());
+        // Verify file exists
+        let meta_path = base.join("반도체-수출-동향").join("story.md");
+        assert!(meta_path.exists());
+    }
+
+    #[test]
+    fn story_create_duplicate_rejected() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let base = dir.path();
+        create_story("테스트", base, "2026-03-25").unwrap();
+        let result = create_story("테스트", base, "2026-03-25");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("이미 존재"));
+    }
+
+    #[test]
+    fn story_create_empty_title_rejected() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let result = create_story("", dir.path(), "2026-03-25");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn story_slug_generation() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let meta = create_story("AI, 반도체... 전망!", dir.path(), "2026-03-25").unwrap();
+        assert_eq!(meta.slug, "ai-반도체-전망");
+    }
+
+    #[test]
+    fn story_add_note() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let base = dir.path();
+        let meta = create_story("취재건", base, "2026-03-25").unwrap();
+        add_story_note(&meta.slug, "첫 번째 메모", base).unwrap();
+        add_story_note(&meta.slug, "두 번째 메모", base).unwrap();
+        let loaded = load_story_meta(&story_meta_path_at(base, &meta.slug)).unwrap();
+        assert_eq!(loaded.notes.len(), 2);
+        assert_eq!(loaded.notes[0], "첫 번째 메모");
+        assert_eq!(loaded.notes[1], "두 번째 메모");
+    }
+
+    #[test]
+    fn story_add_note_nonexistent() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let result = add_story_note("없는스토리", "메모", dir.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn story_change_status() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let base = dir.path();
+        let meta = create_story("상태변경", base, "2026-03-25").unwrap();
+        let old = change_story_status(&meta.slug, "초고", base).unwrap();
+        assert_eq!(old, "취재중");
+        let loaded = load_story_meta(&story_meta_path_at(base, &meta.slug)).unwrap();
+        assert_eq!(loaded.status, "초고");
+    }
+
+    #[test]
+    fn story_change_status_invalid() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let base = dir.path();
+        let meta = create_story("상태", base, "2026-03-25").unwrap();
+        let result = change_story_status(&meta.slug, "폐기", base);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("유효하지 않은 상태"));
+    }
+
+    #[test]
+    fn story_list_sorted() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let base = dir.path();
+        create_story("B 기사", base, "2026-03-26").unwrap();
+        create_story("A 기사", base, "2026-03-25").unwrap();
+        let stories = list_stories(base);
+        assert_eq!(stories.len(), 2);
+        assert_eq!(stories[0].title, "A 기사"); // earlier date first
+        assert_eq!(stories[1].title, "B 기사");
+    }
+
+    #[test]
+    fn story_list_empty() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let stories = list_stories(dir.path());
+        assert!(stories.is_empty());
+    }
+
+    #[test]
+    fn story_meta_parse_roundtrip() {
+        let meta = StoryMeta {
+            title: "테스트 기사".to_string(),
+            slug: "테스트-기사".to_string(),
+            status: "취재중".to_string(),
+            created: "2026-03-25".to_string(),
+            notes: vec!["메모1".to_string(), "메모2".to_string()],
+        };
+        let serialized = serialize_story_meta(&meta);
+        let parsed = parse_story_meta(&serialized).unwrap();
+        assert_eq!(parsed.title, meta.title);
+        assert_eq!(parsed.slug, meta.slug);
+        assert_eq!(parsed.status, meta.status);
+        assert_eq!(parsed.created, meta.created);
+        assert_eq!(parsed.notes, meta.notes);
+    }
+
+    #[test]
+    fn story_meta_parse_no_notes() {
+        let meta = StoryMeta {
+            title: "노트없음".to_string(),
+            slug: "노트없음".to_string(),
+            status: "완료".to_string(),
+            created: "2026-03-25".to_string(),
+            notes: vec![],
+        };
+        let serialized = serialize_story_meta(&meta);
+        let parsed = parse_story_meta(&serialized).unwrap();
+        assert!(parsed.notes.is_empty());
+    }
+
+    #[test]
+    fn story_meta_parse_invalid() {
+        assert!(parse_story_meta("not a valid file").is_none());
+        assert!(parse_story_meta("---\n---").is_none()); // empty frontmatter
     }
 }
