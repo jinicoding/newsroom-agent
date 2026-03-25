@@ -35,3 +35,16 @@ SESSION_PLAN.md를 작성했다. 요약:
   계획된 태스크: 3개
 
   ── Task 1 / 3 ──
+완료. `/story` 커맨드를 구현하고 커밋했습니다.
+
+**구현 내용:**
+- `commands_workflow.rs`에 `/story` 커맨드 추가 (5개 서브커맨드: `new`, `add`, `list`, `show`, `status`)
+- `.journalist/stories/<slug>/story.md` 메타파일 기반 워크스페이스 관리
+- 스토리 상태: 취재중 → 초고 → 검증 → 완료
+- `commands.rs`에 KNOWN_COMMANDS, 탭 완성, 헬프 텍스트, re-export 연결
+- `repl.rs`에 디스패치 추가
+- 13개 테스트 작성 (생성/중복방지/빈제목/slug생성/메모추가/상태변경/목록정렬/파싱 라운드트립 등)
+- 전체 1369 테스트 통과
+    Task 1: 검증 OK
+
+  ── Task 2 / 3 ──

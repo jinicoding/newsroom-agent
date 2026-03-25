@@ -8572,4 +8572,131 @@ mod tests {
         assert!(parse_story_meta("not a valid file").is_none());
         assert!(parse_story_meta("---\n---").is_none()); // empty frontmatter
     }
+
+    // ── Day 8: 테스트 보강 ─────────────────────────────────────────────
+
+    #[test]
+    fn embargo_parse_args_empty_returns_empty() {
+        let (title, time) = parse_embargo_args("");
+        assert!(title.is_empty());
+        assert!(time.is_empty());
+    }
+
+    #[test]
+    fn embargo_parse_args_quoted_with_spaces() {
+        let (title, time) =
+            parse_embargo_args("\"대통령실 인사 발표\" 09:00");
+        assert_eq!(title, "대통령실 인사 발표");
+        assert_eq!(time, "09:00");
+    }
+
+    #[test]
+    fn datetime_to_epoch_invalid_returns_none() {
+        assert!(datetime_to_epoch("not-a-date").is_none());
+        assert!(datetime_to_epoch("").is_none());
+        assert!(datetime_to_epoch("2026-03-20").is_none()); // missing time
+        assert!(datetime_to_epoch("T09:00:00").is_none()); // missing date
+    }
+
+    #[test]
+    fn datetime_to_epoch_known_value() {
+        // 1970-01-01T00:00:00 = epoch 0
+        let epoch = datetime_to_epoch("1970-01-01T00:00:00");
+        assert_eq!(epoch, Some(0));
+
+        // 1970-01-02T00:00:00 = 86400
+        let epoch = datetime_to_epoch("1970-01-02T00:00:00");
+        assert_eq!(epoch, Some(86400));
+    }
+
+    #[test]
+    fn deadline_parse_time_with_extra_whitespace() {
+        let result = parse_deadline_datetime_with_today("  09:30  ", "2026-03-25");
+        assert_eq!(result, Some("2026-03-25T09:30:00".to_string()));
+    }
+
+    #[test]
+    fn parse_csv_headers_only_no_rows() {
+        let (headers, rows) = parse_csv("이름, 나이, 점수\n");
+        assert_eq!(headers, vec!["이름", "나이", "점수"]);
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn compute_column_stats_single_value() {
+        let (count, min, max, mean) = compute_column_stats(&[42.0]);
+        assert_eq!(count, 1);
+        assert!((min - 42.0).abs() < f64::EPSILON);
+        assert!((max - 42.0).abs() < f64::EPSILON);
+        assert!((mean - 42.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn build_csv_summary_no_numeric_columns() {
+        let csv = "이름, 지역\n김철수, 서울\n이영희, 부산\n";
+        let summary = build_csv_summary(csv);
+        assert!(summary.contains("행 수: 2"));
+        assert!(summary.contains("열 수: 2"));
+        // No numeric stats section
+        assert!(!summary.contains("수치 칼럼 통계"));
+    }
+
+    #[test]
+    fn time_diff_minutes_invalid_input() {
+        assert!(time_diff_minutes("invalid", "14:00").is_none());
+        assert!(time_diff_minutes("14:00", "bad").is_none());
+        assert!(time_diff_minutes("", "").is_none());
+    }
+
+    #[test]
+    fn time_diff_minutes_zero_diff() {
+        assert_eq!(time_diff_minutes("14:00", "14:00"), Some(0));
+    }
+
+    #[test]
+    fn build_compare_prompt_empty_content() {
+        let prompt = build_compare_prompt("", "a.md", "", "b.md");
+        // Should still produce a valid prompt structure
+        assert!(prompt.contains("사실(팩트) 변경"));
+        assert!(prompt.contains("a.md"));
+        assert!(prompt.contains("b.md"));
+    }
+
+    #[test]
+    fn parse_desk_assign_args_deadline_empty_value() {
+        // --deadline without a value
+        let result = parse_desk_assign_args("김기자 반도체 취재 --deadline");
+        assert!(result.is_some());
+        let (reporter, content, deadline) = result.unwrap();
+        assert_eq!(reporter, "김기자");
+        assert_eq!(content, "반도체 취재");
+        assert!(deadline.is_none());
+    }
+
+    #[test]
+    fn parse_desk_assign_args_empty() {
+        let result = parse_desk_assign_args("");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn build_timeline_prompt_topic_with_special_chars() {
+        let prompt = build_timeline_prompt("AI & 반도체 (2026)", &[]);
+        assert!(prompt.contains("AI & 반도체 (2026)"));
+        assert!(prompt.contains("시간순 이벤트 타임라인"));
+    }
+
+    #[test]
+    fn parse_autopitch_args_beat_at_end() {
+        let (beat, rest) = parse_autopitch_args("추가텍스트 --beat 사회");
+        assert_eq!(beat, Some("사회".to_string()));
+        assert_eq!(rest, "추가텍스트");
+    }
+
+    #[test]
+    fn parse_autopitch_args_beat_missing_value() {
+        let (beat, rest) = parse_autopitch_args("--beat");
+        assert!(beat.is_none());
+        assert!(rest.is_empty());
+    }
 }
