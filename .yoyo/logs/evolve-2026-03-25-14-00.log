@@ -48,3 +48,21 @@ SESSION_PLAN.md를 작성했다. 요약:
     Task 1: 검증 OK
 
   ── Task 2 / 3 ──
+완료. commands_workflow.rs에 15개 테스트를 추가했습니다:
+
+- `embargo_parse_args` 빈 입력, 따옴표+공백 처리
+- `datetime_to_epoch` 유효하지 않은 입력, 알려진 값(epoch 0, 86400)
+- `parse_deadline_datetime_with_today` 공백 트리밍
+- `parse_csv` 헤더만 있는 경우
+- `compute_column_stats` 단일 값
+- `build_csv_summary` 비수치 칼럼만 있는 경우
+- `time_diff_minutes` 유효하지 않은 입력, 동일 시간(0차이)
+- `build_compare_prompt` 빈 콘텐츠
+- `parse_desk_assign_args` 빈 입력, deadline 값 없음
+- `build_timeline_prompt` 특수문자 포함 주제
+- `parse_autopitch_args` --beat 끝에 위치, --beat 값 없음
+
+전체 230개 workflow 테스트 통과 확인.
+    Task 2: 검증 OK
+
+  ── Task 3 / 3 ──
