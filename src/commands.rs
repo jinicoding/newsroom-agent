@@ -124,6 +124,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/bigkinds",
     "/dart",
     "/assembly",
+    "/transcript",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -231,7 +232,7 @@ pub use crate::commands_research::{
 pub use crate::commands_workflow::{
     COVERAGE_SUBCOMMANDS, DIARY_SUBCOMMANDS, RECAP_SUBCOMMANDS, RIVAL_SUBCOMMANDS,
 };
-pub use crate::commands_writing::{CORRECTION_SUBCOMMANDS, QUALITY_SUBCOMMANDS};
+pub use crate::commands_writing::{CORRECTION_SUBCOMMANDS, QUALITY_SUBCOMMANDS, TRANSCRIPT_SUBCOMMANDS};
 
 /// Return context-aware argument completions for a given command and partial argument.
 ///
@@ -279,6 +280,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/bigkinds" => filter_candidates(BIGKINDS_SUBCOMMANDS, &partial_lower),
         "/dart" => filter_candidates(DART_SUBCOMMANDS, &partial_lower),
         "/assembly" => filter_candidates(ASSEMBLY_SUBCOMMANDS, &partial_lower),
+        "/transcript" => filter_candidates(TRANSCRIPT_SUBCOMMANDS, &partial_lower),
         "/recap" => filter_candidates(RECAP_SUBCOMMANDS, &partial_lower),
         "/multiformat" => {
             if partial_arg.starts_with("--format ") {
@@ -563,6 +565,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /breaking [topic]      속보 기사 빠른 작성\n",
+    );
+    out.push_str(
+        "  /transcript <sub> [text|--file <path>]  녹취록 정리 (clean|quotes|summary)\n",
     );
     out.push('\n');
 
@@ -947,7 +952,7 @@ pub use crate::commands_writing::{
     handle_draft, handle_export, handle_headline, handle_improve, handle_legal,
     handle_multiformat, handle_proofread, handle_publish, handle_quality, handle_quote,
     handle_readability, handle_rewrite, handle_spellcheck, handle_stats, handle_summary,
-    handle_template, handle_template_use, handle_translate,
+    handle_template, handle_template_use, handle_transcript, handle_translate,
 };
 
 // Workflow & management handlers

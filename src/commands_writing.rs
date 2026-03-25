@@ -5589,6 +5589,206 @@ fn urlencoding_simple(s: &str) -> String {
     result
 }
 
+// ── /transcript ─────────────────────────────────────────────────────────
+
+const TRANSCRIPT_DIR: &str = ".journalist/transcripts";
+
+/// Subcommand names for `/transcript <Tab>` completion.
+pub const TRANSCRIPT_SUBCOMMANDS: &[&str] = &["clean", "quotes", "summary"];
+
+/// Parse `/transcript` input into (subcommand, remaining_text).
+/// If no known subcommand, returns `(None, full_args)`.
+pub fn parse_transcript_args(args: &str) -> (Option<&str>, String) {
+    let args = args.trim();
+    if args.is_empty() {
+        return (None, String::new());
+    }
+    for &sub in TRANSCRIPT_SUBCOMMANDS {
+        if args == sub {
+            return (Some(sub), String::new());
+        }
+        if let Some(rest) = args.strip_prefix(sub) {
+            if rest.starts_with(' ') || rest.starts_with('\t') {
+                return (Some(sub), rest.trim().to_string());
+            }
+        }
+    }
+    (None, args.to_string())
+}
+
+/// Resolve transcript text from either a `--file <path>` argument or inline text.
+pub fn resolve_transcript_input(args: &str) -> Option<String> {
+    let args = args.trim();
+    if args.is_empty() {
+        return None;
+    }
+    if let Some(rest) = args.strip_prefix("--file") {
+        let path = rest.trim();
+        if path.is_empty() {
+            return None;
+        }
+        std::fs::read_to_string(path).ok()
+    } else {
+        Some(args.to_string())
+    }
+}
+
+/// Build a prompt for `transcript clean` (발화자 구분 + 정리).
+pub fn build_transcript_clean_prompt(text: &str) -> String {
+    format!(
+        "아래는 인터뷰 녹취록 원문입니다. 다음 작업을 수행해주세요:\n\n\
+         ## 요청 사항\n\
+         1. **발화자 구분**: 각 발언의 화자를 식별하여 `[화자명]:` 형식으로 표시\n\
+         2. **핵심 발언 추출**: 뉴스 가치가 높은 발언에 ★ 표시\n\
+         3. **타임라인 정리**: 발언 순서를 유지하며, 비문·반복·필러워드 정리\n\
+         4. **인용구 후보**: 기사에 직접 인용할 수 있는 발언을 별도 섹션으로 정리\n\n\
+         ## 출력 형식\n\
+         ### 정리된 녹취록\n\
+         (발화자별로 정리된 대화)\n\n\
+         ### 핵심 발언\n\
+         (★ 표시된 주요 발언 목록)\n\n\
+         ### 인용구 후보\n\
+         (기사에 바로 쓸 수 있는 직접 인용문)\n\n\
+         ---\n\n\
+         ## 녹취록 원문\n\n{text}"
+    )
+}
+
+/// Build a prompt for `transcript quotes` (인용구 추출).
+pub fn build_transcript_quotes_prompt(text: &str) -> String {
+    format!(
+        "아래 인터뷰 녹취록에서 기사에 인용할 수 있는 발언을 추출해주세요.\n\n\
+         ## 요청 사항\n\
+         1. 직접 인용 가능한 발언을 선별 (원문 그대로)\n\
+         2. 각 인용문에 대해:\n\
+            - 발화자\n\
+            - 인용문 원문\n\
+            - 맥락 요약 (1줄)\n\
+            - 기사 활용도 (상/중/하)\n\
+         3. 기사 유형별 추천 인용 조합 제안 (스트레이트/피처/분석)\n\n\
+         ## 출력 형식\n\
+         ### 인용구 목록\n\
+         | # | 발화자 | 인용문 | 맥락 | 활용도 |\n\
+         |---|--------|--------|------|--------|\n\n\
+         ### 기사 유형별 추천 조합\n\
+         - 스트레이트: ...\n\
+         - 피처: ...\n\
+         - 분석: ...\n\n\
+         ---\n\n\
+         ## 녹취록 원문\n\n{text}"
+    )
+}
+
+/// Build a prompt for `transcript summary` (요약).
+pub fn build_transcript_summary_prompt(text: &str) -> String {
+    format!(
+        "아래 인터뷰 녹취록을 요약해주세요.\n\n\
+         ## 요청 사항\n\
+         1. **인터뷰 개요**: 참여자, 주제, 분위기 (2~3줄)\n\
+         2. **핵심 내용 요약**: 주요 논점별 정리 (글머리 기호)\n\
+         3. **주요 팩트**: 수치, 날짜, 고유명사 등 팩트 정보 정리\n\
+         4. **기사화 포인트**: 뉴스 가치가 높은 내용 3가지 이내\n\
+         5. **후속 취재 제안**: 추가 확인이 필요한 사항\n\n\
+         ## 출력 형식\n\
+         ### 개요\n\
+         (참여자·주제·분위기)\n\n\
+         ### 핵심 내용\n\
+         (논점별 정리)\n\n\
+         ### 주요 팩트\n\
+         (수치·날짜·고유명사)\n\n\
+         ### 기사화 포인트\n\
+         (뉴스 가치순)\n\n\
+         ### 후속 취재 제안\n\
+         (확인 필요 사항)\n\n\
+         ---\n\n\
+         ## 녹취록 원문\n\n{text}"
+    )
+}
+
+/// Save transcript result to `.journalist/transcripts/`.
+pub fn save_transcript(label: &str, content: &str) -> Result<std::path::PathBuf, std::io::Error> {
+    let dir = std::path::Path::new(TRANSCRIPT_DIR);
+    std::fs::create_dir_all(dir)?;
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let ts = format_unix_timestamp(secs).replace([':', ' '], "-").replace('/', "");
+    let filename = format!("{label}_{ts}.md");
+    let path = dir.join(&filename);
+    std::fs::write(&path, content)?;
+    Ok(path)
+}
+
+/// Handle the `/transcript` command with subcommands: clean, quotes, summary.
+pub async fn handle_transcript(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let raw_args = input.strip_prefix("/transcript").unwrap_or("").trim();
+    let (subcmd, text_args) = parse_transcript_args(raw_args);
+
+    let subcmd = match subcmd {
+        Some(s) => s,
+        None => {
+            println!("{DIM}  사용법: /transcript <clean|quotes|summary> [--file <경로>|텍스트]{RESET}");
+            println!("{DIM}  녹취록 정리·분석 도구{RESET}");
+            println!();
+            println!("{DIM}  서브커맨드:{RESET}");
+            println!("{DIM}    clean    발화자 구분, 핵심 발언 추출, 인용구 후보 선별{RESET}");
+            println!("{DIM}    quotes   인용구 추출 및 기사 유형별 활용 제안{RESET}");
+            println!("{DIM}    summary  인터뷰 요약 (개요/핵심/팩트/기사화 포인트){RESET}");
+            println!();
+            println!("{DIM}  예시:{RESET}");
+            println!("{DIM}    /transcript clean --file interview.txt{RESET}");
+            println!("{DIM}    /transcript quotes 홍길동: 반도체 수출이...{RESET}");
+            println!("{DIM}    /transcript summary --file 녹취록.txt{RESET}");
+            println!();
+            return;
+        }
+    };
+
+    let text = match resolve_transcript_input(&text_args) {
+        Some(t) if !t.trim().is_empty() => t,
+        _ => {
+            println!(
+                "{DIM}  사용법: /transcript {subcmd} [--file <경로>|텍스트]{RESET}"
+            );
+            println!(
+                "{DIM}  녹취록 텍스트를 직접 입력하거나 --file로 파일을 지정하세요.{RESET}\n"
+            );
+            return;
+        }
+    };
+
+    let prompt = match subcmd {
+        "clean" => build_transcript_clean_prompt(&text),
+        "quotes" => build_transcript_quotes_prompt(&text),
+        "summary" => build_transcript_summary_prompt(&text),
+        _ => unreachable!(),
+    };
+
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    // Save result
+    if !response.trim().is_empty() {
+        match save_transcript(subcmd, &response) {
+            Ok(path) => {
+                println!(
+                    "{GREEN}  ✓ 결과 저장: {}{RESET}\n",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  결과 저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7665,5 +7865,123 @@ mod tests {
     fn parse_spellcheck_response_malformed_json() {
         let html = r#"<script>data = [not valid json];</script>"#;
         assert!(parse_spellcheck_response(html).is_empty());
+    }
+
+    // ── /transcript tests ───────────────────────────────────────────────
+
+    #[test]
+    fn transcript_subcommands_complete() {
+        assert!(TRANSCRIPT_SUBCOMMANDS.contains(&"clean"));
+        assert!(TRANSCRIPT_SUBCOMMANDS.contains(&"quotes"));
+        assert!(TRANSCRIPT_SUBCOMMANDS.contains(&"summary"));
+        assert_eq!(TRANSCRIPT_SUBCOMMANDS.len(), 3);
+    }
+
+    #[test]
+    fn parse_transcript_args_empty() {
+        let (sub, text) = parse_transcript_args("");
+        assert!(sub.is_none());
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn parse_transcript_args_clean_with_text() {
+        let (sub, text) = parse_transcript_args("clean 홍길동: 안녕하세요");
+        assert_eq!(sub, Some("clean"));
+        assert_eq!(text, "홍길동: 안녕하세요");
+    }
+
+    #[test]
+    fn parse_transcript_args_quotes_only() {
+        let (sub, text) = parse_transcript_args("quotes");
+        assert_eq!(sub, Some("quotes"));
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn parse_transcript_args_summary_with_file() {
+        let (sub, text) = parse_transcript_args("summary --file test.txt");
+        assert_eq!(sub, Some("summary"));
+        assert_eq!(text, "--file test.txt");
+    }
+
+    #[test]
+    fn parse_transcript_args_unknown_subcmd() {
+        let (sub, text) = parse_transcript_args("unknown stuff");
+        assert!(sub.is_none());
+        assert_eq!(text, "unknown stuff");
+    }
+
+    #[test]
+    fn resolve_transcript_input_inline() {
+        let result = resolve_transcript_input("홍길동: 테스트 발언");
+        assert_eq!(result, Some("홍길동: 테스트 발언".to_string()));
+    }
+
+    #[test]
+    fn resolve_transcript_input_empty() {
+        assert!(resolve_transcript_input("").is_none());
+    }
+
+    #[test]
+    fn resolve_transcript_input_file_missing() {
+        let result = resolve_transcript_input("--file /tmp/nonexistent_transcript_xyz.txt");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn resolve_transcript_input_file_existing() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("interview.txt");
+        std::fs::write(&path, "Q: 질문\nA: 답변").unwrap();
+        let result = resolve_transcript_input(&format!("--file {}", path.display()));
+        assert_eq!(result, Some("Q: 질문\nA: 답변".to_string()));
+    }
+
+    #[test]
+    fn build_transcript_clean_prompt_contains_key_sections() {
+        let prompt = build_transcript_clean_prompt("홍길동: 안녕하세요");
+        assert!(prompt.contains("발화자 구분"));
+        assert!(prompt.contains("핵심 발언"));
+        assert!(prompt.contains("인용구 후보"));
+        assert!(prompt.contains("타임라인"));
+        assert!(prompt.contains("홍길동: 안녕하세요"));
+    }
+
+    #[test]
+    fn build_transcript_quotes_prompt_contains_key_sections() {
+        let prompt = build_transcript_quotes_prompt("김기자: 반도체 시장은?");
+        assert!(prompt.contains("직접 인용"));
+        assert!(prompt.contains("활용도"));
+        assert!(prompt.contains("기사 유형별"));
+        assert!(prompt.contains("김기자: 반도체 시장은?"));
+    }
+
+    #[test]
+    fn build_transcript_summary_prompt_contains_key_sections() {
+        let prompt = build_transcript_summary_prompt("인터뷰 내용");
+        assert!(prompt.contains("인터뷰 개요"));
+        assert!(prompt.contains("핵심 내용"));
+        assert!(prompt.contains("주요 팩트"));
+        assert!(prompt.contains("기사화 포인트"));
+        assert!(prompt.contains("후속 취재"));
+        assert!(prompt.contains("인터뷰 내용"));
+    }
+
+    #[test]
+    fn save_transcript_creates_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.path()).unwrap();
+
+        let result = save_transcript("clean", "정리된 녹취록 내용");
+        std::env::set_current_dir(&original_dir).unwrap();
+
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.to_string_lossy().contains("clean_"));
+        assert!(path.to_string_lossy().ends_with(".md"));
+        let content = std::fs::read_to_string(dir.path().join(&path)).unwrap();
+        assert_eq!(content, "정리된 녹취록 내용");
     }
 }
