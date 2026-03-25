@@ -1344,7 +1344,10 @@ fn handle_draft_list(title: &str) {
                 }
                 let ver_count = versions.len();
                 // Last modified time of the latest version
-                let last_path = &versions.last().unwrap().1;
+                let last_path = match versions.last() {
+                    Some(v) => &v.1,
+                    None => continue,
+                };
                 let modified = std::fs::metadata(last_path)
                     .and_then(|m| m.modified())
                     .ok();
@@ -1421,7 +1424,10 @@ fn handle_draft_load(args: &str) {
 
     let target_ver = if ver_arg.is_empty() {
         // Load latest
-        versions.last().unwrap().0
+        match versions.last() {
+            Some(v) => v.0,
+            None => return,
+        }
     } else {
         // Parse version: accept "v3" or "3"
         let num_str = ver_arg.strip_prefix('v').unwrap_or(ver_arg);
@@ -1492,7 +1498,13 @@ fn handle_draft_diff(args: &str) {
         };
         match parse_ver(parts[1]) {
             Some(a) => {
-                let latest = versions.last().unwrap().0;
+                let latest = match versions.last() {
+                    Some(v) => v.0,
+                    None => {
+                        eprintln!("{RED}  버전 정보를 찾을 수 없습니다.{RESET}\n");
+                        return;
+                    }
+                };
                 if a == latest {
                     // Compare with second-to-last
                     let prev = versions[versions.len() - 2].0;

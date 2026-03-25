@@ -2931,8 +2931,14 @@ fn parse_calendar_date(input: &str) -> Option<String> {
     {
         return None;
     }
-    let month: u32 = parts[1].parse().unwrap();
-    let day: u32 = parts[2].parse().unwrap();
+    let month: u32 = match parts[1].parse() {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
+    let day: u32 = match parts[2].parse() {
+        Ok(v) => v,
+        Err(_) => return None,
+    };
     if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
@@ -3476,15 +3482,17 @@ fn performance_top(perf_path: &std::path::Path) {
         return;
     }
 
-    let best = data
+    let best = match data
         .iter()
         .enumerate()
         .max_by_key(|(_, e)| {
             e["views"].as_u64().unwrap_or(0)
                 + e["comments"].as_u64().unwrap_or(0)
                 + e["shares"].as_u64().unwrap_or(0)
-        })
-        .unwrap();
+        }) {
+        Some(b) => b,
+        None => return,
+    };
 
     let id = best.0 + 1;
     let entry = best.1;
