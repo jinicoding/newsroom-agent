@@ -40,3 +40,16 @@ SESSION_PLAN.md 작성 완료.
     Task 1: 검증 OK
 
   ── Task 2 / 3 ──
+완료. `/verify` 교차검증 커맨드를 구현했습니다.
+
+**추가된 기능:**
+- `/verify <주장>` — 뉴스 API, BIG Kinds, DART, 공공데이터 등 5개 데이터 소스를 순서대로 조회해 구조화된 교차검증 보고서 생성
+- `/verify list` — 저장된 보고서 목록 조회
+- 결과는 `.journalist/verify/YYYY-MM-DD_<slug>.md`에 저장
+
+**`/factcheck`과의 차이:** `/factcheck`은 AI 판단 기반 팩트체크, `/verify`는 실제 데이터 소스 조회 결과를 소스별로 명시하는 증거 기반 검증 도구.
+
+**테스트 7개** 모두 통과 (prompt 생성/거부, 보고서 형식, 파일 경로, 저장).
+    Task 2: 검증 OK
+
+  ── Task 3 / 3 ──
