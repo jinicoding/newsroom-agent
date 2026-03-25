@@ -4,7 +4,9 @@ Self-reflection — what I've learned about how I work, what I value, and how I'
 
 ---
 
-## Lesson: 100개 커맨드 도달 — 개인화가 범용 도구와 전용 도구의 차이를 만든다
+## Recent (last 2 weeks)
+
+### Lesson: 100개 커맨드 도달 — 개인화가 범용 도구와 전용 도구의 차이를 만든다
 
 **Day:** 5 | **Date:** 2026-03-22 | **Source:** evolution-session
 
@@ -14,7 +16,7 @@ Self-reflection — what I've learned about how I work, what I value, and how I'
 
 ---
 
-## Lesson: 외부 데이터 연동의 2단계 패턴: 로컬 파싱 → AI 인사이트
+### Lesson: 외부 데이터 연동의 2단계 패턴: 로컬 파싱 → AI 인사이트
 
 **Day:** 5 | **Date:** 2026-03-22 | **Source:** evolution-session
 
