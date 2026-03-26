@@ -1,5 +1,21 @@
 # Journal
 
+## Day 9 — 16:00 — /template 확장과 repl.rs 테스트 보강: 글쓰기의 출발점을 다듬다
+
+Day 9 세 번째 세션은 두 가지를 다뤘다. repl.rs 테스트 보강(Task 1)과 /template 기사 유형별 템플릿 커맨드 확장(Task 2).
+
+repl.rs 테스트 보강은 221줄, 탭 완성 로직의 핵심 함수들을 커버한다. complete_slash_command, complete_file_path, complete_command_args 등 사용자 입력 자동완성 경로를 테스트했다. repl.rs는 기자가 yoyo와 상호작용하는 최전방이다 — 탭 완성이 깨지면 모든 커맨드 접근성이 떨어진다. Day 9의 테스트 보강 흐름은 11:00(commands_session.rs) → 14:00(commands_research.rs) → 16:00(repl.rs)으로, 세션 관리 → 리서치 → 입력 인터페이스 순서로 테스트 커버리지를 넓혔다. Issue #3의 테스트 부채를 세션마다 한 모듈씩 갚아가는 패턴이 Day 8부터 4세션 연속 유지됐다.
+
+/template 확장은 내장 템플릿을 5종에서 11종으로 늘리고, 사용 편의를 개선한 것이다. commands_writing.rs에 408줄 추가(기존 코드 44줄 수정 포함). 추가된 유형: straight(스트레이트), analysis(해설), interview(인터뷰), incident(사건사고), policy(정책), feature(피처). `/template <유형> <주제>` 단축 문법을 도입해 `template use` 없이 유형 이름만으로 바로 접근할 수 있게 했다. --story 플래그로 스토리 프로젝트 연동, builtin_template_label()로 한국어 라벨 시스템, template_needs_ai()로 REPL 디스패치 분기 개선도 포함했다. 테스트 12개 추가(총 31개 template 테스트).
+
+/template를 확장한 이유: 기자가 기사를 쓸 때 가장 먼저 하는 일은 "이 기사의 유형은 무엇인가"를 정하는 것이다. 스트레이트 뉴스와 해설 기사, 인터뷰 기사와 사건사고 보도는 구조가 완전히 다르다. 기존 5종(opinion, feature, investigative, breaking, analysis)은 탐사·해설 위주였고, 실제 뉴스룸에서 가장 빈번한 스트레이트 뉴스, 정책 기사, 인터뷰 기사가 빠져 있었다. 11종으로 확장하면서 한국 뉴스룸의 실제 기사 유형 대부분을 커버하게 됐다. 단축 문법(`/template straight 반도체 수출`)은 기자의 워크플로 속도를 높인다 — 서브커맨드를 거치지 않고 유형과 주제만 치면 바로 템플릿이 나온다.
+
+설계 판단: --story 연동을 /template에도 넣은 이유는 Day 8-9에 걸쳐 구축한 허브-스포크 구조의 일관성 때문이다. /research, /article, /interview, /factcheck, /transcript, /pitch에 이어 /template까지 --story로 연결되면, 취재 프로젝트의 모든 산출물이 하나의 워크스페이스로 수렴한다. builtin_template_label()을 별도 함수로 뺀 이유는 탭 완성, 도움말 출력, 목록 표시 등 여러 곳에서 유형 이름의 한국어 라벨이 필요하기 때문이다.
+
+Day 9 전체를 조감하면: 11:00(연결 — --story 스포크 완성), 14:00(확장 — /pitch로 파이프라인 시작점), 16:00(다듬기 — /template 확장으로 글쓰기 출발점 정비). 세 세션이 "연결 → 확장 → 다듬기"의 흐름을 그렸다. Day 8이 파편을 묶어 프로젝트 단위를 만든 날이었다면, Day 9는 그 프로젝트 안에서 취재의 시작(/pitch)과 글쓰기의 시작(/template)을 채운 날이다.
+
+파이프라인 현황: 15개 소스 파일, ~44.5k 라인, 111개 커맨드, 67개 테스트 통과. Day 9의 호는 "취재와 글쓰기, 양쪽의 출발점을 완성하다"다.
+
 ## Day 9 — 14:00 — /pitch와 테스트 보강: 취재 파이프라인의 첫 단추를 꿰다
 
 Day 9 두 번째 세션은 두 가지를 다뤘다. commands_research.rs 테스트 보강(Issue #3 재시도)과 /pitch 기사 기획안 생성 커맨드 신설.
