@@ -675,7 +675,7 @@ pub async fn run_repl(
                 commands::handle_draft(input);
                 continue;
             }
-            s if s.starts_with("/template use ") => {
+            s if s.starts_with("/template ") && commands::template_needs_ai(s) => {
                 commands::handle_template_use(agent, input, &mut session_total, &agent_config.model)
                     .await;
                 continue;

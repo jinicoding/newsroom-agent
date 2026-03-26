@@ -537,7 +537,7 @@ pub fn help_text() -> String {
         "  /draft <sub> <제목>    기사 초안 버전 관리 (save|list|load|diff)\n",
     );
     out.push_str(
-        "  /template [name]       기사 템플릿 불러오기 (straight/feature/interview 등)\n",
+        "  /template <유형> <주제>  기사 유형별 뼈대 생성 (straight/analysis/interview 등)\n",
     );
     out.push_str(
         "  /headline [text|--file <path>]   헤드라인 후보 5~7개 생성 (스트레이트/분석/피처/클릭유도)\n",
@@ -968,6 +968,7 @@ pub use crate::commands_writing::{
     handle_multiformat, handle_proofread, handle_publish, handle_quality, handle_quote,
     handle_readability, handle_rewrite, handle_spellcheck, handle_stats, handle_summary,
     handle_template, handle_template_use, handle_transcript, handle_translate,
+    template_needs_ai,
 };
 
 // Workflow & management handlers

@@ -4887,8 +4887,94 @@ const TEMPLATES_DIR: &str = ".journalist/templates";
 /// Korean journalism conventions for common recurring article types.
 pub const BUILTIN_TEMPLATES: &[(&str, &str)] = &[
     (
+        "straight",
+        "# 스트레이트 기사 양식\n\n\
+         ## 리드 (역피라미드 구조 — 핵심 사실 먼저)\n\
+         [누가] [언제] [어디서] [무엇을] [어떻게] [왜] 했다/밝혔다/발표했다.\n\n\
+         ## 핵심 내용\n\
+         [리드를 뒷받침하는 구체적 사실과 수치]\n\n\
+         ## 배경\n\
+         [이번 사안의 맥락과 경과]\n\n\
+         ## 관계자 발언\n\
+         [당사자 또는 관계자의 직접 인용]\n\n\
+         ## 전망·후속\n\
+         [향후 전개 방향, 예정된 후속 조치]",
+    ),
+    (
+        "analysis",
+        "# 해설 기사 양식\n\n\
+         ## 리드\n\
+         [사안 요약]. [왜 지금 주목해야 하는지 한 문장].\n\n\
+         ## 무엇이 일어났나\n\
+         [팩트 중심 사건 경과 정리]\n\n\
+         ## 왜 중요한가\n\
+         [사안의 의미와 파급효과 분석]\n\n\
+         ## 쟁점\n\
+         - 쟁점 1: [찬반 논거]\n\
+         - 쟁점 2: [찬반 논거]\n\n\
+         ## 전문가 시각\n\
+         [관련 전문가 분석·인용]\n\n\
+         ## 전망\n\
+         [시나리오별 전개 가능성]",
+    ),
+    (
+        "interview",
+        "# 인터뷰 기사 양식\n\n\
+         ## 리드\n\
+         [인터뷰이 소개] [인터뷰이]는 [핵심 발언 요약]고 밝혔다.\n\n\
+         ## 인터뷰이 프로필\n\
+         - 이름: [이름]\n\
+         - 직함: [직함]\n\
+         - 주요 경력: [경력]\n\n\
+         ## 인터뷰 본문\n\
+         — [질문 1]\n\
+         \"[답변 1]\"\n\n\
+         — [질문 2]\n\
+         \"[답변 2]\"\n\n\
+         — [질문 3]\n\
+         \"[답변 3]\"\n\n\
+         ## 기자 정리\n\
+         [인터뷰의 의미와 맥락 정리]",
+    ),
+    (
+        "incident",
+        "# 사건사고 기사 양식\n\n\
+         ## 리드\n\
+         [일시] [장소]에서 [사건 유형]이 발생해 [피해 규모].\n\n\
+         ## 사건 개요\n\
+         - 일시: [일시]\n\
+         - 장소: [장소]\n\
+         - 유형: [사건 유형]\n\
+         - 피해: [인명·재산 피해]\n\n\
+         ## 사건 경위\n\
+         [시간순 경과 서술]\n\n\
+         ## 대응 현황\n\
+         [경찰/소방/구조 등 대응 상황]\n\n\
+         ## 원인·수사\n\
+         [추정 원인, 수사 방향]\n\n\
+         ## 피해자·유족\n\
+         [피해자 신원, 유족 상황 — 2차 피해 주의]",
+    ),
+    (
+        "personnel",
+        "# 인사이동 기사 양식\n\n\
+         ## 리드\n\
+         [기관/회사명]은 [일자]자로 다음과 같이 인사를 단행했다.\n\n\
+         ## 주요 인사\n\
+         ◆ 승진\n\
+         ▲[직급] [이름]([부서])\n\n\
+         ◆ 전보\n\
+         ▲[부서] [이름]([전 부서])\n\n\
+         ◆ 신규 임명\n\
+         ▲[직위] [이름]\n\n\
+         ## 인사 배경\n\
+         [이번 인사의 특징과 배경 설명]\n\n\
+         ## 주요 인물 약력\n\
+         - [이름]: [학력], [주요 경력]",
+    ),
+    (
         "earnings",
-        "# 분기실적 기사 양식\n\n\
+        "# 실적발표 기사 양식\n\n\
          ## 리드\n\
          [회사명]이 [연도] [분기] 매출 [금액]원, 영업이익 [금액]원을 기록했다고 [일자] 공시했다.\n\n\
          ## 실적 요약\n\
@@ -4908,21 +4994,41 @@ pub const BUILTIN_TEMPLATES: &[(&str, &str)] = &[
          [주가 변동, 애널리스트 반응 등]",
     ),
     (
-        "personnel",
-        "# 인사발령 기사 양식\n\n\
+        "policy",
+        "# 정책 기사 양식\n\n\
          ## 리드\n\
-         [기관/회사명]은 [일자]자로 다음과 같이 인사를 단행했다.\n\n\
-         ## 주요 인사\n\
-         ◆ 승진\n\
-         ▲[직급] [이름]([부서])\n\n\
-         ◆ 전보\n\
-         ▲[부서] [이름]([전 부서])\n\n\
-         ◆ 신규 임명\n\
-         ▲[직위] [이름]\n\n\
-         ## 인사 배경\n\
-         [이번 인사의 특징과 배경 설명]\n\n\
-         ## 주요 인물 약력\n\
-         - [이름]: [학력], [주요 경력]",
+         [부처/기관명]이 [일자] [정책명]을 발표했다. [핵심 내용 한 문장].\n\n\
+         ## 정책 개요\n\
+         - 정책명: [정책명]\n\
+         - 시행일: [시행 예정일]\n\
+         - 주관: [주관 부처]\n\
+         - 예산: [투입 예산]\n\n\
+         ## 주요 내용\n\
+         1. [핵심 내용 1]\n\
+         2. [핵심 내용 2]\n\
+         3. [핵심 내용 3]\n\n\
+         ## 기대 효과\n\
+         [정부 측 설명 — 수혜 대상, 예상 효과]\n\n\
+         ## 우려·쟁점\n\
+         [반대 의견, 실효성 논란, 부작용 우려]\n\n\
+         ## 향후 일정\n\
+         [입법 절차, 시행 로드맵]",
+    ),
+    (
+        "feature",
+        "# 피처 기사 양식\n\n\
+         ## 리드 (장면·일화로 시작)\n\
+         [구체적인 장면 묘사 또는 인물 에피소드로 시작하여 독자를 끌어들인다]\n\n\
+         ## 넛그래프 (왜 이 이야기를 하는가)\n\
+         [이 기사가 다루는 주제와 왜 지금 중요한지 한 문단으로 정리]\n\n\
+         ## 본문 1: [소주제]\n\
+         [취재 내용 — 인물, 현장, 데이터를 엮어 서술]\n\n\
+         ## 본문 2: [소주제]\n\
+         [다른 각도의 취재 내용]\n\n\
+         ## 본문 3: [소주제]\n\
+         [심화 취재 또는 반론]\n\n\
+         ## 마무리 (여운·전망)\n\
+         [첫 장면을 회수하거나, 열린 결말로 독자에게 생각거리를 남긴다]",
     ),
     (
         "obituary",
@@ -4982,7 +5088,34 @@ pub const BUILTIN_TEMPLATES: &[(&str, &str)] = &[
 ];
 
 /// Names of built-in templates.
-pub const BUILTIN_TEMPLATE_NAMES: &[&str] = &["earnings", "personnel", "obituary", "election", "weather"];
+pub const BUILTIN_TEMPLATE_NAMES: &[&str] = &[
+    "straight", "analysis", "interview", "incident", "personnel",
+    "earnings", "policy", "feature", "obituary", "election", "weather",
+];
+
+/// Korean display labels for built-in template types.
+pub const BUILTIN_TEMPLATE_LABELS: &[(&str, &str)] = &[
+    ("straight", "스트레이트"),
+    ("analysis", "해설"),
+    ("interview", "인터뷰"),
+    ("incident", "사건사고"),
+    ("personnel", "인사이동"),
+    ("earnings", "실적발표"),
+    ("policy", "정책"),
+    ("feature", "피처"),
+    ("obituary", "부고"),
+    ("election", "선거개표"),
+    ("weather", "날씨"),
+];
+
+/// Get the Korean label for a built-in template name.
+pub fn builtin_template_label(name: &str) -> &str {
+    BUILTIN_TEMPLATE_LABELS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, l)| *l)
+        .unwrap_or("")
+}
 
 /// Look up a template by name: built-in first, then user templates dir.
 /// Returns the template content if found.
@@ -5005,13 +5138,15 @@ pub fn is_builtin_template(name: &str) -> bool {
 
 fn print_template_usage() {
     println!("{DIM}  사용법:");
-    println!("    /template save <이름> [--file <경로>]   현재 초안 또는 지정 파일을 양식으로 저장");
-    println!("    /template list                         저장된 양식 목록 (내장 + 사용자)");
-    println!("    /template show <이름>                   양식 내용 확인");
-    println!("    /template remove <이름>                 사용자 양식 삭제");
-    println!("    /template use <이름> <주제>             양식 기반 기사 작성");
+    println!("    /template <유형> <주제> [--story <슬러그>]   유형별 기사 뼈대 생성 (AI)");
+    println!("    /template list                              저장된 양식 목록 (내장 + 사용자)");
+    println!("    /template show <이름>                        양식 내용 확인");
+    println!("    /template save <이름> [--file <경로>]        현재 초안 또는 지정 파일을 양식으로 저장");
+    println!("    /template remove <이름>                      사용자 양식 삭제");
     println!();
-    println!("  내장 양식: earnings(분기실적), personnel(인사발령), obituary(부고),");
+    println!("  기본 유형: straight(스트레이트), analysis(해설), interview(인터뷰),");
+    println!("             incident(사건사고), personnel(인사이동), earnings(실적발표),");
+    println!("             policy(정책), feature(피처), obituary(부고),");
     println!("             election(선거개표), weather(날씨){RESET}\n");
 }
 
@@ -5101,6 +5236,17 @@ pub fn build_template_use_prompt(template_content: &str, template_name: &str, to
     )
 }
 
+/// Check whether the first word of `/template` args is a known type name
+/// (builtin template name or "use"), meaning the command needs AI dispatch.
+pub fn template_needs_ai(input: &str) -> bool {
+    let args = input.strip_prefix("/template").unwrap_or("").trim();
+    if args.is_empty() {
+        return false;
+    }
+    let sub = args.split_whitespace().next().unwrap_or("");
+    sub == "use" || is_builtin_template(sub) || resolve_template(sub).is_some()
+}
+
 pub fn handle_template(input: &str) {
     let args = input.strip_prefix("/template").unwrap_or("").trim();
 
@@ -5122,6 +5268,14 @@ pub fn handle_template(input: &str) {
         "use" => {
             // "use" subcommand needs AI — print message for REPL to pick up
             eprintln!("{RED}  /template use는 handle_template_use()를 통해 호출해야 합니다.{RESET}\n");
+        }
+        _ if is_builtin_template(sub) || resolve_template(sub).is_some() => {
+            // Type name used directly — needs AI dispatch
+            if rest.is_empty() {
+                eprintln!("{RED}  주제를 지정하세요: /template {sub} <주제>{RESET}\n");
+            } else {
+                eprintln!("{RED}  /template <유형> <주제>는 handle_template_use()를 통해 호출해야 합니다.{RESET}\n");
+            }
         }
         _ => {
             eprintln!("{RED}  알 수 없는 하위 커맨드: {sub}{RESET}");
@@ -5187,14 +5341,7 @@ fn handle_template_list() {
     println!("  {DIM}[내장]{RESET}");
     for (name, content) in BUILTIN_TEMPLATES {
         let char_count = content.chars().count();
-        let label = match *name {
-            "earnings" => "분기실적",
-            "personnel" => "인사발령",
-            "obituary" => "부고",
-            "election" => "선거개표",
-            "weather" => "날씨",
-            _ => "",
-        };
+        let label = builtin_template_label(name);
         println!("  {name}  ({label}, {char_count}자)");
     }
 
@@ -5275,16 +5422,18 @@ pub async fn handle_template_use(
     model: &str,
 ) {
     let args = input.strip_prefix("/template").unwrap_or("").trim();
-    let rest = args.strip_prefix("use").unwrap_or("").trim();
+    // Strip optional "use" prefix for backwards compat
+    let rest = args.strip_prefix("use").map(|s| s.trim_start()).unwrap_or(args);
 
-    let (name, topic) = parse_template_use_args(rest);
+    let (story_slug, rest_without_story) = extract_story_arg(rest);
+    let (name, topic) = parse_template_use_args(&rest_without_story);
 
     if name.is_empty() {
-        eprintln!("{RED}  사용법: /template use <이름> <주제>{RESET}\n");
+        eprintln!("{RED}  사용법: /template <유형> <주제> [--story <슬러그>]{RESET}\n");
         return;
     }
     if topic.is_empty() {
-        eprintln!("{RED}  주제를 지정하세요: /template use {name} <주제>{RESET}\n");
+        eprintln!("{RED}  주제를 지정하세요: /template {name} <주제>{RESET}\n");
         return;
     }
 
@@ -5296,8 +5445,14 @@ pub async fn handle_template_use(
         }
     };
 
+    let label = builtin_template_label(&name);
+    let label_display = if label.is_empty() {
+        name.clone()
+    } else {
+        format!("{name}({label})")
+    };
     println!(
-        "{GREEN}  📋 양식 '{name}' 적용 → 주제: {topic}{RESET}\n"
+        "{GREEN}  📋 양식 '{label_display}' 적용 → 주제: {topic}{RESET}\n"
     );
 
     let prompt = build_template_use_prompt(&template_content, &name, &topic);
@@ -5313,6 +5468,20 @@ pub async fn handle_template_use(
                     "{GREEN}  ✓ 초안 저장: {}{RESET}\n",
                     draft_path.display()
                 );
+                // Link to story if --story was given
+                if let Some(ref slug) = story_slug {
+                    let stories_base = std::path::Path::new(STORIES_DIR);
+                    match link_file_to_story(slug, &draft_path, "템플릿초안", stories_base) {
+                        Ok(_) => {
+                            println!(
+                                "{GREEN}  ✓ 스토리 연결: {slug}{RESET}\n"
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("{RED}  스토리 연결 실패: {e}{RESET}\n");
+                        }
+                    }
+                }
             }
             Err(e) => {
                 eprintln!("{RED}  초안 저장 실패: {e}{RESET}\n");
@@ -5321,7 +5490,11 @@ pub async fn handle_template_use(
     }
 }
 
-pub const TEMPLATE_SUBCOMMANDS: &[&str] = &["save", "list", "show", "use", "remove"];
+pub const TEMPLATE_SUBCOMMANDS: &[&str] = &[
+    "list", "show", "save", "remove", "use",
+    "straight", "analysis", "interview", "incident", "personnel",
+    "earnings", "policy", "feature", "obituary", "election", "weather",
+];
 
 /// Subcommand names for `/correction <Tab>` completion.
 pub const CORRECTION_SUBCOMMANDS: &[&str] = &["add", "list", "report"];
@@ -7644,14 +7817,18 @@ mod tests {
     }
 
     #[test]
-    fn builtin_templates_exist_all_five() {
-        assert_eq!(BUILTIN_TEMPLATES.len(), 5);
+    fn builtin_templates_exist_all_eleven() {
+        assert_eq!(BUILTIN_TEMPLATES.len(), 11);
         let names: Vec<&str> = BUILTIN_TEMPLATES.iter().map(|(n, _)| *n).collect();
-        assert!(names.contains(&"earnings"));
-        assert!(names.contains(&"personnel"));
-        assert!(names.contains(&"obituary"));
-        assert!(names.contains(&"election"));
-        assert!(names.contains(&"weather"));
+        for expected in &[
+            "straight", "analysis", "interview", "incident", "personnel",
+            "earnings", "policy", "feature", "obituary", "election", "weather",
+        ] {
+            assert!(
+                names.contains(expected),
+                "BUILTIN_TEMPLATES missing '{expected}'"
+            );
+        }
     }
 
     #[test]
@@ -7720,6 +7897,151 @@ mod tests {
             assert!(
                 BUILTIN_TEMPLATE_NAMES.contains(name),
                 "BUILTIN_TEMPLATE_NAMES missing '{name}'"
+            );
+        }
+    }
+
+    // ── /template tests (Day 9 — new types + shortcut) ─────────────
+
+    #[test]
+    fn builtin_template_straight_has_sections() {
+        let content = BUILTIN_TEMPLATES
+            .iter()
+            .find(|(n, _)| *n == "straight")
+            .map(|(_, c)| *c)
+            .unwrap();
+        assert!(content.contains("리드"));
+        assert!(content.contains("핵심 내용"));
+        assert!(content.contains("배경"));
+        assert!(content.contains("전망"));
+    }
+
+    #[test]
+    fn builtin_template_analysis_has_sections() {
+        let content = BUILTIN_TEMPLATES
+            .iter()
+            .find(|(n, _)| *n == "analysis")
+            .map(|(_, c)| *c)
+            .unwrap();
+        assert!(content.contains("쟁점"));
+        assert!(content.contains("전문가"));
+        assert!(content.contains("전망"));
+    }
+
+    #[test]
+    fn builtin_template_interview_has_sections() {
+        let content = BUILTIN_TEMPLATES
+            .iter()
+            .find(|(n, _)| *n == "interview")
+            .map(|(_, c)| *c)
+            .unwrap();
+        assert!(content.contains("프로필"));
+        assert!(content.contains("질문"));
+        assert!(content.contains("답변"));
+    }
+
+    #[test]
+    fn builtin_template_incident_has_sections() {
+        let content = BUILTIN_TEMPLATES
+            .iter()
+            .find(|(n, _)| *n == "incident")
+            .map(|(_, c)| *c)
+            .unwrap();
+        assert!(content.contains("사건 개요"));
+        assert!(content.contains("사건 경위"));
+        assert!(content.contains("원인"));
+    }
+
+    #[test]
+    fn builtin_template_policy_has_sections() {
+        let content = BUILTIN_TEMPLATES
+            .iter()
+            .find(|(n, _)| *n == "policy")
+            .map(|(_, c)| *c)
+            .unwrap();
+        assert!(content.contains("정책 개요"));
+        assert!(content.contains("주요 내용"));
+        assert!(content.contains("기대 효과"));
+        assert!(content.contains("우려"));
+    }
+
+    #[test]
+    fn builtin_template_feature_has_sections() {
+        let content = BUILTIN_TEMPLATES
+            .iter()
+            .find(|(n, _)| *n == "feature")
+            .map(|(_, c)| *c)
+            .unwrap();
+        assert!(content.contains("넛그래프"));
+        assert!(content.contains("마무리"));
+    }
+
+    #[test]
+    fn builtin_template_label_lookup() {
+        assert_eq!(builtin_template_label("straight"), "스트레이트");
+        assert_eq!(builtin_template_label("analysis"), "해설");
+        assert_eq!(builtin_template_label("interview"), "인터뷰");
+        assert_eq!(builtin_template_label("incident"), "사건사고");
+        assert_eq!(builtin_template_label("personnel"), "인사이동");
+        assert_eq!(builtin_template_label("earnings"), "실적발표");
+        assert_eq!(builtin_template_label("policy"), "정책");
+        assert_eq!(builtin_template_label("feature"), "피처");
+        assert_eq!(builtin_template_label("unknown"), "");
+    }
+
+    #[test]
+    fn template_needs_ai_for_builtin_types() {
+        assert!(template_needs_ai("/template straight 삼성전자"));
+        assert!(template_needs_ai("/template analysis 정책 분석"));
+        assert!(template_needs_ai("/template use earnings 분기실적"));
+        assert!(template_needs_ai("/template interview 인터뷰 대상"));
+    }
+
+    #[test]
+    fn template_needs_ai_false_for_subcommands() {
+        assert!(!template_needs_ai("/template"));
+        assert!(!template_needs_ai("/template list"));
+        assert!(!template_needs_ai("/template save 이름"));
+        assert!(!template_needs_ai("/template show earnings"));
+        assert!(!template_needs_ai("/template remove 이름"));
+    }
+
+    #[test]
+    fn template_subcommands_include_type_names() {
+        for name in BUILTIN_TEMPLATE_NAMES {
+            assert!(
+                TEMPLATE_SUBCOMMANDS.contains(name),
+                "TEMPLATE_SUBCOMMANDS missing type '{name}'"
+            );
+        }
+        // Also includes management subcommands
+        assert!(TEMPLATE_SUBCOMMANDS.contains(&"list"));
+        assert!(TEMPLATE_SUBCOMMANDS.contains(&"save"));
+        assert!(TEMPLATE_SUBCOMMANDS.contains(&"show"));
+    }
+
+    #[test]
+    fn builtin_template_labels_matches_names() {
+        assert_eq!(BUILTIN_TEMPLATE_LABELS.len(), BUILTIN_TEMPLATE_NAMES.len());
+        for name in BUILTIN_TEMPLATE_NAMES {
+            assert!(
+                BUILTIN_TEMPLATE_LABELS.iter().any(|(n, _)| n == name),
+                "BUILTIN_TEMPLATE_LABELS missing '{name}'"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_template_finds_new_builtins() {
+        for name in &["straight", "analysis", "interview", "incident", "policy", "feature"] {
+            let content = resolve_template(name);
+            assert!(
+                content.is_some(),
+                "resolve_template should find builtin '{name}'"
+            );
+            assert!(
+                !content.unwrap().is_empty(),
+                "builtin '{name}' should have content"
             );
         }
     }
