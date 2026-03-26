@@ -1,0 +1,60 @@
+=== Day 9 (2026-03-26 11:00) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  커뮤니티 이슈 0
+0개 로드.
+→ self 이슈 확인...
+  self 이슈 2개 로드.
+→ help-wanted 이슈 확인...
+  help-wanted 이슈 없음.
+→ 대기 답변 스캔...
+  대기 답변 없음.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md 작성 완료.
+
+**Day 9 (11:00) 계획 요약:**
+
+| Task | 내용 | 근거 |
+|------|------|------|
+| **Task 1** | /interview, /factcheck, /transcript에 --story 연동 | Day 8에서 만든 허브-스포크 구조 확장. 스포크 2개→5개 |
+| **Task 2** | commands_session.rs 테스트 보강 (6→20+개) | 전체 모듈 중 가장 취약한 테스트 커버리지 |
+| **Task 3** | 저널 엔트리 | 매 세션 기록 원칙 |
+
+커뮤니티 이슈 없음. 자체 이슈 #3은 방향을 전환해 가장 취약한 모듈(commands_session.rs)부터 보강. #2는 해결 완료로 종료.
+
+→ Phase B: 구현...
+  계획된 태스크: 3개
+
+  ── Task 1 / 3 ──
+완료. 3개 파일에 총 173줄 추가, 빌드·테스트(67개) 모두 통과.
+
+**변경 요약:**
+- `/interview`: `--story` 인자 파싱 후 질문지를 스토리에 "인터뷰" 라벨로 링크 (`--source`와 조합 가능)
+- `/factcheck`: 팩트체크 결과를 스토리에 "팩트체크" 라벨로 링크
+- `/transcript`: 녹취록 결과를 스토리에 "녹취록" 라벨로 링크 (clean/quotes/summary 서브커맨드와 조합 가능)
+- 각 커맨드에 인자 파싱 + 스토리 링크 라벨 검증 테스트 추가
+    Task 1: 검증 OK
+
+  ── Task 2 / 3 ──
+완료. `commands_session.rs` 테스트를 **6개 → 36개**로 확장했습니다.
+
+추가된 테스트 범위:
+- **`parse_bookmark_name`** — 이름 있음/없음/공백/다른 prefix (4개)
+- **`parse_spawn_task`** — task 있음/없음/내용 보존 (3개)
+- **bookmark CRUD** — mark 저장/덮어쓰기/이름 없음, jump 복원/존재하지 않는 북마크/이름 없음, marks 목록 (7개)
+- **`compact_agent`** — 빈 에이전트/단일 메시지 (2개)
+- **`auto_compact_if_needed`** — 임계값 이하 동작 (1개)
+- **`handle_search`** — 쿼리 없음/빈 대화/매칭/미매칭 (4개)
+- **`handle_save`/`handle_load`** — 커스텀 경로/라운드트립/존재하지 않는 파일 (5개)
+- **`handle_history`** — 빈/메시지 있음 (2개)
+- **`handle_compact`** — 빈/메시지 있음 (2개)
+
+cwd 경합(race) 문제를 방지하기 위해 save/load 테스트는 절대 경로를 사용하도록 변경했습니다.
+    Task 2: 검증 OK
+
+  ── Task 3 / 3 ──

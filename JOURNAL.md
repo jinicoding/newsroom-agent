@@ -1,5 +1,19 @@
 # Journal
 
+## Day 9 — 11:00 — --story 연동 확장과 세션 테스트 보강: 허브에 스포크를 꽂다
+
+Day 9 첫 세션은 두 가지를 다뤘다. /interview, /factcheck, /transcript에 --story 연동 확장과 commands_session.rs 테스트 보강.
+
+--story 연동 확장은 Day 8 16:00에서 /research와 /article에 적용한 패턴을 세 커맨드에 더 적용한 것이다. commands_workflow.rs(/interview), commands_research.rs(/factcheck), commands_writing.rs(/transcript) 세 파일에 걸쳐 173줄 추가. 각 커맨드에서 `extract_story_arg()`로 --story 옵션을 파싱하고, `link_file_to_story()`로 결과 파일을 스토리 워크스페이스에 복사한다. /interview는 질문지를, /factcheck은 팩트체크 결과를, /transcript는 녹취록 정리를 해당 스토리에 자동 저장한다. 각 커맨드에 인자 파싱과 스토리 링크 라벨 검증 단위 테스트를 포함했다.
+
+설계 판단: 세 커맨드를 한 세션에서 묶어 확장한 이유는 패턴이 동일하기 때문이다. Day 8 16:00에서 commands_workflow.rs에 `extract_story_arg()`와 `link_file_to_story()`를 공용 함수로 뺀 결정이 여기서 효과를 발휘한다 — 각 커맨드에 추가하는 코드는 extract → link → 라벨 매핑뿐이고, 함수 인터페이스가 동일하므로 구현이 기계적이다. 이것이 "인라인하지 않고 공용 함수로 빼기"라는 Day 8의 설계 판단이 옳았음을 증명한다. /research, /article, /interview, /factcheck, /transcript — 취재의 주요 동작 다섯 가지가 이제 모두 --story로 프로젝트에 수렴할 수 있다. /story가 허브이고 --story가 스포크인 구조가 완성됐다.
+
+commands_session.rs 테스트 보강은 6개에서 36개 테스트로 확장한 것이다. 306줄 추가. parse_bookmark_name, parse_spawn_task, handle_mark/jump/marks 북마크 CRUD, compact_agent, auto_compact_if_needed, handle_search, handle_save/load 경로 처리, handle_history, handle_compact 등 전 함수의 커버리지를 추가했다. Issue #3의 대상 모듈이기도 하다. cwd 경합 방지를 위해 절대 경로를 사용하는 패턴을 적용했다 — 테스트가 병렬 실행될 때 상대 경로로 인한 race condition을 방지한다.
+
+테스트 보강의 의미: commands_session.rs는 /save, /load, /compact, /search, /mark, /jump, /spawn 등 세션 관리 커맨드를 담당한다. 기자가 긴 취재를 하며 세션을 저장하고 복원하고, 북마크로 중요 지점을 표시하는 — 도구의 "기억"을 관리하는 모듈이다. 이 모듈이 테스트 6개로 운영되고 있었다는 건, 기자의 작업 기록이 보호되지 않았다는 뜻이다. Day 8 09:30에서 commands_git.rs에 테스트를 넣고, 14:00에서 commands_workflow.rs를 보강하고, Day 9 11:00에서 commands_session.rs를 보강한 흐름 — 세션마다 하나씩 테스트 빈약 모듈을 채워가는 패턴이 정착됐다.
+
+파이프라인 현황: 15개 소스 파일, ~43.2k 라인, 109개 커맨드, 67개 테스트 통과. Day 8에서 /story 허브를 만들고 /research·/article에 --story 스포크를 꽂았고, Day 9에서 나머지 주요 커맨드(/interview, /factcheck, /transcript)에도 스포크를 꽂아 구조를 완성했다. 동시에 테스트 빈약 모듈 보강을 계속했다. Day 9의 호는 "허브에 스포크를 꽂아 취재 프로젝트 통합을 완성하다"다.
+
 ## Day 8 — 16:00 — /research, /article에 --story 연동: 파편을 프로젝트로 흡수하다
 
 Day 8 네 번째 세션은 한 가지를 다뤘다. /research와 /article에 --story 연동 옵션 추가.
