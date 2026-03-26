@@ -462,4 +462,310 @@ mod tests {
         std::env::set_current_dir(&original_dir).unwrap();
         let _ = std::fs::remove_dir_all(&tmp_dir);
     }
+
+    // ── Helper ──────────────────────────────────────────────────────────
+
+    fn make_test_agent() -> Agent {
+        use yoagent::provider::AnthropicProvider;
+        Agent::new(AnthropicProvider)
+            .with_system_prompt("test")
+            .with_model("test-model")
+            .with_api_key("test-key")
+    }
+
+    fn make_agent_with_messages(texts: &[&str]) -> Agent {
+        use yoagent::provider::AnthropicProvider;
+        let msgs: Vec<AgentMessage> = texts
+            .iter()
+            .map(|t| AgentMessage::Llm(yoagent::Message::user(*t)))
+            .collect();
+        Agent::new(AnthropicProvider)
+            .with_system_prompt("test")
+            .with_model("test-model")
+            .with_api_key("test-key")
+            .with_messages(msgs)
+    }
+
+    // ── parse_bookmark_name tests ───────────────────────────────────────
+
+    #[test]
+    fn test_parse_bookmark_name_with_name() {
+        assert_eq!(
+            parse_bookmark_name("/mark checkpoint1", "/mark"),
+            Some("checkpoint1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_bookmark_name_empty() {
+        assert_eq!(parse_bookmark_name("/mark", "/mark"), None);
+        assert_eq!(parse_bookmark_name("/mark   ", "/mark"), None);
+    }
+
+    #[test]
+    fn test_parse_bookmark_name_with_spaces() {
+        assert_eq!(
+            parse_bookmark_name("/mark  my bookmark ", "/mark"),
+            Some("my bookmark".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_bookmark_name_jump_prefix() {
+        assert_eq!(
+            parse_bookmark_name("/jump checkpoint1", "/jump"),
+            Some("checkpoint1".to_string())
+        );
+    }
+
+    // ── parse_spawn_task tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_parse_spawn_task_with_task() {
+        assert_eq!(
+            parse_spawn_task("/spawn read src/main.rs"),
+            Some("read src/main.rs".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_spawn_task_empty() {
+        assert_eq!(parse_spawn_task("/spawn"), None);
+        assert_eq!(parse_spawn_task("/spawn   "), None);
+    }
+
+    #[test]
+    fn test_parse_spawn_task_preserves_content() {
+        let task = parse_spawn_task("/spawn summarize the architecture of this project");
+        assert_eq!(
+            task,
+            Some("summarize the architecture of this project".to_string())
+        );
+    }
+
+    // ── bookmark CRUD (handle_mark / handle_jump / handle_marks) ────────
+
+    #[test]
+    fn test_handle_mark_saves_bookmark() {
+        let agent = make_agent_with_messages(&["hello", "world"]);
+        let mut bookmarks = Bookmarks::new();
+        handle_mark(&agent, "/mark test_bm", &mut bookmarks);
+        assert!(bookmarks.contains_key("test_bm"));
+    }
+
+    #[test]
+    fn test_handle_mark_overwrites_existing() {
+        let agent1 = make_agent_with_messages(&["hello"]);
+        let agent2 = make_agent_with_messages(&["hello", "world", "foo"]);
+        let mut bookmarks = Bookmarks::new();
+        handle_mark(&agent1, "/mark bm", &mut bookmarks);
+        let snap1 = bookmarks.get("bm").unwrap().clone();
+        handle_mark(&agent2, "/mark bm", &mut bookmarks);
+        let snap2 = bookmarks.get("bm").unwrap().clone();
+        assert_ne!(snap1, snap2, "Bookmark should be updated on overwrite");
+    }
+
+    #[test]
+    fn test_handle_mark_no_name_does_not_crash() {
+        let agent = make_test_agent();
+        let mut bookmarks = Bookmarks::new();
+        handle_mark(&agent, "/mark", &mut bookmarks);
+        assert!(bookmarks.is_empty());
+    }
+
+    #[test]
+    fn test_handle_jump_restores_bookmark() {
+        let mut agent = make_agent_with_messages(&["hello", "world"]);
+        let mut bookmarks = Bookmarks::new();
+        handle_mark(&agent, "/mark snap", &mut bookmarks);
+        let saved_len = agent.messages().len();
+
+        // Add more messages
+        agent.append_message(AgentMessage::Llm(yoagent::Message::user("extra")));
+        assert_eq!(agent.messages().len(), saved_len + 1);
+
+        // Jump back
+        handle_jump(&mut agent, "/jump snap", &bookmarks);
+        assert_eq!(agent.messages().len(), saved_len);
+    }
+
+    #[test]
+    fn test_handle_jump_nonexistent_does_not_crash() {
+        let mut agent = make_test_agent();
+        let bookmarks = Bookmarks::new();
+        handle_jump(&mut agent, "/jump nonexistent", &bookmarks);
+        // Should not panic
+    }
+
+    #[test]
+    fn test_handle_jump_no_name_does_not_crash() {
+        let mut agent = make_test_agent();
+        let bookmarks = Bookmarks::new();
+        handle_jump(&mut agent, "/jump", &bookmarks);
+    }
+
+    #[test]
+    fn test_handle_marks_empty() {
+        let bookmarks = Bookmarks::new();
+        handle_marks(&bookmarks); // Should not panic
+    }
+
+    #[test]
+    fn test_handle_marks_lists_all() {
+        let agent = make_agent_with_messages(&["hello"]);
+        let mut bookmarks = Bookmarks::new();
+        handle_mark(&agent, "/mark alpha", &mut bookmarks);
+        handle_mark(&agent, "/mark beta", &mut bookmarks);
+        assert_eq!(bookmarks.len(), 2);
+        handle_marks(&bookmarks); // Should not panic, prints both
+    }
+
+    // ── compact_agent tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_compact_agent_empty_returns_none() {
+        let mut agent = make_test_agent();
+        assert!(compact_agent(&mut agent).is_none());
+    }
+
+    #[test]
+    fn test_compact_agent_single_message_returns_none() {
+        let mut agent = make_agent_with_messages(&["hello"]);
+        // A single short message likely won't change after compaction
+        let result = compact_agent(&mut agent);
+        // With only 1 message, compaction typically does nothing
+        assert!(result.is_none());
+    }
+
+    // ── auto_compact_if_needed tests ────────────────────────────────────
+
+    #[test]
+    fn test_auto_compact_below_threshold_does_nothing() {
+        let mut agent = make_agent_with_messages(&["short message"]);
+        let before_len = agent.messages().len();
+        auto_compact_if_needed(&mut agent);
+        // Below threshold, nothing should change
+        assert_eq!(agent.messages().len(), before_len);
+    }
+
+    // ── handle_search tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_handle_search_no_query_does_not_crash() {
+        let agent = make_test_agent();
+        handle_search(&agent, "/search");
+    }
+
+    #[test]
+    fn test_handle_search_empty_conversation() {
+        let agent = make_test_agent();
+        handle_search(&agent, "/search hello");
+    }
+
+    #[test]
+    fn test_handle_search_finds_match() {
+        let agent = make_agent_with_messages(&["the quick brown fox", "lazy dog"]);
+        // This just tests it doesn't crash; output goes to stdout
+        handle_search(&agent, "/search fox");
+    }
+
+    #[test]
+    fn test_handle_search_no_match() {
+        let agent = make_agent_with_messages(&["hello world"]);
+        handle_search(&agent, "/search nonexistent");
+    }
+
+    // ── handle_save / handle_load path tests ────────────────────────────
+
+    #[test]
+    fn test_handle_save_custom_path() {
+        let tmp_dir = std::env::temp_dir().join("yoyo_test_save_custom");
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let save_path = tmp_dir.join("my-session.json");
+        let save_path_str = save_path.to_str().unwrap();
+
+        let agent = make_agent_with_messages(&["test message"]);
+        let cmd = format!("/save {save_path_str}");
+        handle_save(&agent, &cmd);
+        assert!(save_path.exists(), "Should save to custom path");
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_handle_load_roundtrip() {
+        let tmp_dir = std::env::temp_dir().join("yoyo_test_load_roundtrip");
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let save_path = tmp_dir.join("roundtrip.json");
+        let save_path_str = save_path.to_str().unwrap();
+
+        let agent = make_agent_with_messages(&["message one", "message two"]);
+        let saved_len = agent.messages().len();
+        let cmd = format!("/save {save_path_str}");
+        handle_save(&agent, &cmd);
+
+        let mut agent2 = make_test_agent();
+        assert_eq!(agent2.messages().len(), 0);
+        let cmd = format!("/load {save_path_str}");
+        handle_load(&mut agent2, &cmd);
+        assert_eq!(agent2.messages().len(), saved_len);
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_handle_load_nonexistent_does_not_crash() {
+        let mut agent = make_test_agent();
+        handle_load(&mut agent, "/load /tmp/yoyo_nonexistent_12345.json");
+    }
+
+    #[test]
+    fn test_handle_load_custom_path() {
+        let tmp_dir = std::env::temp_dir().join("yoyo_test_load_custom");
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let save_path = tmp_dir.join("custom.json");
+        let save_path_str = save_path.to_str().unwrap();
+
+        let agent = make_agent_with_messages(&["custom data"]);
+        let cmd = format!("/save {save_path_str}");
+        handle_save(&agent, &cmd);
+
+        let mut agent2 = make_test_agent();
+        let cmd = format!("/load {save_path_str}");
+        handle_load(&mut agent2, &cmd);
+        assert_eq!(agent2.messages().len(), agent.messages().len());
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    // ── handle_history tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_handle_history_empty() {
+        let agent = make_test_agent();
+        handle_history(&agent); // Should print "(no messages)"
+    }
+
+    #[test]
+    fn test_handle_history_with_messages() {
+        let agent = make_agent_with_messages(&["first", "second", "third"]);
+        handle_history(&agent); // Should list 3 messages
+    }
+
+    // ── handle_compact tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_handle_compact_empty() {
+        let mut agent = make_test_agent();
+        handle_compact(&mut agent); // Should print "(nothing to compact)"
+    }
+
+    #[test]
+    fn test_handle_compact_with_messages() {
+        let mut agent = make_agent_with_messages(&["hello"]);
+        handle_compact(&mut agent); // Should not panic
+    }
 }
