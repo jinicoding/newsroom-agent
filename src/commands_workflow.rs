@@ -295,8 +295,9 @@ pub async fn handle_interview(
     session_total: &mut Usage,
     model: &str,
 ) {
-    let args = input.strip_prefix("/interview").unwrap_or("").trim();
-    let (topic, source_name) = parse_interview_args(args);
+    let raw_args = input.strip_prefix("/interview").unwrap_or("").trim();
+    let (story_slug, args_without_story) = extract_story_arg(raw_args);
+    let (topic, source_name) = parse_interview_args(&args_without_story);
 
     if topic.is_empty() {
         println!("{DIM}  사용법: /interview <주제> [--source 취재원]{RESET}");
@@ -351,6 +352,20 @@ pub async fn handle_interview(
                     "{GREEN}  ✓ 인터뷰 질문지 저장: {}{RESET}\n",
                     path.display()
                 );
+                // Link to story if --story was given
+                if let Some(ref slug) = story_slug {
+                    let stories_base = std::path::Path::new(STORIES_DIR);
+                    match link_file_to_story(slug, &path, "인터뷰", stories_base) {
+                        Ok(_) => {
+                            println!(
+                                "{GREEN}  ✓ 스토리 연결: {slug}{RESET}\n"
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("{RED}  스토리 연결 실패: {e}{RESET}\n");
+                        }
+                    }
+                }
             }
             Err(e) => {
                 eprintln!("{RED}  인터뷰 질문지 저장 실패: {e}{RESET}\n");
@@ -8811,5 +8826,45 @@ mod tests {
         let result = link_file_to_story("없는스토리", &src_file, "리서치", dir.path());
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("찾을 수 없습니다"));
+    }
+
+    #[test]
+    fn interview_story_arg_with_source() {
+        // --story should be stripped before parse_interview_args sees the args
+        let (slug, rest) = extract_story_arg("반도체 수출 --story my-slug --source 김철수");
+        assert_eq!(slug.as_deref(), Some("my-slug"));
+        let (topic, source) = parse_interview_args(&rest);
+        assert_eq!(topic, "반도체 수출");
+        assert_eq!(source.as_deref(), Some("김철수"));
+    }
+
+    #[test]
+    fn interview_story_arg_without_source() {
+        let (slug, rest) = extract_story_arg("--story slug 반도체 규제");
+        assert_eq!(slug.as_deref(), Some("slug"));
+        let (topic, source) = parse_interview_args(&rest);
+        assert_eq!(topic, "반도체 규제");
+        assert!(source.is_none());
+    }
+
+    #[test]
+    fn link_file_to_story_interview_label() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let base = dir.path();
+        let meta = create_story("인터뷰 테스트", base, "2026-03-26").unwrap();
+
+        let src_dir = dir.path().join("interview");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let src_file = src_dir.join("2026-03-26_interview.md");
+        std::fs::write(&src_file, "# 인터뷰 질문지").unwrap();
+
+        link_file_to_story(&meta.slug, &src_file, "인터뷰", base).unwrap();
+
+        let copied = base.join(&meta.slug).join("2026-03-26_interview.md");
+        assert!(copied.exists());
+
+        let loaded = load_story_meta(&story_meta_path_at(base, &meta.slug)).unwrap();
+        assert_eq!(loaded.notes.len(), 1);
+        assert!(loaded.notes[0].contains("[인터뷰]"));
     }
 }

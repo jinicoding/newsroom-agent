@@ -5744,7 +5744,8 @@ pub async fn handle_transcript(
     model: &str,
 ) {
     let raw_args = input.strip_prefix("/transcript").unwrap_or("").trim();
-    let (subcmd, text_args) = parse_transcript_args(raw_args);
+    let (story_slug, args_without_story) = extract_story_arg(raw_args);
+    let (subcmd, text_args) = parse_transcript_args(&args_without_story);
 
     let subcmd = match subcmd {
         Some(s) => s,
@@ -5797,6 +5798,20 @@ pub async fn handle_transcript(
                     "{GREEN}  ✓ 결과 저장: {}{RESET}\n",
                     path.display()
                 );
+                // Link to story if --story was given
+                if let Some(ref slug) = story_slug {
+                    let stories_base = std::path::Path::new(STORIES_DIR);
+                    match link_file_to_story(slug, &path, "녹취록", stories_base) {
+                        Ok(_) => {
+                            println!(
+                                "{GREEN}  ✓ 스토리 연결: {slug}{RESET}\n"
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("{RED}  스토리 연결 실패: {e}{RESET}\n");
+                        }
+                    }
+                }
             }
             Err(e) => {
                 eprintln!("{RED}  결과 저장 실패: {e}{RESET}\n");
@@ -7999,5 +8014,49 @@ mod tests {
         assert!(path.to_string_lossy().ends_with(".md"));
         let content = std::fs::read_to_string(dir.path().join(&path)).unwrap();
         assert_eq!(content, "정리된 녹취록 내용");
+    }
+
+    #[test]
+    fn transcript_story_arg_with_subcmd() {
+        use crate::commands_workflow::extract_story_arg;
+        let (slug, rest) = extract_story_arg("--story my-slug clean --file interview.txt");
+        assert_eq!(slug.as_deref(), Some("my-slug"));
+        let (subcmd, text_args) = parse_transcript_args(&rest);
+        assert_eq!(subcmd, Some("clean"));
+        assert!(text_args.contains("--file"));
+    }
+
+    #[test]
+    fn transcript_story_arg_at_end() {
+        use crate::commands_workflow::extract_story_arg;
+        let (slug, rest) = extract_story_arg("summary 텍스트 내용 --story slug");
+        assert_eq!(slug.as_deref(), Some("slug"));
+        let (subcmd, text_args) = parse_transcript_args(&rest);
+        assert_eq!(subcmd, Some("summary"));
+        assert_eq!(text_args, "텍스트 내용");
+    }
+
+    #[test]
+    fn transcript_story_link_label() {
+        use crate::commands_workflow::{
+            create_story, link_file_to_story, load_story_meta, story_meta_path_at,
+        };
+        let dir = tempfile::TempDir::new().unwrap();
+        let base = dir.path();
+        let meta = create_story("녹취록 테스트", base, "2026-03-26").unwrap();
+
+        let src_dir = dir.path().join("transcript");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let src_file = src_dir.join("clean_2026-03-26.md");
+        std::fs::write(&src_file, "# 녹취록 정리").unwrap();
+
+        link_file_to_story(&meta.slug, &src_file, "녹취록", base).unwrap();
+
+        let copied = base.join(&meta.slug).join("clean_2026-03-26.md");
+        assert!(copied.exists());
+
+        let loaded = load_story_meta(&story_meta_path_at(base, &meta.slug)).unwrap();
+        assert_eq!(loaded.notes.len(), 1);
+        assert!(loaded.notes[0].contains("[녹취록]"));
     }
 }

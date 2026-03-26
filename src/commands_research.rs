@@ -738,10 +738,13 @@ pub async fn handle_factcheck(
     session_total: &mut Usage,
     model: &str,
 ) {
-    let claim = input
+    let raw_args = input
         .strip_prefix("/factcheck")
         .unwrap_or("")
         .trim();
+
+    let (story_slug, claim_str) = extract_story_arg(raw_args);
+    let claim = claim_str.as_str();
 
     if claim == "list" {
         factcheck_list();
@@ -770,6 +773,20 @@ pub async fn handle_factcheck(
                     "{GREEN}  ✓ 팩트체크 저장: {}{RESET}\n",
                     path.display()
                 );
+                // Link to story if --story was given
+                if let Some(ref slug) = story_slug {
+                    let stories_base = std::path::Path::new(STORIES_DIR);
+                    match link_file_to_story(slug, &path, "팩트체크", stories_base) {
+                        Ok(_) => {
+                            println!(
+                                "{GREEN}  ✓ 스토리 연결: {slug}{RESET}\n"
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("{RED}  스토리 연결 실패: {e}{RESET}\n");
+                        }
+                    }
+                }
             }
             Err(e) => {
                 eprintln!("{RED}  팩트체크 저장 실패: {e}{RESET}\n");
@@ -8645,5 +8662,43 @@ mod tests {
         save_verify(&path, "# 교차검증 보고서\n내용").unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert_eq!(content, "# 교차검증 보고서\n내용");
+    }
+
+    #[test]
+    fn factcheck_story_arg_parsing() {
+        let (slug, rest) = extract_story_arg("--story 반도체취재 한국 반도체 수출이 사상 최대");
+        assert_eq!(slug.as_deref(), Some("반도체취재"));
+        assert_eq!(rest, "한국 반도체 수출이 사상 최대");
+    }
+
+    #[test]
+    fn factcheck_story_arg_at_end() {
+        let (slug, rest) = extract_story_arg("한국 GDP 성장률 3% --story economy");
+        assert_eq!(slug.as_deref(), Some("economy"));
+        assert_eq!(rest, "한국 GDP 성장률 3%");
+    }
+
+    #[test]
+    fn factcheck_story_link_label() {
+        use crate::commands_workflow::{
+            create_story, link_file_to_story, load_story_meta, story_meta_path_at,
+        };
+        let dir = tempfile::TempDir::new().unwrap();
+        let base = dir.path();
+        let meta = create_story("팩트체크 테스트", base, "2026-03-26").unwrap();
+
+        let src_dir = dir.path().join("factcheck");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let src_file = src_dir.join("2026-03-26_fact.md");
+        std::fs::write(&src_file, "# 팩트체크 결과").unwrap();
+
+        link_file_to_story(&meta.slug, &src_file, "팩트체크", base).unwrap();
+
+        let copied = base.join(&meta.slug).join("2026-03-26_fact.md");
+        assert!(copied.exists());
+
+        let loaded = load_story_meta(&story_meta_path_at(base, &meta.slug)).unwrap();
+        assert_eq!(loaded.notes.len(), 1);
+        assert!(loaded.notes[0].contains("[팩트체크]"));
     }
 }
