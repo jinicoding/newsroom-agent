@@ -1193,4 +1193,225 @@ mod tests {
             "Second arg should use file path completion: {candidates:?}"
         );
     }
+
+    // --- is_unknown_command edge cases ---
+
+    #[test]
+    fn test_is_unknown_command_known() {
+        assert!(!is_unknown_command("/help"));
+        assert!(!is_unknown_command("/quit"));
+        assert!(!is_unknown_command("/research"));
+    }
+
+    #[test]
+    fn test_is_unknown_command_unknown() {
+        assert!(is_unknown_command("/nonexistent"));
+        assert!(is_unknown_command("/foobar"));
+        assert!(is_unknown_command("/HELP")); // case-sensitive
+    }
+
+    #[test]
+    fn test_is_unknown_command_with_args() {
+        // is_unknown_command splits on whitespace, checks the first token
+        assert!(!is_unknown_command("/help something"));
+        assert!(!is_unknown_command("/git status"));
+        assert!(is_unknown_command("/foobar arg1 arg2"));
+    }
+
+    #[test]
+    fn test_is_unknown_command_empty_and_whitespace() {
+        // Empty string — first token is "" which is not in KNOWN_COMMANDS
+        assert!(is_unknown_command(""));
+        // Whitespace only — split_whitespace yields None, fallback to full input
+        assert!(is_unknown_command("   "));
+    }
+
+    #[test]
+    fn test_is_unknown_command_non_slash() {
+        // Regular text is not a slash command
+        assert!(is_unknown_command("hello"));
+        assert!(is_unknown_command("help"));
+    }
+
+    // --- KNOWN_COMMANDS registry consistency ---
+
+    #[test]
+    fn test_known_commands_all_start_with_slash() {
+        for cmd in KNOWN_COMMANDS {
+            assert!(
+                cmd.starts_with('/'),
+                "Command {cmd:?} does not start with '/'"
+            );
+        }
+    }
+
+    #[test]
+    fn test_known_commands_no_duplicates() {
+        let mut seen = std::collections::HashSet::new();
+        for cmd in KNOWN_COMMANDS {
+            assert!(seen.insert(cmd), "Duplicate command in KNOWN_COMMANDS: {cmd}");
+        }
+    }
+
+    #[test]
+    fn test_known_commands_no_whitespace() {
+        for cmd in KNOWN_COMMANDS {
+            assert!(
+                !cmd.contains(char::is_whitespace),
+                "Command {cmd:?} contains whitespace"
+            );
+        }
+    }
+
+    #[test]
+    fn test_known_commands_essential_commands_present() {
+        // Core commands that must always exist
+        let essentials = [
+            "/help", "/quit", "/exit", "/clear", "/save", "/load", "/model",
+            "/commit", "/diff", "/test", "/lint",
+        ];
+        for cmd in essentials {
+            assert!(
+                KNOWN_COMMANDS.contains(&cmd),
+                "Essential command {cmd} missing from KNOWN_COMMANDS"
+            );
+        }
+    }
+
+    // --- needs_continuation edge cases ---
+
+    #[test]
+    fn test_needs_continuation_empty_string() {
+        assert!(!needs_continuation(""));
+    }
+
+    #[test]
+    fn test_needs_continuation_only_backslash() {
+        assert!(needs_continuation("\\"));
+    }
+
+    #[test]
+    fn test_needs_continuation_nested_code_fence() {
+        // Opening fence triggers continuation
+        assert!(needs_continuation("```python"));
+        assert!(needs_continuation("````"));
+        // Text before ``` does not trigger
+        assert!(!needs_continuation("some ```code"));
+    }
+
+    #[test]
+    fn test_needs_continuation_whitespace_with_backslash() {
+        // Trailing whitespace after backslash — backslash is NOT at end
+        assert!(!needs_continuation("hello \\ "));
+        // Backslash at actual end
+        assert!(needs_continuation("hello \\"));
+    }
+
+    // --- complete_file_path edge cases ---
+
+    #[test]
+    fn test_complete_file_path_nonexistent_directory() {
+        let matches = complete_file_path("zzz_no_such_dir_xyz/");
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn test_complete_file_path_nonexistent_prefix() {
+        let matches = complete_file_path("zzz_no_such_file_xyz");
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn test_complete_file_path_empty_string() {
+        // Empty prefix: no word to match
+        let matches = complete_file_path("");
+        // Path::new("").parent() is None, so we go to the else branch
+        // which scans "." with prefix "" — returns all entries
+        // Either way, not crashing is the key assertion
+        let _ = matches;
+    }
+
+    #[test]
+    fn test_complete_file_path_dot_prefix() {
+        // "." should list entries starting with "." in current dir
+        let matches = complete_file_path(".");
+        // Should find .gitignore or .github/ etc.
+        assert!(
+            !matches.is_empty(),
+            "Current directory should have dotfiles"
+        );
+    }
+
+    #[test]
+    fn test_complete_file_path_directory_trailing_slash() {
+        // "src/" should list contents of src/
+        let matches = complete_file_path("src/");
+        assert!(!matches.is_empty());
+        assert!(matches.iter().any(|m| m == "src/main.rs"));
+    }
+
+    #[test]
+    fn test_complete_file_path_results_sorted() {
+        let matches = complete_file_path("src/");
+        let mut sorted = matches.clone();
+        sorted.sort();
+        assert_eq!(matches, sorted, "complete_file_path results should be sorted");
+    }
+
+    #[test]
+    fn test_complete_file_path_directories_have_trailing_slash() {
+        // All directory entries should end with /
+        let matches = complete_file_path("sr");
+        for m in &matches {
+            if std::path::Path::new(m.trim_end_matches('/')).is_dir() {
+                assert!(m.ends_with('/'), "Directory {m:?} should end with '/'");
+            }
+        }
+    }
+
+    // --- Slash command completion edge cases ---
+
+    #[test]
+    fn test_complete_just_slash_returns_all_commands() {
+        use rustyline::history::DefaultHistory;
+        let helper = YoyoHelper;
+        let history = DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+
+        let (start, candidates) = helper.complete("/", 1, &ctx).unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(
+            candidates.len(),
+            KNOWN_COMMANDS.len(),
+            "Typing '/' alone should return all known commands"
+        );
+    }
+
+    #[test]
+    fn test_complete_unknown_command_prefix_returns_empty() {
+        use rustyline::history::DefaultHistory;
+        let helper = YoyoHelper;
+        let history = DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+
+        let (_, candidates) = helper.complete("/zzz_nothing_matches", 20, &ctx).unwrap();
+        assert!(
+            candidates.is_empty(),
+            "Unknown command prefix should yield no completions"
+        );
+    }
+
+    #[test]
+    fn test_complete_whitespace_only_returns_empty() {
+        use rustyline::history::DefaultHistory;
+        let helper = YoyoHelper;
+        let history = DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+
+        let (_, candidates) = helper.complete("   ", 3, &ctx).unwrap();
+        assert!(
+            candidates.is_empty(),
+            "Whitespace-only input should return no completions"
+        );
+    }
 }
