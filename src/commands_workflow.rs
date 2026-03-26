@@ -1,5 +1,5 @@
 //! Workflow & management command handlers (워크플로우·관리 도메인)
-//! Commands: /autopitch, /breaking, /briefing, /calendar, /collaborate, /compare, /coverage, /dashboard, /data, /deadline, /desk, /diary, /embargo, /interview, /morning, /performance, /recap, /rival, /story, /timeline
+//! Commands: /autopitch, /breaking, /briefing, /calendar, /collaborate, /compare, /coverage, /dashboard, /data, /deadline, /desk, /diary, /embargo, /interview, /morning, /performance, /pitch, /recap, /rival, /story, /timeline
 
 use crate::commands::auto_compact_if_needed;
 use crate::commands_project::*;
@@ -26,6 +26,9 @@ pub const DIARY_SUBCOMMANDS: &[&str] = &["list"];
 
 /// Subcommand names for `/recap <Tab>` completion.
 pub const RECAP_SUBCOMMANDS: &[&str] = &["list"];
+
+/// Subcommand names for `/pitch <Tab>` completion.
+pub const PITCH_SUBCOMMANDS: &[&str] = &["new", "list", "show", "submit"];
 
 // ── /briefing ────────────────────────────────────────────────────────────
 
@@ -3847,6 +3850,285 @@ fn autopitch_print_help() {
     println!("{DIM}    /autopitch --beat 경제{RESET}");
     println!(
         "{DIM}    /autopitch --beat 정치{RESET}\n"
+    );
+}
+
+// ── /pitch — 기사 기획안 생성 ─────────────────────────────────────────
+
+/// Parse `/pitch` subcommand and arguments.
+/// Returns `(subcommand, remaining_args)`.
+pub fn parse_pitch_args(args: &str) -> (String, String) {
+    let args = args.trim();
+    if args.is_empty() {
+        return (String::new(), String::new());
+    }
+    if let Some(idx) = args.find(char::is_whitespace) {
+        let sub = args[..idx].to_string();
+        let rest = args[idx..].trim().to_string();
+        (sub, rest)
+    } else {
+        (args.to_string(), String::new())
+    }
+}
+
+/// Generate a slug from a topic string (Korean-friendly: keeps alphanumeric and hangul).
+fn pitch_slug(topic: &str) -> String {
+    let slug: String = topic
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || ('\u{AC00}'..='\u{D7A3}').contains(&c) {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let slug = slug.trim_matches('-').to_string();
+    if slug.is_empty() {
+        "untitled".to_string()
+    } else {
+        slug.chars().take(40).collect()
+    }
+}
+
+/// Path to a pitch file given its slug.
+fn pitch_file_path(slug: &str) -> std::path::PathBuf {
+    std::path::Path::new(PITCHES_DIR).join(format!("{slug}.md"))
+}
+
+/// List all pitch files from `.journalist/pitches/`.
+pub fn list_pitches() -> Vec<(String, String)> {
+    let dir = std::path::Path::new(PITCHES_DIR);
+    if !dir.is_dir() {
+        return Vec::new();
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut pitches: Vec<(String, String)> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.ends_with(".md") && name != "pitch.md" && !name.starts_with("pitch_")
+        })
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            let slug = name.trim_end_matches(".md").to_string();
+            let content = std::fs::read_to_string(e.path()).ok()?;
+            let title = content
+                .lines()
+                .find(|l| l.starts_with("# "))
+                .map(|l| l.trim_start_matches("# ").to_string())
+                .unwrap_or_else(|| slug.clone());
+            Some((slug, title))
+        })
+        .collect();
+    pitches.sort_by(|a, b| a.0.cmp(&b.0));
+    pitches
+}
+
+/// Build the prompt for generating a structured article pitch.
+pub fn build_pitch_prompt(topic: &str, data: &str) -> String {
+    let ctx = profile_context();
+    format!(
+        "당신은 한국 신문사의 기획 전문 데스크입니다.{ctx}
+
+아래 주제에 대해 데스크에 제출할 수 있는 **구조화된 기사 기획안**을 작성해주세요.
+기획안은 \"왜 이 기사를 지금 써야 하는가\"를 설득하는 문서입니다.
+
+## 주제: {topic}
+
+다음 항목을 모두 포함해주세요:
+
+### 1. 기사 제목 (가제)
+### 2. 뉴스 가치
+- 시의성: 왜 지금인가
+- 영향력: 독자에게 미치는 영향
+- 특종성: 기존 보도와 차별점
+### 3. 핵심 앵글
+기사의 핵심 시각과 논점 (2-3문장)
+### 4. 예상 취재원
+- 필수 취재원 (최소 3명, 소속·직책·역할)
+- 보조 취재원 (자료 확인용)
+### 5. 취재 계획
+- 1차 취재 (언제, 무엇을)
+- 2차 취재 (확인·보완)
+- 예상 소요 기간
+### 6. 예상 기사 형태
+- 기사 유형 (스트레이트/기획/탐사/인터뷰/분석)
+- 예상 분량
+- 시리즈 가능성
+### 7. 리스크 점검
+- 법적 리스크 (명예훼손, 사생활)
+- 취재 난이도
+- 사실 확인 포인트
+
+---
+
+{data}"
+    )
+}
+
+/// Build the prompt for formatting a pitch for desk submission.
+pub fn build_pitch_submit_prompt(content: &str) -> String {
+    format!(
+        "당신은 한국 신문사의 기획 전문 편집자입니다.
+
+아래 기사 기획안을 데스크 제출용으로 깔끔하게 정리해주세요.
+- 불필요한 장황함을 제거하고 핵심만 남기세요
+- 데스크가 1분 안에 판단할 수 있도록 요약하세요
+- 마지막에 '승인 요청' 문구를 넣으세요
+
+---
+
+{content}"
+    )
+}
+
+/// Save a pitch to `.journalist/pitches/<slug>.md`.
+pub fn save_pitch(slug: &str, content: &str) -> std::path::PathBuf {
+    let dir = std::path::Path::new(PITCHES_DIR);
+    std::fs::create_dir_all(dir).ok();
+    let path = pitch_file_path(slug);
+    std::fs::write(&path, content).ok();
+    path
+}
+
+/// Handle the `/pitch` command: structured article pitch management.
+pub async fn handle_pitch(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let raw_args = input.strip_prefix("/pitch").unwrap_or("").trim();
+    let (story_slug, args_without_story) = extract_story_arg(raw_args);
+    let (subcmd, rest) = parse_pitch_args(&args_without_story);
+
+    match subcmd.as_str() {
+        "help" | "--help" => {
+            pitch_print_help();
+        }
+        "new" => {
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /pitch new <주제>{RESET}");
+                println!("{DIM}  예시:   /pitch new 반도체 수출 규제 영향{RESET}\n");
+                return;
+            }
+            let slug = pitch_slug(&rest);
+            let data = collect_journalist_data();
+            println!("{DIM}  📋 기사 기획안 생성 중... (주제: {rest}){RESET}");
+
+            let prompt = build_pitch_prompt(&rest, &data);
+            let response = run_prompt(agent, &prompt, session_total, model).await;
+            auto_compact_if_needed(agent);
+
+            if !response.trim().is_empty() {
+                let path = save_pitch(&slug, &response);
+                println!(
+                    "{GREEN}  ✓ 기획안 저장: {}{RESET}",
+                    path.display()
+                );
+                if let Some(ref story) = story_slug {
+                    let stories_base = std::path::Path::new(STORIES_DIR);
+                    match link_file_to_story(story, &path, "기획안", stories_base) {
+                        Ok(_) => println!("{GREEN}  ✓ 스토리 연결: {story}{RESET}"),
+                        Err(e) => eprintln!("{RED}  스토리 연결 실패: {e}{RESET}"),
+                    }
+                }
+                println!();
+            }
+        }
+        "list" => {
+            let pitches = list_pitches();
+            if pitches.is_empty() {
+                println!("{DIM}  기획안이 없습니다. /pitch new <주제>로 생성하세요.{RESET}\n");
+            } else {
+                println!("{DIM}  ── 기사 기획안 목록 ──{RESET}");
+                for (slug, title) in &pitches {
+                    println!("  {GREEN}{slug}{RESET}  {title}");
+                }
+                println!();
+            }
+        }
+        "show" => {
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /pitch show <slug>{RESET}\n");
+                return;
+            }
+            let path = pitch_file_path(&rest);
+            if path.exists() {
+                match std::fs::read_to_string(&path) {
+                    Ok(content) => println!("{content}\n"),
+                    Err(e) => eprintln!("{RED}  파일 읽기 실패: {e}{RESET}\n"),
+                }
+            } else {
+                println!("{YELLOW}  기획안을 찾을 수 없습니다: {rest}{RESET}");
+                let pitches = list_pitches();
+                if !pitches.is_empty() {
+                    println!("{DIM}  사용 가능한 slug:{RESET}");
+                    for (slug, _) in &pitches {
+                        println!("    {slug}");
+                    }
+                }
+                println!();
+            }
+        }
+        "submit" => {
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /pitch submit <slug>{RESET}\n");
+                return;
+            }
+            let path = pitch_file_path(&rest);
+            if !path.exists() {
+                println!("{YELLOW}  기획안을 찾을 수 없습니다: {rest}{RESET}\n");
+                return;
+            }
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
+                    println!("{DIM}  📝 데스크 제출용으로 정리 중...{RESET}");
+                    let prompt = build_pitch_submit_prompt(&content);
+                    let response = run_prompt(agent, &prompt, session_total, model).await;
+                    auto_compact_if_needed(agent);
+
+                    if !response.trim().is_empty() {
+                        let submit_slug = format!("{}-submit", rest);
+                        let submit_path = save_pitch(&submit_slug, &response);
+                        println!(
+                            "{GREEN}  ✓ 제출용 기획안 저장: {}{RESET}\n",
+                            submit_path.display()
+                        );
+                    }
+                }
+                Err(e) => eprintln!("{RED}  파일 읽기 실패: {e}{RESET}\n"),
+            }
+        }
+        "" => {
+            pitch_print_help();
+        }
+        _ => {
+            println!("{YELLOW}  알 수 없는 서브커맨드: {subcmd}{RESET}");
+            pitch_print_help();
+        }
+    }
+}
+
+fn pitch_print_help() {
+    println!("{DIM}  /pitch — 기사 기획안 생성·관리{RESET}");
+    println!("{DIM}  사용법:{RESET}");
+    println!("{DIM}    /pitch new <주제>              기사 기획안 초안 생성{RESET}");
+    println!("{DIM}    /pitch list                    진행 중인 기획안 목록{RESET}");
+    println!("{DIM}    /pitch show <slug>             기획안 상세 보기{RESET}");
+    println!("{DIM}    /pitch submit <slug>           데스크 제출용 포맷으로 정리{RESET}");
+    println!("{DIM}  옵션:{RESET}");
+    println!("{DIM}    --story <slug>                 스토리 프로젝트에 연결{RESET}");
+    println!("{DIM}  예시:{RESET}");
+    println!("{DIM}    /pitch new 반도체 수출 규제 영향{RESET}");
+    println!("{DIM}    /pitch new 반도체 수출 규제 --story semiconductor{RESET}");
+    println!("{DIM}    /pitch list{RESET}");
+    println!("{DIM}    /pitch show 반도체-수출-규제-영향{RESET}");
+    println!(
+        "{DIM}    /pitch submit 반도체-수출-규제-영향{RESET}\n"
     );
 }
 
@@ -8866,5 +9148,116 @@ mod tests {
         let loaded = load_story_meta(&story_meta_path_at(base, &meta.slug)).unwrap();
         assert_eq!(loaded.notes.len(), 1);
         assert!(loaded.notes[0].contains("[인터뷰]"));
+    }
+
+    // ── /pitch tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_pitch_args_empty() {
+        let (sub, rest) = parse_pitch_args("");
+        assert_eq!(sub, "");
+        assert_eq!(rest, "");
+    }
+
+    #[test]
+    fn parse_pitch_args_subcommand_only() {
+        let (sub, rest) = parse_pitch_args("list");
+        assert_eq!(sub, "list");
+        assert_eq!(rest, "");
+    }
+
+    #[test]
+    fn parse_pitch_args_new_with_topic() {
+        let (sub, rest) = parse_pitch_args("new 반도체 수출 규제");
+        assert_eq!(sub, "new");
+        assert_eq!(rest, "반도체 수출 규제");
+    }
+
+    #[test]
+    fn parse_pitch_args_show_with_slug() {
+        let (sub, rest) = parse_pitch_args("show my-pitch");
+        assert_eq!(sub, "show");
+        assert_eq!(rest, "my-pitch");
+    }
+
+    #[test]
+    fn pitch_slug_basic() {
+        let slug = pitch_slug("반도체 수출 규제");
+        assert_eq!(slug, "반도체-수출-규제");
+    }
+
+    #[test]
+    fn pitch_slug_english() {
+        let slug = pitch_slug("semiconductor export");
+        assert_eq!(slug, "semiconductor-export");
+    }
+
+    #[test]
+    fn pitch_slug_empty() {
+        let slug = pitch_slug("");
+        assert_eq!(slug, "untitled");
+    }
+
+    #[test]
+    fn pitch_slug_special_chars() {
+        let slug = pitch_slug("AI & 반도체!!");
+        assert_eq!(slug, "AI---반도체");
+    }
+
+    #[test]
+    fn pitch_file_path_basic() {
+        let path = pitch_file_path("test-slug");
+        assert_eq!(path, std::path::PathBuf::from(".journalist/pitches/test-slug.md"));
+    }
+
+    #[test]
+    fn build_pitch_prompt_contains_topic() {
+        let prompt = build_pitch_prompt("반도체 수출", "테스트 데이터");
+        assert!(prompt.contains("반도체 수출"));
+        assert!(prompt.contains("테스트 데이터"));
+        assert!(prompt.contains("뉴스 가치"));
+        assert!(prompt.contains("예상 취재원"));
+        assert!(prompt.contains("취재 계획"));
+        assert!(prompt.contains("리스크 점검"));
+    }
+
+    #[test]
+    fn build_pitch_submit_prompt_contains_content() {
+        let prompt = build_pitch_submit_prompt("기획안 내용");
+        assert!(prompt.contains("기획안 내용"));
+        assert!(prompt.contains("데스크 제출용"));
+        assert!(prompt.contains("승인 요청"));
+    }
+
+    #[test]
+    fn save_and_list_pitches() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pitches_dir = dir.path().join("pitches");
+        std::fs::create_dir_all(&pitches_dir).unwrap();
+        std::fs::write(pitches_dir.join("test-pitch.md"), "# 테스트 기획안\n내용").unwrap();
+        // list_pitches uses a fixed path so we can't easily test it with tempdir,
+        // but we can verify save_pitch returns the correct path
+        let path = save_pitch("verify-slug", "# 검증용 기획안");
+        assert!(path.to_string_lossy().contains("verify-slug.md"));
+        // Clean up
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn pitch_subcommands_constant() {
+        assert!(PITCH_SUBCOMMANDS.contains(&"new"));
+        assert!(PITCH_SUBCOMMANDS.contains(&"list"));
+        assert!(PITCH_SUBCOMMANDS.contains(&"show"));
+        assert!(PITCH_SUBCOMMANDS.contains(&"submit"));
+        assert_eq!(PITCH_SUBCOMMANDS.len(), 4);
+    }
+
+    #[test]
+    fn pitch_with_story_arg() {
+        let (story, rest) = extract_story_arg("new 반도체 수출 --story my-story");
+        assert_eq!(story.as_deref(), Some("my-story"));
+        let (sub, topic) = parse_pitch_args(&rest);
+        assert_eq!(sub, "new");
+        assert_eq!(topic, "반도체 수출");
     }
 }

@@ -812,6 +812,11 @@ pub async fn run_repl(
                     .await;
                 continue;
             }
+            s if s == "/pitch" || s.starts_with("/pitch ") => {
+                commands::handle_pitch(agent, input, &mut session_total, &agent_config.model)
+                    .await;
+                continue;
+            }
             s if s == "/morning" || s.starts_with("/morning ") => {
                 commands::handle_morning(agent, input, &mut session_total, &agent_config.model)
                     .await;
