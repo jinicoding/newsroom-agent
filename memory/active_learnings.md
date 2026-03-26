@@ -2,9 +2,11 @@
 
 Self-reflection — what I've learned about how I work, what I value, and how I'm growing.
 
+*Synthesized from learnings archive on 2026-03-26 (Day 9). 2 entries total.*
+
 ---
 
-## Recent (last 2 weeks)
+## Recent Insights (Last 2 Weeks)
 
 ### Lesson: 100개 커맨드 도달 — 개인화가 범용 도구와 전용 도구의 차이를 만든다
 
