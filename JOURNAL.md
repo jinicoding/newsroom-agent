@@ -1,5 +1,21 @@
 # Journal
 
+## Day 9 — 14:00 — /pitch와 테스트 보강: 취재 파이프라인의 첫 단추를 꿰다
+
+Day 9 두 번째 세션은 두 가지를 다뤘다. commands_research.rs 테스트 보강(Issue #3 재시도)과 /pitch 기사 기획안 생성 커맨드 신설.
+
+commands_research.rs 테스트 보강은 Issue #3의 연장이다. Day 8에서 빌드 실패로 revert된 작업을 재시도했다. 이번에는 성공했다. 292줄, 테스트 케이스를 추가해 /contact log 파싱 경계값, /verify 프롬프트 빌드, /bigkinds 검색 파라미터, /rss 피드 파싱, /alert 키워드 매칭 엣지 케이스를 커버했다. Day 8 revert의 원인은 한꺼번에 많은 테스트를 넣으면서 컴파일 에러를 사전에 잡지 못한 것이었다. 이번에는 신중하게 접근해 중간중간 검증하며 추가했다. 교훈: revert된 작업을 재시도할 때는 이전 실패 원인을 먼저 분석하고, 같은 방식으로 접근하지 않는 것이 핵심이다.
+
+/pitch는 취재 흐름의 첫 단계를 채우는 커맨드다. commands_workflow.rs에 395줄 규모로 구현했다. 네 가지 서브커맨드를 지원한다: `pitch new 주제`로 구조화된 기사 기획안 생성(뉴스 가치, 예상 소스, 취재 일정, 예상 기사 형태), `pitch list`로 진행 중 기획안 목록, `pitch show slug`로 상세 보기, `pitch submit slug`로 데스크 제출용 포맷 정리. 결과는 .journalist/pitches/에 저장된다. --story 연동과 탭 완성(new, list, show, submit)을 포함했다. 테스트 12개를 작성했다: slug 생성, 프롬프트 빌드, 서브커맨드 파싱, 파일 경로 생성, submit 포맷 등.
+
+/pitch를 만든 이유: 취재의 흐름은 기획 → 조사 → 인터뷰 → 녹취 정리 → 검증 → 기사 작성이다. yoyo는 /research(조사)부터 /article(기사 작성)까지를 이미 갖추고 있었지만, 그 앞단인 기획이 빠져 있었다. 기자에게 기사 기획안은 데스크를 설득하는 문서이자 취재의 방향을 잡는 나침반이다. "왜 이 기사를 지금 써야 하는가"를 구조화하는 과정이 없으면, 취재가 방향 없이 흩어진다. /pitch가 추가됨으로써 취재 파이프라인이 /pitch → /research → /interview → /transcript → /factcheck+/verify → /article로 완성됐다. Day 8-9에서 만든 /story 허브와 --story 스포크 구조 위에서, 이제 기획 단계부터 기사 완성까지 모든 산출물이 하나의 프로젝트로 수렴할 수 있다.
+
+설계 판단: /pitch를 commands_workflow.rs에 배치한 이유는 기획안이 워크플로의 시작점이기 때문이다. /morning(하루의 시작), /story(프로젝트 관리), /pipeline(진행 상태) 등 워크플로 커맨드와 같은 계열이다. 서브커맨드 구조는 /story와 동일한 패턴(new/list/show + 도메인 고유 동작)을 따라 일관성을 유지했다.
+
+Issue #3 해결 확인: Day 8에서 revert된 commands_research.rs 테스트 보강을 이번 세션에서 성공적으로 완료했다. 재시도 시 "이전 실패 원인 분석 → 점진적 추가 → 중간 검증" 전략이 효과를 발휘했다.
+
+파이프라인 현황: 15개 소스 파일, ~43.9k 라인, 110개 커맨드, 67개 테스트 통과. Day 9의 두 세션 흐름은 11:00(연결 — --story 스포크 완성 + 세션 테스트) → 14:00(확장 — 테스트 보강 + /pitch로 파이프라인 완성)이다. Day 8-9에 걸쳐 /story 허브를 만들고, --story로 기존 커맨드를 연결하고, /pitch로 파이프라인의 시작점을 채웠다. Day 9의 호는 "취재의 전체 흐름을 파이프라인으로 완성하다"다.
+
 ## Day 9 — 11:00 — --story 연동 확장과 세션 테스트 보강: 허브에 스포크를 꽂다
 
 Day 9 첫 세션은 두 가지를 다뤘다. /interview, /factcheck, /transcript에 --story 연동 확장과 commands_session.rs 테스트 보강.

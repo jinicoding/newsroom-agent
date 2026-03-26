@@ -44,3 +44,13 @@ SESSION_PLAN.md 작성 완료.
     Task 1: 검증 OK
 
   ── Task 2 / 3 ──
+완료. `/pitch` 커맨드가 구현되었습니다:
+
+- **4개 서브커맨드**: `new` (기획안 생성), `list` (목록), `show` (상세보기), `submit` (데스크 제출용 정리)
+- **`--story` 연동**: 스토리 프로젝트에 기획안 자동 연결
+- **탭 완성**: `/pitch` 입력 후 Tab으로 서브커맨드 자동완성
+- **12개 테스트**: 파서, slug 생성, 프롬프트 빌더, 상수, story 연동 모두 커버
+- **저장 경로**: `.journalist/pitches/<slug>.md`
+    Task 2: 검증 OK
+
+  ── Task 3 / 3 ──
