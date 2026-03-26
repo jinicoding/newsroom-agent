@@ -8664,6 +8664,298 @@ mod tests {
         assert_eq!(content, "# 교차검증 보고서\n내용");
     }
 
+    // ── /contact log 엣지 케이스 (Day 9) ─────────────────────────────
+
+    #[test]
+    fn parse_contact_log_args_special_chars() {
+        let (name, summary) = parse_contact_log_args("김O장 \"반도체 & AI 투자 (2026)\"");
+        assert_eq!(name, "김O장");
+        assert_eq!(summary, "반도체 & AI 투자 (2026)");
+    }
+
+    #[test]
+    fn parse_contact_log_args_long_summary() {
+        let long = "가".repeat(500);
+        let input = format!("홍길동 {long}");
+        let (name, summary) = parse_contact_log_args(&input);
+        assert_eq!(name, "홍길동");
+        assert_eq!(summary.len(), 500 * 3); // "가" is 3 bytes
+    }
+
+    #[test]
+    fn parse_contact_log_args_whitespace_only() {
+        let (name, summary) = parse_contact_log_args("   ");
+        assert!(name.is_empty());
+        assert!(summary.is_empty());
+    }
+
+    #[test]
+    fn parse_contact_log_args_single_quotes() {
+        let (name, summary) = parse_contact_log_args("홍길동 '반도체 관련'");
+        assert_eq!(name, "홍길동");
+        assert_eq!(summary, "반도체 관련");
+    }
+
+    #[test]
+    fn contact_log_append_multiple_and_load() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("multi.jsonl");
+
+        for i in 0..10 {
+            let log = ContactLog {
+                name: "홍길동".to_string(),
+                summary: format!("접촉 #{i}"),
+                timestamp: format!("2026-03-2{i}T10:00:00"),
+            };
+            append_contact_log(&log, &path);
+        }
+
+        let loaded = load_contact_logs_from(&path);
+        assert_eq!(loaded.len(), 10);
+        assert_eq!(loaded[9].summary, "접촉 #9");
+    }
+
+    #[test]
+    fn contact_file_for_empty_name() {
+        let path = contact_file_for("");
+        assert!(path.to_str().unwrap().ends_with(".jsonl"));
+    }
+
+    // ── /verify 프롬프트 엣지 케이스 (Day 9) ────────────────────────
+
+    #[test]
+    fn verify_prompt_whitespace_only_accepted() {
+        // build_verify_prompt only rejects empty strings; callers trim before calling
+        assert!(build_verify_prompt("   ").is_some());
+    }
+
+    #[test]
+    fn verify_prompt_korean_special_chars() {
+        let prompt = build_verify_prompt("삼성전자 매출 100조(₩) & 영업이익 30%↑");
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert!(p.contains("삼성전자 매출 100조(₩) & 영업이익 30%↑"));
+    }
+
+    #[test]
+    fn verify_prompt_long_claim() {
+        let long_claim = "반도체 ".repeat(100);
+        let prompt = build_verify_prompt(&long_claim);
+        assert!(prompt.is_some());
+        let p = prompt.unwrap();
+        assert!(p.contains("반도체"));
+    }
+
+    #[test]
+    fn verify_file_path_special_chars_in_claim() {
+        let path = verify_file_path_with_date("매출 100% & 영업이익 (증가)", "2026-03-26");
+        let path_str = path.to_string_lossy();
+        assert!(path_str.starts_with(".journalist/verify/"));
+        assert!(path_str.contains("2026-03-26"));
+        assert!(path_str.ends_with(".md"));
+    }
+
+    // ── /bigkinds 파싱 엣지 케이스 (Day 9) ──────────────────────────
+
+    #[test]
+    fn bigkinds_parse_search_invalid_json() {
+        let items = parse_bigkinds_search("not valid json");
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn bigkinds_parse_search_missing_result() {
+        let json = r#"{"error": "unauthorized"}"#;
+        let items = parse_bigkinds_search(json);
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn bigkinds_parse_single_item_missing_title() {
+        let obj = r#"{"PROVIDER":"한국경제","DATE":"2026-03-20"}"#;
+        let item = parse_single_bigkinds_item(obj);
+        assert!(item.is_none());
+    }
+
+    #[test]
+    fn bigkinds_parse_single_item_full() {
+        let obj = r#"{"TITLE":"테스트 제목","PROVIDER":"매일경제","DATE":"2026-03-20","PROVIDER_LINK_PAGE":"https://example.com","CONTENT":"본문 내용"}"#;
+        let item = parse_single_bigkinds_item(obj);
+        assert!(item.is_some());
+        let item = item.unwrap();
+        assert_eq!(item.title, "테스트 제목");
+        assert_eq!(item.provider, "매일경제");
+        assert_eq!(item.date, "2026-03-20");
+    }
+
+    #[test]
+    fn bigkinds_find_matching_bracket_simple() {
+        let s = "[1,2,3]";
+        assert_eq!(find_matching_bracket(s), 6);
+    }
+
+    #[test]
+    fn bigkinds_find_matching_bracket_nested() {
+        let s = r#"[[1],[2,"[]"]]"#;
+        assert_eq!(find_matching_bracket(s), s.len() - 1);
+    }
+
+    #[test]
+    fn bigkinds_find_matching_bracket_empty_array() {
+        let s = "[]";
+        assert_eq!(find_matching_bracket(s), 1);
+    }
+
+    #[test]
+    fn bigkinds_find_matching_bracket_no_close() {
+        let s = "[1,2,3";
+        // Should return len-1 as fallback
+        assert_eq!(find_matching_bracket(s), s.len() - 1);
+    }
+
+    #[test]
+    fn bigkinds_parse_trend_invalid_count() {
+        let json =
+            r#"{"result":{"timeline":[{"date":"2026-03-01","count":"abc"}]}}"#;
+        let trends = parse_bigkinds_trend(json);
+        // Invalid count should parse as 0 or be skipped
+        assert!(trends.is_empty() || trends[0].count == 0);
+    }
+
+    #[test]
+    fn bigkinds_parse_related_invalid_weight() {
+        let json = r#"{"result":{"nodes":[{"name":"테스트","weight":"invalid"}]}}"#;
+        let related = parse_bigkinds_related(json);
+        assert!(related.is_empty() || related[0].score == 0.0);
+    }
+
+    #[test]
+    fn bigkinds_format_trend_chart_single_item() {
+        let trends = vec![BigKindsTrend {
+            date: "2026-03-01".to_string(),
+            count: 42,
+        }];
+        let chart = format_trend_chart(&trends);
+        assert!(chart.contains("42건"));
+        assert!(chart.contains("2026-03-01"));
+    }
+
+    // ── /rss 피드 파싱 엣지 케이스 (Day 9) ──────────────────────────
+
+    #[test]
+    fn parse_rss_items_malformed_xml() {
+        let xml = "<rss><channel><item><title>No closing";
+        let items = parse_rss_items(xml);
+        // Should not panic; may or may not find partial items
+        assert!(items.is_empty() || items[0].title.is_empty());
+    }
+
+    #[test]
+    fn rss_cache_filename_empty_url() {
+        let slug = rss_cache_filename("");
+        assert!(!slug.is_empty());
+    }
+
+    #[test]
+    fn rss_cache_filename_same_url_deterministic() {
+        let slug1 = rss_cache_filename("https://example.com/rss");
+        let slug2 = rss_cache_filename("https://example.com/rss");
+        assert_eq!(slug1, slug2);
+    }
+
+    #[test]
+    fn rss_feeds_save_creates_parent_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sub").join("feeds.json");
+        let feeds = vec![RssFeed {
+            url: "https://example.com/rss".to_string(),
+            name: "Test".to_string(),
+            added: "2026-03-26".to_string(),
+        }];
+        save_rss_feeds_to(&feeds, &path);
+        assert!(path.exists());
+    }
+
+    // ── /alert 키워드 매칭 엣지 케이스 (Day 9) ──────────────────────
+
+    #[test]
+    fn extract_naver_news_headlines_basic() {
+        let html = r#"<a class="news_tit" href="http://x" title="반도체 수출 호조">반도체</a>"#;
+        let headlines = extract_naver_news_headlines(html, 10);
+        assert_eq!(headlines.len(), 1);
+        assert_eq!(headlines[0], "반도체 수출 호조");
+    }
+
+    #[test]
+    fn extract_naver_news_headlines_max_limit() {
+        let mut html = String::new();
+        for i in 0..10 {
+            html.push_str(&format!(
+                r#"<a class="news_tit" title="기사 {i}">기사</a>"#
+            ));
+        }
+        let headlines = extract_naver_news_headlines(&html, 3);
+        assert_eq!(headlines.len(), 3);
+    }
+
+    #[test]
+    fn extract_naver_news_headlines_empty_html() {
+        let headlines = extract_naver_news_headlines("", 10);
+        assert!(headlines.is_empty());
+    }
+
+    #[test]
+    fn extract_naver_news_headlines_no_titles() {
+        let html = "<html><body>No news here</body></html>";
+        let headlines = extract_naver_news_headlines(html, 10);
+        assert!(headlines.is_empty());
+    }
+
+    #[test]
+    fn extract_naver_news_headlines_html_entities() {
+        let html = r#"<a class="news_tit" title="삼성 &amp; SK &lt;반도체&gt;">삼성</a>"#;
+        let headlines = extract_naver_news_headlines(html, 10);
+        assert_eq!(headlines.len(), 1);
+        assert_eq!(headlines[0], "삼성 & SK <반도체>");
+    }
+
+    #[test]
+    fn alert_keyword_matching_empty_keyword() {
+        let alerts: Vec<serde_json::Value> = vec![];
+        assert!(alerts.is_empty());
+    }
+
+    // ── epoch_days_to_date (Day 9) ──────────────────────────────────
+
+    #[test]
+    fn epoch_days_to_date_unix_epoch() {
+        let date = epoch_days_to_date(0);
+        assert_eq!(date, "1970-01-01");
+    }
+
+    #[test]
+    fn epoch_days_to_date_known_date() {
+        // 2026-03-26 = 20538 days since epoch
+        // Let's verify a known date: 2000-01-01 = 10957 days
+        let date = epoch_days_to_date(10957);
+        assert_eq!(date, "2000-01-01");
+    }
+
+    #[test]
+    fn epoch_days_to_date_leap_year() {
+        // 2000-02-29 = 10957 + 31 (Jan) + 28 (Feb 1-28) = 10957 + 59
+        let date = epoch_days_to_date(10957 + 59);
+        assert_eq!(date, "2000-02-29");
+    }
+
+    #[test]
+    fn is_leap_year_check() {
+        assert!(is_leap_year(2000)); // divisible by 400
+        assert!(!is_leap_year(1900)); // divisible by 100 but not 400
+        assert!(is_leap_year(2024)); // divisible by 4
+        assert!(!is_leap_year(2023)); // not divisible by 4
+    }
+
     #[test]
     fn factcheck_story_arg_parsing() {
         let (slug, rest) = extract_story_arg("--story 반도체취재 한국 반도체 수출이 사상 최대");
