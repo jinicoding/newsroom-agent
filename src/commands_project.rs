@@ -614,43 +614,86 @@ pub async fn handle_fix(
     Some(fix_prompt)
 }
 
-// ── /test ─────────────────────────────────────────────────────────────
+// ── Shared project command runner ──────────────────────────────────────
 
-/// Return the test command for a given project type.
-pub fn test_command_for_project(
-    project_type: &ProjectType,
-) -> Option<(&'static str, Vec<&'static str>)> {
-    match project_type {
-        ProjectType::Rust => Some(("cargo test", vec!["cargo", "test"])),
-        ProjectType::Node => Some(("npm test", vec!["npm", "test"])),
-        ProjectType::Python => Some(("python -m pytest", vec!["python", "-m", "pytest"])),
-        ProjectType::Go => Some(("go test ./...", vec!["go", "test", "./..."])),
-        ProjectType::Make => Some(("make test", vec!["make", "test"])),
-        ProjectType::Unknown => None,
+/// Result of running a project command, without side effects (printing).
+/// Used by /test, /lint, and potentially other project commands.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CommandRunResult {
+    Success {
+        task_name: String,
+        label: String,
+        elapsed: String,
+    },
+    Failure {
+        task_name: String,
+        label: String,
+        elapsed: String,
+        exit_code: i32,
+        output_preview: String,
+    },
+    ExecError {
+        task_name: String,
+        label: String,
+        error: String,
+    },
+}
+
+impl CommandRunResult {
+    /// Build an AI-context summary string from the result.
+    pub fn to_summary(&self) -> String {
+        match self {
+            CommandRunResult::Success {
+                task_name,
+                label,
+                elapsed,
+            } => format!("{task_name} passed ({elapsed}): {label}"),
+            CommandRunResult::Failure {
+                task_name,
+                label,
+                elapsed,
+                exit_code,
+                output_preview,
+            } => {
+                let mut summary = format!(
+                    "{task_name} FAILED (exit {exit_code}, {elapsed}): {label}"
+                );
+                if !output_preview.is_empty() {
+                    summary.push_str("\n\nLast output:\n");
+                    summary.push_str(output_preview);
+                }
+                summary
+            }
+            CommandRunResult::ExecError {
+                task_name: _,
+                label,
+                error,
+            } => format!("Failed to run {label}: {error}"),
+        }
     }
 }
 
-/// Handle the /test command: auto-detect project type and run tests.
-/// Returns a summary string suitable for AI context.
-pub fn handle_test() -> Option<String> {
-    let project_type = detect_project_type(&std::env::current_dir().unwrap_or_default());
-    println!("{DIM}  Detected project: {project_type}{RESET}");
-    if project_type == ProjectType::Unknown {
-        println!(
-            "{DIM}  No recognized project found. Looked for: Cargo.toml, package.json, pyproject.toml, setup.py, go.mod, Makefile{RESET}\n"
-        );
-        return None;
+/// Extract the last N lines from a string (for error output preview).
+pub fn last_n_lines(text: &str, n: usize) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.len().saturating_sub(n);
+    let mut out = String::new();
+    for line in &lines[start..] {
+        out.push_str(line);
+        out.push('\n');
     }
+    out
+}
 
-    let (label, args) = match test_command_for_project(&project_type) {
-        Some(cmd) => cmd,
-        None => {
-            println!("{DIM}  No test command configured for {project_type}{RESET}\n");
-            return None;
-        }
-    };
-
-    println!("{DIM}  Running: {label}...{RESET}");
+/// Run a project command and return a structured result.
+/// `task_name` is used in messages (e.g. "Tests", "Lint").
+/// `label` is the human-readable command string.
+/// `args` is the command + arguments to execute.
+pub fn run_project_command(
+    task_name: &str,
+    label: &str,
+    args: &[&str],
+) -> CommandRunResult {
     let start = std::time::Instant::now();
     let output = std::process::Command::new(args[0])
         .args(&args[1..])
@@ -670,37 +713,88 @@ pub fn handle_test() -> Option<String> {
             }
 
             if o.status.success() {
-                println!("\n{GREEN}  ✓ Tests passed ({elapsed}){RESET}\n");
-                Some(format!("Tests passed ({elapsed}): {label}"))
+                println!("\n{GREEN}  ✓ {task_name} passed ({elapsed}){RESET}\n");
+                CommandRunResult::Success {
+                    task_name: task_name.to_string(),
+                    label: label.to_string(),
+                    elapsed,
+                }
             } else {
                 let code = o.status.code().unwrap_or(-1);
-                println!("\n{RED}  ✗ Tests failed (exit {code}, {elapsed}){RESET}\n");
-                let mut summary = format!("Tests FAILED (exit {code}, {elapsed}): {label}");
-                // Include a preview of the error output for AI context
+                println!("\n{RED}  ✗ {task_name} failed (exit {code}, {elapsed}){RESET}\n");
                 let error_text = if !stderr.is_empty() {
                     stderr.to_string()
                 } else {
                     stdout.to_string()
                 };
-                let lines: Vec<&str> = error_text.lines().collect();
-                let preview_lines = if lines.len() > 20 {
-                    &lines[lines.len() - 20..]
-                } else {
-                    &lines
-                };
-                summary.push_str("\n\nLast output:\n");
-                for line in preview_lines {
-                    summary.push_str(line);
-                    summary.push('\n');
+                let output_preview = last_n_lines(&error_text, 20);
+                CommandRunResult::Failure {
+                    task_name: task_name.to_string(),
+                    label: label.to_string(),
+                    elapsed,
+                    exit_code: code,
+                    output_preview,
                 }
-                Some(summary)
             }
         }
         Err(e) => {
             eprintln!("{RED}  ✗ Failed to run {label}: {e}{RESET}\n");
-            Some(format!("Failed to run {label}: {e}"))
+            CommandRunResult::ExecError {
+                task_name: task_name.to_string(),
+                label: label.to_string(),
+                error: e.to_string(),
+            }
         }
     }
+}
+
+/// Shared handler for /test and /lint: detect project, resolve command, run it.
+fn handle_project_tool_command(
+    task_name: &str,
+    command_resolver: fn(&ProjectType) -> Option<(&'static str, Vec<&'static str>)>,
+) -> Option<String> {
+    let project_type = detect_project_type(&std::env::current_dir().unwrap_or_default());
+    println!("{DIM}  Detected project: {project_type}{RESET}");
+    if project_type == ProjectType::Unknown {
+        println!(
+            "{DIM}  No recognized project found. Looked for: Cargo.toml, package.json, pyproject.toml, setup.py, go.mod, Makefile{RESET}\n"
+        );
+        return None;
+    }
+
+    let (label, args) = match command_resolver(&project_type) {
+        Some(cmd) => cmd,
+        None => {
+            println!("{DIM}  No {task_name} command configured for {project_type}{RESET}\n");
+            return None;
+        }
+    };
+
+    println!("{DIM}  Running: {label}...{RESET}");
+    let result = run_project_command(task_name, label, &args);
+    Some(result.to_summary())
+}
+
+// ── /test ─────────────────────────────────────────────────────────────
+
+/// Return the test command for a given project type.
+pub fn test_command_for_project(
+    project_type: &ProjectType,
+) -> Option<(&'static str, Vec<&'static str>)> {
+    match project_type {
+        ProjectType::Rust => Some(("cargo test", vec!["cargo", "test"])),
+        ProjectType::Node => Some(("npm test", vec!["npm", "test"])),
+        ProjectType::Python => Some(("python -m pytest", vec!["python", "-m", "pytest"])),
+        ProjectType::Go => Some(("go test ./...", vec!["go", "test", "./..."])),
+        ProjectType::Make => Some(("make test", vec!["make", "test"])),
+        ProjectType::Unknown => None,
+    }
+}
+
+/// Handle the /test command: auto-detect project type and run tests.
+/// Returns a summary string suitable for AI context.
+pub fn handle_test() -> Option<String> {
+    handle_project_tool_command("Tests", test_command_for_project)
 }
 
 // ── /lint ──────────────────────────────────────────────────────────────
@@ -724,73 +818,7 @@ pub fn lint_command_for_project(
 /// Handle the /lint command: auto-detect project type and run linter.
 /// Returns a summary string suitable for AI context.
 pub fn handle_lint() -> Option<String> {
-    let project_type = detect_project_type(&std::env::current_dir().unwrap_or_default());
-    println!("{DIM}  Detected project: {project_type}{RESET}");
-    if project_type == ProjectType::Unknown {
-        println!(
-            "{DIM}  No recognized project found. Looked for: Cargo.toml, package.json, pyproject.toml, setup.py, go.mod, Makefile{RESET}\n"
-        );
-        return None;
-    }
-
-    let (label, args) = match lint_command_for_project(&project_type) {
-        Some(cmd) => cmd,
-        None => {
-            println!("{DIM}  No lint command configured for {project_type}{RESET}\n");
-            return None;
-        }
-    };
-
-    println!("{DIM}  Running: {label}...{RESET}");
-    let start = std::time::Instant::now();
-    let output = std::process::Command::new(args[0])
-        .args(&args[1..])
-        .output();
-    let elapsed = format_duration(start.elapsed());
-
-    match output {
-        Ok(o) => {
-            let stdout = String::from_utf8_lossy(&o.stdout);
-            let stderr = String::from_utf8_lossy(&o.stderr);
-
-            if !stdout.is_empty() {
-                print!("{stdout}");
-            }
-            if !stderr.is_empty() {
-                eprint!("{stderr}");
-            }
-
-            if o.status.success() {
-                println!("\n{GREEN}  ✓ Lint passed ({elapsed}){RESET}\n");
-                Some(format!("Lint passed ({elapsed}): {label}"))
-            } else {
-                let code = o.status.code().unwrap_or(-1);
-                println!("\n{RED}  ✗ Lint failed (exit {code}, {elapsed}){RESET}\n");
-                let mut summary = format!("Lint FAILED (exit {code}, {elapsed}): {label}");
-                let error_text = if !stderr.is_empty() {
-                    stderr.to_string()
-                } else {
-                    stdout.to_string()
-                };
-                let lines: Vec<&str> = error_text.lines().collect();
-                let preview_lines = if lines.len() > 20 {
-                    &lines[lines.len() - 20..]
-                } else {
-                    &lines
-                };
-                summary.push_str("\n\nLast output:\n");
-                for line in preview_lines {
-                    summary.push_str(line);
-                    summary.push('\n');
-                }
-                Some(summary)
-            }
-        }
-        Err(e) => {
-            eprintln!("{RED}  ✗ Failed to run {label}: {e}{RESET}\n");
-            Some(format!("Failed to run {label}: {e}"))
-        }
-    }
+    handle_project_tool_command("Lint", lint_command_for_project)
 }
 
 // ── /tree ────────────────────────────────────────────────────────────────
@@ -2612,6 +2640,87 @@ mod tests {
     fn highlight_match_no_match_returns_path() {
         let result = highlight_match("src/main.rs", "xyz");
         assert_eq!(result, "src/main.rs");
+    }
+
+    // ── last_n_lines tests ───────────────────────────────────────────────
+
+    #[test]
+    fn last_n_lines_fewer_than_n() {
+        let text = "line1\nline2\nline3";
+        let result = last_n_lines(text, 10);
+        assert_eq!(result, "line1\nline2\nline3\n");
+    }
+
+    #[test]
+    fn last_n_lines_exact_n() {
+        let text = "line1\nline2\nline3";
+        let result = last_n_lines(text, 3);
+        assert_eq!(result, "line1\nline2\nline3\n");
+    }
+
+    #[test]
+    fn last_n_lines_more_than_n() {
+        let text = "line1\nline2\nline3\nline4\nline5";
+        let result = last_n_lines(text, 2);
+        assert_eq!(result, "line4\nline5\n");
+    }
+
+    #[test]
+    fn last_n_lines_empty() {
+        assert_eq!(last_n_lines("", 5), "");
+    }
+
+    // ── CommandRunResult tests ───────────────────────────────────────────
+
+    #[test]
+    fn command_run_result_success_summary() {
+        let result = CommandRunResult::Success {
+            task_name: "Tests".to_string(),
+            label: "cargo test".to_string(),
+            elapsed: "1.2s".to_string(),
+        };
+        assert_eq!(result.to_summary(), "Tests passed (1.2s): cargo test");
+    }
+
+    #[test]
+    fn command_run_result_failure_summary() {
+        let result = CommandRunResult::Failure {
+            task_name: "Lint".to_string(),
+            label: "cargo clippy".to_string(),
+            elapsed: "0.5s".to_string(),
+            exit_code: 1,
+            output_preview: "warning: unused\n".to_string(),
+        };
+        let summary = result.to_summary();
+        assert!(summary.contains("Lint FAILED (exit 1, 0.5s): cargo clippy"));
+        assert!(summary.contains("warning: unused"));
+    }
+
+    #[test]
+    fn command_run_result_failure_empty_preview() {
+        let result = CommandRunResult::Failure {
+            task_name: "Tests".to_string(),
+            label: "cargo test".to_string(),
+            elapsed: "2.0s".to_string(),
+            exit_code: 101,
+            output_preview: String::new(),
+        };
+        let summary = result.to_summary();
+        assert!(summary.contains("Tests FAILED"));
+        assert!(!summary.contains("Last output:"));
+    }
+
+    #[test]
+    fn command_run_result_exec_error_summary() {
+        let result = CommandRunResult::ExecError {
+            task_name: "Tests".to_string(),
+            label: "cargo test".to_string(),
+            error: "No such file".to_string(),
+        };
+        assert_eq!(
+            result.to_summary(),
+            "Failed to run cargo test: No such file"
+        );
     }
 
     // ── scan_important_files / scan_important_dirs tests ───────────────
