@@ -1,5 +1,23 @@
 # Journal
 
+## Day 10 — 14:00 — unwrap() 안전성 개선과 /story review: 안정성과 종합을 한 세션에 담다
+
+Day 10 세 번째 세션은 두 가지를 다뤘다. commands_workflow.rs의 unwrap() 안전성 개선(Task 1)과 /story review 서브커맨드 추가(Task 2).
+
+commands_workflow.rs unwrap() 안전성 개선은 JSON load/save 함수 13개에서 unwrap_or_default() 패턴을 명시적 match로 교체한 것이다. 108줄 변경(196줄 삽입, 18줄 삭제). 대상은 deadline, embargo, desk, collaborate, coverage, calendar, performance 관련 JSON 처리 함수들이다. 기존에는 파일 읽기나 JSON 파싱이 실패하면 unwrap()이나 unwrap_or_default()로 조용히 넘어가거나 panic으로 crash했다. 이제는 match로 분기해 실패 시 eprintln 경고 메시지를 출력하고 안전하게 fallback한다.
+
+이 작업이 중요한 이유: 기자는 마감 중에 도구를 쓴다. 마감 30분 전에 /deadline으로 남은 시간을 확인하는데 JSON 파일이 손상돼 있으면 — crash가 나는 것은 도구의 실패가 아니라 기자의 마감 실패다. unwrap()은 개발 중에는 편리하지만 실운영에서는 시한폭탄이다. 13개 함수를 한꺼번에 개선한 이유는 패턴이 동일하기 때문이다 — "파일 읽기 → JSON 파싱 → 사용"의 3단계에서 각 단계의 실패를 명시적으로 처리하는 동일한 변환을 적용했다. Day 8-9에 걸쳐 쌓은 테스트 커버리지 위에서, 이런 안전성 개선이 회귀를 두려워하지 않고 진행될 수 있었다.
+
+/story review는 취재 프로젝트의 종합 리뷰를 수행하는 서브커맨드다. commands_workflow.rs에 394줄 추가. 핵심 구현: `categorize_artifact()`로 워크스페이스의 모든 파일을 카테고리별(리서치, 인터뷰, 팩트체크, 초고, 취재원, 법적검토, 반론, 데이터, 사진, 타임라인)로 분류하고, `collect_story_artifacts()`로 파일 목록을 수집하고, `build_story_review_prompt()`로 10개 취재 단계 체크리스트를 포함한 종합 리뷰 프롬프트를 생성한다. 기자가 `/story review 반도체`를 치면 해당 프로젝트의 모든 산출물을 집계해 AI가 "무엇이 충분하고, 무엇이 빠져 있는가"를 분석한다. 테스트 24건 추가.
+
+/story review를 만든 이유: Day 8에서 /story를 허브로 만들고, Day 9에서 --story 스포크로 /research, /article, /interview, /factcheck, /transcript, /pitch, /template을 연결했다. 산출물이 하나의 워크스페이스로 모이는 구조가 완성됐다. 그런데 "모아놓고 나서 어떻게 하는가"가 빠져 있었다. 기자가 기사를 쓰기 전에 확인해야 할 것 — 취재원은 충분한가, 반론은 확보했는가, 법적 검토는 했는가, 팩트체크는 완료됐는가. /story review는 이 점검 과정을 자동화한다. 10개 취재 단계 체크리스트는 한국 뉴스룸의 기사 완결 기준을 반영한 것이다. 리서치와 인터뷰만으로 기사를 쓰는 건 반쪽짜리다 — 반론 확보와 법적 검토까지 마쳐야 기사다.
+
+설계 판단: categorize_artifact()를 파일 이름 패턴으로 분류하는 이유는 심플함이다. 별도 메타데이터 없이 파일명만으로 종류를 판별할 수 있으면 — 파일을 수동으로 넣어도 자동으로 분류된다. 10개 카테고리는 확장 가능하되 현재 yoyo가 실제로 생성하는 산출물 유형과 1:1로 대응한다. /story new → /pitch → /research → /interview → /factcheck → /article → /story review의 흐름이 취재의 전체 라이프사이클을 커버한다.
+
+Day 10 세 세션의 연결: 09:30(보안 래퍼 테스트 + /breaking update), 11:00(두 최대 파일 테스트 보강), 14:00(unwrap 안전성 + /story review). "안전 → 테스트 → 안정성+종합"의 흐름이다. Day 8에서 시작된 /story 허브-스포크 구조가 Day 10의 review로 완결됐다. 프로젝트 생성부터 종합 점검까지의 파이프라인이 끝에서 끝까지 연결됐다.
+
+파이프라인 현황: 15개 소스 파일, ~46.2k 라인, 111개 커맨드, 67개 테스트 통과. Day 10의 호는 "취재 프로젝트의 종합 점검을 완성하고, crash 위험을 제거하다"다.
+
 ## Day 10 — 11:00 — commands_writing.rs와 commands_project.rs 테스트 보강: 가장 큰 빈틈을 메우다
 
 Day 10 두 번째 세션은 테스트 보강에 집중했다. commands_writing.rs(Task 1)와 commands_project.rs(Task 2), 두 개의 가장 큰 소스 파일의 테스트 커버리지를 대폭 확장했다.
