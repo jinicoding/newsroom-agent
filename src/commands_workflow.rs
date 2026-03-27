@@ -612,7 +612,13 @@ fn deadlines_path() -> std::path::PathBuf {
 
 fn load_deadlines_from(path: &std::path::Path) -> Vec<Deadline> {
     match std::fs::read_to_string(path) {
-        Ok(s) if !s.trim().is_empty() => serde_json::from_str(&s).unwrap_or_default(),
+        Ok(s) if !s.trim().is_empty() => match serde_json::from_str(&s) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("⚠ 마감 데이터 파싱 실패 ({}): {e}", path.display());
+                Vec::new()
+            }
+        },
         _ => Vec::new(),
     }
 }
@@ -621,8 +627,14 @@ fn save_deadlines_to(deadlines: &[Deadline], path: &std::path::Path) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let json = serde_json::to_string_pretty(deadlines).unwrap_or_default();
-    let _ = std::fs::write(path, json);
+    match serde_json::to_string_pretty(deadlines) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(path, json) {
+                eprintln!("⚠ 마감 데이터 저장 실패 ({}): {e}", path.display());
+            }
+        }
+        Err(e) => eprintln!("⚠ 마감 데이터 직렬화 실패: {e}"),
+    }
 }
 
 /// Get today's date as "YYYY-MM-DD" string using local timezone.
@@ -953,7 +965,13 @@ fn embargoes_path() -> std::path::PathBuf {
 
 fn load_embargoes_from(path: &std::path::Path) -> Vec<Embargo> {
     match std::fs::read_to_string(path) {
-        Ok(s) if !s.trim().is_empty() => serde_json::from_str(&s).unwrap_or_default(),
+        Ok(s) if !s.trim().is_empty() => match serde_json::from_str(&s) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("⚠ 엠바고 데이터 파싱 실패 ({}): {e}", path.display());
+                Vec::new()
+            }
+        },
         _ => Vec::new(),
     }
 }
@@ -962,8 +980,14 @@ fn save_embargoes_to(embargoes: &[Embargo], path: &std::path::Path) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let json = serde_json::to_string_pretty(embargoes).unwrap_or_default();
-    let _ = std::fs::write(path, json);
+    match serde_json::to_string_pretty(embargoes) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(path, json) {
+                eprintln!("⚠ 엠바고 데이터 저장 실패 ({}): {e}", path.display());
+            }
+        }
+        Err(e) => eprintln!("⚠ 엠바고 데이터 직렬화 실패: {e}"),
+    }
 }
 
 /// Handle `/embargo` command with subcommands: set, list, clear.
@@ -1483,7 +1507,13 @@ fn desk_path() -> std::path::PathBuf {
 
 fn load_desk_from(path: &std::path::Path) -> Vec<DeskAssignment> {
     match std::fs::read_to_string(path) {
-        Ok(s) if !s.trim().is_empty() => serde_json::from_str(&s).unwrap_or_default(),
+        Ok(s) if !s.trim().is_empty() => match serde_json::from_str(&s) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("⚠ 데스크 배정 데이터 파싱 실패 ({}): {e}", path.display());
+                Vec::new()
+            }
+        },
         _ => Vec::new(),
     }
 }
@@ -1492,8 +1522,14 @@ fn save_desk_to(assignments: &[DeskAssignment], path: &std::path::Path) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let json = serde_json::to_string_pretty(assignments).unwrap_or_default();
-    let _ = std::fs::write(path, json);
+    match serde_json::to_string_pretty(assignments) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(path, json) {
+                eprintln!("⚠ 데스크 배정 데이터 저장 실패 ({}): {e}", path.display());
+            }
+        }
+        Err(e) => eprintln!("⚠ 데스크 배정 데이터 직렬화 실패: {e}"),
+    }
 }
 
 /// Handle `/desk` command with subcommands: assign, list, done, feedback, pitch.
@@ -1892,8 +1928,14 @@ fn save_collab_project_to(project: &CollabProject, path: &std::path::Path) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let json = serde_json::to_string_pretty(project).unwrap_or_default();
-    let _ = std::fs::write(path, json);
+    match serde_json::to_string_pretty(project) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(path, json) {
+                eprintln!("⚠ 협업 프로젝트 저장 실패 ({}): {e}", path.display());
+            }
+        }
+        Err(e) => eprintln!("⚠ 협업 프로젝트 직렬화 실패: {e}"),
+    }
 }
 
 fn list_collab_projects_in(dir: &std::path::Path) -> Vec<CollabProject> {
@@ -2245,7 +2287,13 @@ fn coverage_path() -> std::path::PathBuf {
 
 fn load_coverage_from(path: &std::path::Path) -> Vec<CoverageClaim> {
     match std::fs::read_to_string(path) {
-        Ok(s) if !s.trim().is_empty() => serde_json::from_str(&s).unwrap_or_default(),
+        Ok(s) if !s.trim().is_empty() => match serde_json::from_str(&s) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("⚠ 취재 배정 데이터 파싱 실패 ({}): {e}", path.display());
+                Vec::new()
+            }
+        },
         _ => Vec::new(),
     }
 }
@@ -2254,8 +2302,14 @@ fn save_coverage_to(claims: &[CoverageClaim], path: &std::path::Path) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let json = serde_json::to_string_pretty(claims).unwrap_or_default();
-    let _ = std::fs::write(path, json);
+    match serde_json::to_string_pretty(claims) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(path, json) {
+                eprintln!("⚠ 취재 배정 데이터 저장 실패 ({}): {e}", path.display());
+            }
+        }
+        Err(e) => eprintln!("⚠ 취재 배정 데이터 직렬화 실패: {e}"),
+    }
 }
 
 /// Check if a claim has expired based on its `until` time and current HH:MM.
@@ -2918,7 +2972,13 @@ fn calendar_path() -> std::path::PathBuf {
 
 fn load_calendar_from(path: &std::path::Path) -> Vec<CalendarEvent> {
     match std::fs::read_to_string(path) {
-        Ok(s) if !s.trim().is_empty() => serde_json::from_str(&s).unwrap_or_default(),
+        Ok(s) if !s.trim().is_empty() => match serde_json::from_str(&s) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("⚠ 일정 데이터 파싱 실패 ({}): {e}", path.display());
+                Vec::new()
+            }
+        },
         _ => Vec::new(),
     }
 }
@@ -2927,8 +2987,14 @@ fn save_calendar_to(events: &[CalendarEvent], path: &std::path::Path) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let json = serde_json::to_string_pretty(events).unwrap_or_default();
-    let _ = std::fs::write(path, json);
+    match serde_json::to_string_pretty(events) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(path, json) {
+                eprintln!("⚠ 일정 데이터 저장 실패 ({}): {e}", path.display());
+            }
+        }
+        Err(e) => eprintln!("⚠ 일정 데이터 직렬화 실패: {e}"),
+    }
 }
 
 /// Compute next available ID for a calendar event list.
@@ -3321,7 +3387,13 @@ fn load_performance_from(path: &std::path::Path) -> Vec<serde_json::Value> {
         return Vec::new();
     }
     match std::fs::read_to_string(path) {
-        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Ok(content) => match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("⚠ 성과 데이터 파싱 실패 ({}): {e}", path.display());
+                Vec::new()
+            }
+        },
         Err(_) => Vec::new(),
     }
 }
