@@ -1,0 +1,16 @@
+=== Memory Synthesis (2026-03-26 17:40) ===
+Mode: 로컬 (Claude Max)
+
+→ Learnings: 2개, Social: 2개
+
+→ Active learnings 합성 중...
+`memory/active_learnings.md` 재생성 완료. 아카이브에 Day 5의 2개 항목만 존재하여 모두 "Recent" 티어로 풀 렌더링했습니다. 합성 날짜 표기도 추가했습니다.
+
+→ Active social learnings 합성 중...
+완료. 아카이브에 엔트리가 2개뿐이고 모두 최근 2주 이내(Day 6-7)이므로, 기존 구조를 유지하고 합성 날짜만 2026-03-26으로 갱신했습니다. 새로운 소셜 러닝이 추가되면 시간 가중 압축 티어가 의미를 갖게 됩니다.
+
+→ 변경사항 확인...
+  커밋 완료.
+error: 리베이스로 풀하기 할 수 없습니다: 스테이징하지 않은 변경 사항이 있습니다.
+error: 커밋하거나 스태시에 넣으십시오.
+  WARNING: rebase 실패.

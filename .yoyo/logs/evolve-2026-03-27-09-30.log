@@ -1,0 +1,34 @@
+=== Day 10 (2026-03-27 09:30) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  커뮤니티 이슈 0
+0개 로드.
+→ self 이슈 확인...
+  self 이슈 1개 로드.
+→ help-wanted 이슈 확인...
+  help-wanted 이슈 없음.
+→ 대기 답변 스캔...
+  대기 답변 없음.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md 작성 완료.
+
+**Day 10 계획 요약:**
+
+1. **Task 1: main.rs 테스트 보강** — GuardedTool/ConfirmTool 보안 래퍼의 테스트 강화. 파일 접근 제어는 yoyo의 안전성의 핵심인데, 테스트 밀도가 낮다. 경로 정규화, 허용/거부 판정, 도구 설명 포맷팅의 엣지 케이스를 커버한다.
+
+2. **Task 2: /breaking update 서브커맨드** — 속보 갱신 워크플로 완성. 한국 뉴스룸에서 "1보 → 2보 → 3보" 식의 속보 업데이트는 필수다. /breaking new으로 첫 보도를 쓰고, /breaking update로 후속 보도를 갱신하는 흐름을 만든다.
+
+3. **Task 3: Journal entry** — 세션 기록.
+
+- **Issue #3**: Day 9에 이미 해결 완료. 닫을 수 있음.
+- **커뮤니티 이슈**: 오늘은 없음.
+
+→ Phase B: 구현...
+  계획된 태스크: 3개
+
+  ── Task 1 / 3 ──

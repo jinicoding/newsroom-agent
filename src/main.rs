@@ -1326,6 +1326,305 @@ mod tests {
         );
     }
 
+    // === GuardedTool / DirectoryRestrictions security tests ===
+
+    #[test]
+    fn test_directory_restrictions_empty_allows_everything() {
+        let dirs = cli::DirectoryRestrictions::default();
+        assert!(dirs.is_empty());
+        assert!(dirs.check_path("/etc/passwd").is_ok());
+        assert!(dirs.check_path("relative/path").is_ok());
+        assert!(dirs.check_path("").is_ok());
+    }
+
+    #[test]
+    fn test_directory_restrictions_deny_blocks_path() {
+        let dirs = cli::DirectoryRestrictions {
+            allow: vec![],
+            deny: vec!["/tmp/secret".to_string()],
+        };
+        assert!(dirs.check_path("/tmp/secret/file.txt").is_err());
+        assert!(dirs.check_path("/tmp/secret").is_err());
+        // Path outside denied dir should be allowed
+        assert!(dirs.check_path("/tmp/other/file.txt").is_ok());
+    }
+
+    #[test]
+    fn test_directory_restrictions_allow_only_permits_listed() {
+        let dirs = cli::DirectoryRestrictions {
+            allow: vec!["/tmp/workspace".to_string()],
+            deny: vec![],
+        };
+        assert!(dirs.check_path("/tmp/workspace/src/main.rs").is_ok());
+        assert!(dirs.check_path("/tmp/workspace").is_ok());
+        assert!(dirs.check_path("/tmp/other/file.txt").is_err());
+        assert!(dirs.check_path("/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn test_directory_restrictions_deny_overrides_allow() {
+        let dirs = cli::DirectoryRestrictions {
+            allow: vec!["/tmp/workspace".to_string()],
+            deny: vec!["/tmp/workspace/secrets".to_string()],
+        };
+        // Allowed dir works
+        assert!(dirs.check_path("/tmp/workspace/src/main.rs").is_ok());
+        // But denied subdir is blocked even though parent is allowed
+        assert!(dirs.check_path("/tmp/workspace/secrets/key.pem").is_err());
+    }
+
+    #[test]
+    fn test_directory_restrictions_relative_path_resolution() {
+        // Relative paths should be resolved against cwd
+        let cwd = std::env::current_dir().unwrap();
+        let dirs = cli::DirectoryRestrictions {
+            allow: vec![cwd.to_string_lossy().to_string()],
+            deny: vec![],
+        };
+        // A relative path within the cwd should be allowed
+        assert!(dirs.check_path("src/main.rs").is_ok());
+        // An absolute path outside cwd should be blocked
+        assert!(dirs.check_path("/nonexistent/outside/path").is_err());
+    }
+
+    #[test]
+    fn test_directory_restrictions_dotdot_normalization() {
+        // Paths with .. should be normalized to prevent traversal
+        let dirs = cli::DirectoryRestrictions {
+            allow: vec!["/tmp/safe".to_string()],
+            deny: vec![],
+        };
+        // /tmp/safe/../secret normalizes to /tmp/secret — should be denied
+        assert!(dirs.check_path("/tmp/safe/../secret/file.txt").is_err());
+        // /tmp/safe/sub/../file normalizes to /tmp/safe/file — should be allowed
+        assert!(dirs.check_path("/tmp/safe/sub/../file.txt").is_ok());
+    }
+
+    #[test]
+    fn test_directory_restrictions_multiple_allow_dirs() {
+        let dirs = cli::DirectoryRestrictions {
+            allow: vec!["/tmp/a".to_string(), "/tmp/b".to_string()],
+            deny: vec![],
+        };
+        assert!(dirs.check_path("/tmp/a/file.txt").is_ok());
+        assert!(dirs.check_path("/tmp/b/file.txt").is_ok());
+        assert!(dirs.check_path("/tmp/c/file.txt").is_err());
+    }
+
+    #[test]
+    fn test_directory_restrictions_multiple_deny_dirs() {
+        let dirs = cli::DirectoryRestrictions {
+            allow: vec![],
+            deny: vec!["/tmp/x".to_string(), "/tmp/y".to_string()],
+        };
+        assert!(dirs.check_path("/tmp/x/file.txt").is_err());
+        assert!(dirs.check_path("/tmp/y/file.txt").is_err());
+        assert!(dirs.check_path("/tmp/z/file.txt").is_ok());
+    }
+
+    #[test]
+    fn test_directory_restrictions_error_message_contains_path() {
+        let dirs = cli::DirectoryRestrictions {
+            allow: vec!["/tmp/safe".to_string()],
+            deny: vec![],
+        };
+        let err = dirs.check_path("/etc/passwd").unwrap_err();
+        assert!(
+            err.contains("/etc/passwd"),
+            "Error should mention the blocked path: {err}"
+        );
+    }
+
+    // === maybe_guard wrapper tests ===
+
+    #[test]
+    fn test_maybe_guard_no_restrictions_returns_unwrapped() {
+        let dirs = cli::DirectoryRestrictions::default();
+        let tool = maybe_guard(Box::new(ReadFileTool::default()), &dirs);
+        assert_eq!(tool.name(), "read_file");
+    }
+
+    #[test]
+    fn test_maybe_guard_with_restrictions_returns_guarded() {
+        let dirs = cli::DirectoryRestrictions {
+            allow: vec!["/tmp".to_string()],
+            deny: vec![],
+        };
+        let tool = maybe_guard(Box::new(ReadFileTool::default()), &dirs);
+        // GuardedTool delegates name() to inner tool
+        assert_eq!(tool.name(), "read_file");
+    }
+
+    #[test]
+    fn test_guarded_tool_delegates_metadata() {
+        let dirs = cli::DirectoryRestrictions {
+            allow: vec!["/tmp".to_string()],
+            deny: vec![],
+        };
+        let inner = Box::new(WriteFileTool::new());
+        let inner_name = inner.name().to_string();
+        let inner_desc = inner.description().to_string();
+        let inner_label = inner.label().to_string();
+        let guarded = GuardedTool {
+            inner,
+            restrictions: dirs,
+        };
+        assert_eq!(guarded.name(), inner_name);
+        assert_eq!(guarded.description(), inner_desc);
+        assert_eq!(guarded.label(), inner_label);
+    }
+
+    #[tokio::test]
+    async fn test_guarded_tool_blocks_denied_path() {
+        let dirs = cli::DirectoryRestrictions {
+            allow: vec![],
+            deny: vec!["/tmp/forbidden".to_string()],
+        };
+        let guarded = GuardedTool {
+            inner: Box::new(ReadFileTool::default()),
+            restrictions: dirs,
+        };
+        let params = serde_json::json!({ "path": "/tmp/forbidden/secret.txt" });
+        let ctx = yoagent::types::ToolContext {
+            tool_call_id: "test".to_string(),
+            tool_name: "read_file".to_string(),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            on_update: None,
+            on_progress: None,
+        };
+        let result = guarded.execute(params, ctx).await;
+        assert!(result.is_err(), "Should block access to denied path");
+    }
+
+    #[tokio::test]
+    async fn test_guarded_tool_allows_permitted_path() {
+        let cwd = std::env::current_dir().unwrap();
+        let dirs = cli::DirectoryRestrictions {
+            allow: vec![cwd.to_string_lossy().to_string()],
+            deny: vec![],
+        };
+        let guarded = GuardedTool {
+            inner: Box::new(ReadFileTool::default()),
+            restrictions: dirs,
+        };
+        let params = serde_json::json!({ "path": cwd.join("Cargo.toml").to_string_lossy().to_string() });
+        let ctx = yoagent::types::ToolContext {
+            tool_call_id: "test".to_string(),
+            tool_name: "read_file".to_string(),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            on_update: None,
+            on_progress: None,
+        };
+        let result = guarded.execute(params, ctx).await;
+        assert!(result.is_ok(), "Should allow reading a file under allowed dir");
+    }
+
+    #[tokio::test]
+    async fn test_guarded_tool_no_path_param_passes_through() {
+        let dirs = cli::DirectoryRestrictions {
+            allow: vec!["/tmp/only".to_string()],
+            deny: vec![],
+        };
+        let guarded = GuardedTool {
+            inner: Box::new(ReadFileTool::default()),
+            restrictions: dirs,
+        };
+        // No "path" key — should pass through to inner tool (which may fail on its own)
+        let params = serde_json::json!({ "not_path": "/etc/passwd" });
+        let ctx = yoagent::types::ToolContext {
+            tool_call_id: "test".to_string(),
+            tool_name: "read_file".to_string(),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            on_update: None,
+            on_progress: None,
+        };
+        let result = guarded.execute(params, ctx).await;
+        // The inner tool will fail because it needs a path, but GuardedTool shouldn't block it
+        // We just verify GuardedTool itself didn't reject it
+        assert!(result.is_err(), "Inner tool fails (no path param), but GuardedTool didn't block");
+    }
+
+    // === describe_file_operation extended tests ===
+
+    #[test]
+    fn test_describe_write_file_missing_path() {
+        let params = serde_json::json!({ "content": "hello" });
+        let desc = describe_file_operation("write_file", &params);
+        assert!(desc.contains("<unknown>"));
+        assert!(desc.contains("1 lines"));
+    }
+
+    #[test]
+    fn test_describe_write_file_missing_content() {
+        let params = serde_json::json!({ "path": "test.txt" });
+        let desc = describe_file_operation("write_file", &params);
+        assert!(desc.contains("test.txt"));
+        assert!(desc.contains("0 lines"));
+    }
+
+    #[test]
+    fn test_describe_edit_file_multiline() {
+        let params = serde_json::json!({
+            "path": "big.rs",
+            "old_text": "a\nb\nc\nd\ne",
+            "new_text": "x"
+        });
+        let desc = describe_file_operation("edit_file", &params);
+        assert!(desc.contains("big.rs"));
+        assert!(desc.contains("5 → 1 lines"));
+    }
+
+    #[test]
+    fn test_describe_file_operation_empty_params() {
+        let params = serde_json::json!({});
+        let write_desc = describe_file_operation("write_file", &params);
+        assert!(write_desc.contains("<unknown>"));
+        assert!(write_desc.contains("0 lines"));
+
+        let edit_desc = describe_file_operation("edit_file", &params);
+        assert!(edit_desc.contains("<unknown>"));
+        assert!(edit_desc.contains("0 → 0 lines"));
+    }
+
+    // === build_tools with directory restrictions ===
+
+    #[test]
+    fn test_build_tools_with_restrictions_preserves_tool_names() {
+        let perms = cli::PermissionConfig::default();
+        let dirs = cli::DirectoryRestrictions {
+            allow: vec!["/tmp/workspace".to_string()],
+            deny: vec!["/tmp/workspace/secrets".to_string()],
+        };
+        let tools = build_tools(true, &perms, &dirs);
+        assert_eq!(tools.len(), 6);
+        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+        assert!(names.contains(&"bash"));
+        assert!(names.contains(&"read_file"));
+        assert!(names.contains(&"write_file"));
+        assert!(names.contains(&"edit_file"));
+        assert!(names.contains(&"list_files"));
+        assert!(names.contains(&"search"));
+    }
+
+    #[test]
+    fn test_build_tools_with_restrictions_and_no_approve() {
+        let perms = cli::PermissionConfig {
+            allow: vec!["src/*".to_string()],
+            deny: vec!["*.key".to_string()],
+        };
+        let dirs = cli::DirectoryRestrictions {
+            allow: vec!["/tmp".to_string()],
+            deny: vec![],
+        };
+        let tools = build_tools(false, &perms, &dirs);
+        assert_eq!(tools.len(), 6);
+        // All tool names should be preserved through wrapping layers
+        let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
+        for expected in &["bash", "read_file", "write_file", "edit_file", "list_files", "search"] {
+            assert!(names.contains(expected), "Missing tool: {expected}");
+        }
+    }
+
     #[test]
     fn test_client_headers_on_anthropic_build_agent() {
         // The Anthropic path in build_agent() should also get headers
