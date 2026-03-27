@@ -32,3 +32,13 @@ SESSION_PLAN.md 작성 완료.
   계획된 태스크: 3개
 
   ── Task 1 / 3 ──
+완료. 33개 → 67개 테스트로 보강. 추가된 주요 테스트:
+
+- **DirectoryRestrictions** (10개): 빈 제한, deny 차단, allow-only 허용, deny가 allow 오버라이드, 상대경로 해석, `..` 경로 순회 방지, 복수 allow/deny, 에러 메시지 검증
+- **GuardedTool** (4개): 메타데이터 위임, 차단된 경로 거부 (async), 허용된 경로 통과 (async), path 파라미터 없을 때 패스스루
+- **maybe_guard** (2개): 제한 없을 때 언래핑, 제한 있을 때 래핑
+- **describe_file_operation** (4개): 누락된 path/content, 멀티라인 축소, 빈 params
+- **build_tools** (2개): 디렉토리 제한 + 퍼미션 조합에서 도구명 보존
+    Task 1: 검증 OK
+
+  ── Task 2 / 3 ──

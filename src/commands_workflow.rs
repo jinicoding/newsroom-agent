@@ -4517,7 +4517,7 @@ fn build_breaking_update_prompt(original: &str, update_info: &str) -> String {
 pub enum BreakingAction {
     /// New breaking news: `/breaking <topic>`
     New(String),
-    /// Update latest breaking: `/breaking update <info>`
+    /// Update existing breaking by slug: `/breaking update <slug>`
     Update(String),
     /// List recent breaking news: `/breaking list`
     List,
@@ -4537,11 +4537,88 @@ pub fn parse_breaking_input(input: &str) -> BreakingAction {
     }
 
     if let Some(rest) = args.strip_prefix("update") {
-        let info = rest.trim();
-        return BreakingAction::Update(info.to_string());
+        let slug = rest.trim();
+        return BreakingAction::Update(slug.to_string());
     }
 
     BreakingAction::New(args.to_string())
+}
+
+/// Find breaking news files whose filename contains the given slug.
+fn find_breaking_by_slug(slug: &str) -> Vec<std::path::PathBuf> {
+    let files = list_breaking_files();
+    let slug_lower = slug.to_lowercase();
+    files
+        .into_iter()
+        .filter(|p| {
+            let stem = p
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_lowercase();
+            // Match against the part after the timestamp prefix
+            let topic_part = if stem.len() > 16 { &stem[16..] } else { &stem };
+            topic_part.contains(&slug_lower)
+        })
+        .collect()
+}
+
+/// Compute the next update number for a given slug in the breaking dir.
+/// Scans for existing `*-update-N.md` files matching the slug.
+fn next_update_number(slug: &str) -> u32 {
+    let dir = breaking_dir();
+    if !dir.exists() {
+        return 1;
+    }
+    next_update_number_in(&dir, slug)
+}
+
+fn next_update_number_in(dir: &std::path::Path, slug: &str) -> u32 {
+    let slug_lower = slug.to_lowercase();
+    let mut max_n: u32 = 0;
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = entry
+                .file_name()
+                .to_string_lossy()
+                .to_lowercase()
+                .to_string();
+            if !name.contains(&slug_lower) {
+                continue;
+            }
+            // Look for pattern: slug-update-N.md
+            if let Some(rest) = name.strip_suffix(".md") {
+                if let Some(idx) = rest.rfind("-update-") {
+                    let num_str = &rest[idx + 8..];
+                    if let Ok(n) = num_str.parse::<u32>() {
+                        if n > max_n {
+                            max_n = n;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    max_n + 1
+}
+
+/// Generate a file path for a breaking news update: `<slug>-update-<N>.md`
+fn breaking_update_file_path(slug: &str, update_num: u32) -> std::path::PathBuf {
+    breaking_update_file_path_with_ts(slug, &now_ts(), update_num)
+}
+
+fn breaking_update_file_path_with_ts(
+    slug: &str,
+    ts: &str,
+    update_num: u32,
+) -> std::path::PathBuf {
+    let slug_clean = topic_to_slug(slug, 40);
+    let filename = if slug_clean.is_empty() {
+        format!("{ts}_breaking-update-{update_num}.md")
+    } else {
+        format!("{ts}_{slug_clean}-update-{update_num}.md")
+    };
+    breaking_dir().join(filename)
 }
 
 pub async fn handle_breaking(
@@ -4557,7 +4634,12 @@ pub async fn handle_breaking(
         BreakingAction::List => {
             print_breaking_list();
         }
-        BreakingAction::New(topic) => {
+        BreakingAction::New(raw_topic) => {
+            let (story_slug, topic) = extract_story_arg(&raw_topic);
+            if topic.is_empty() {
+                eprintln!("{RED}  사용법: /breaking <속보 주제> [--story <스토리>]{RESET}\n");
+                return;
+            }
             println!("{DIM}  🚨 속보 워크플로우 시작: {topic}{RESET}");
 
             let prompt = build_breaking_prompt(&topic);
@@ -4569,9 +4651,21 @@ pub async fn handle_breaking(
                 match save_breaking(&path, &response) {
                     Ok(_) => {
                         println!(
-                            "{GREEN}  ✓ 속보 초안 저장: {}{RESET}\n",
+                            "{GREEN}  ✓ 속보 초안 저장: {}{RESET}",
                             path.display()
                         );
+                        if let Some(ref story) = story_slug {
+                            let stories_base = std::path::Path::new(STORIES_DIR);
+                            match link_file_to_story(story, &path, "속보", stories_base) {
+                                Ok(_) => {
+                                    println!("{GREEN}  ✓ 스토리 연결: {story}{RESET}");
+                                }
+                                Err(e) => {
+                                    eprintln!("{RED}  스토리 연결 실패: {e}{RESET}");
+                                }
+                            }
+                        }
+                        println!();
                     }
                     Err(e) => {
                         eprintln!("{RED}  속보 저장 실패: {e}{RESET}\n");
@@ -4579,21 +4673,29 @@ pub async fn handle_breaking(
                 }
             }
         }
-        BreakingAction::Update(info) => {
-            if info.is_empty() {
-                eprintln!("{RED}  사용법: /breaking update <추가 정보>{RESET}\n");
+        BreakingAction::Update(raw_slug) => {
+            if raw_slug.is_empty() {
+                eprintln!("{RED}  사용법: /breaking update <slug> [--story <스토리>]{RESET}\n");
                 return;
             }
 
-            // Find the most recent breaking file
-            let files = list_breaking_files();
-            if files.is_empty() {
-                eprintln!("{RED}  업데이트할 속보가 없습니다. /breaking <주제>로 먼저 속보를 작성하세요.{RESET}\n");
+            let (story_slug, slug_text) = extract_story_arg(&raw_slug);
+            let slug = slug_text.trim().to_string();
+            if slug.is_empty() {
+                eprintln!("{RED}  사용법: /breaking update <slug> [--story <스토리>]{RESET}\n");
                 return;
             }
 
-            let latest = &files[0];
-            let original = match std::fs::read_to_string(latest) {
+            // Find breaking files matching the slug
+            let matches = find_breaking_by_slug(&slug);
+            if matches.is_empty() {
+                eprintln!("{RED}  '{slug}'에 해당하는 속보를 찾을 수 없습니다. /breaking list로 확인하세요.{RESET}\n");
+                return;
+            }
+
+            // Use the most recent matching file (list is already sorted most-recent-first)
+            let base_file = &matches[0];
+            let original = match std::fs::read_to_string(base_file) {
                 Ok(c) => c,
                 Err(e) => {
                     eprintln!("{RED}  파일 읽기 실패: {e}{RESET}\n");
@@ -4601,34 +4703,38 @@ pub async fn handle_breaking(
                 }
             };
 
+            let update_num = next_update_number(&slug);
             println!(
-                "{DIM}  🔄 속보 업데이트 중... (기반: {}){RESET}",
-                latest.file_name().unwrap_or_default().to_string_lossy()
+                "{DIM}  🔄 속보 {update_num}보 업데이트 중... (기반: {}){RESET}",
+                base_file.file_name().unwrap_or_default().to_string_lossy()
             );
 
-            let prompt = build_breaking_update_prompt(&original, &info);
+            let update_info = format!("{update_num}보 업데이트 — 새로운 정보를 반영하여 갱신해주세요.");
+            let prompt = build_breaking_update_prompt(&original, &update_info);
             let response = run_prompt(agent, &prompt, session_total, model).await;
             auto_compact_if_needed(agent);
 
             if !response.trim().is_empty() {
-                // Extract topic from the original filename
-                let stem = latest
-                    .file_stem()
-                    .unwrap_or_default()
-                    .to_string_lossy();
-                // Remove the timestamp prefix (YYYY-MM-DD_HHMMSS_)
-                let topic_part = if stem.len() > 16 {
-                    &stem[16..]
-                } else {
-                    "update"
-                };
-                let path = breaking_file_path(topic_part);
+                let path = breaking_update_file_path(&slug, update_num);
                 match save_breaking(&path, &response) {
                     Ok(_) => {
                         println!(
-                            "{GREEN}  ✓ 속보 업데이트 저장: {}{RESET}\n",
+                            "{GREEN}  ✓ 속보 {update_num}보 저장: {}{RESET}",
                             path.display()
                         );
+                        if let Some(ref story) = story_slug {
+                            let stories_base = std::path::Path::new(STORIES_DIR);
+                            match link_file_to_story(story, &path, "속보 업데이트", stories_base)
+                            {
+                                Ok(_) => {
+                                    println!("{GREEN}  ✓ 스토리 연결: {story}{RESET}");
+                                }
+                                Err(e) => {
+                                    eprintln!("{RED}  스토리 연결 실패: {e}{RESET}");
+                                }
+                            }
+                        }
+                        println!();
                     }
                     Err(e) => {
                         eprintln!("{RED}  저장 실패: {e}{RESET}\n");
@@ -4644,9 +4750,11 @@ fn print_breaking_help() {
     println!("{DIM}  속보 발생 시 취재·작성·출고를 단축합니다.{RESET}");
     println!("{DIM}  사용법:{RESET}");
     println!("{DIM}    /breaking <속보 주제>             속보 초안 생성 (팩트 프레임워크 + 기사 + 후속취재 + 체크리스트){RESET}");
-    println!("{DIM}    /breaking update <추가 정보>      최근 속보에 추가 정보 반영하여 업데이트{RESET}");
+    println!("{DIM}    /breaking update <slug>           기존 속보의 갱신 버전 생성 (1보→2보→3보 자동 번호){RESET}");
     println!("{DIM}    /breaking list                   최근 속보 이력 조회{RESET}");
-    println!("{DIM}    /breaking help                   도움말{RESET}\n");
+    println!("{DIM}    /breaking help                   도움말{RESET}");
+    println!("{DIM}  옵션:{RESET}");
+    println!("{DIM}    --story <slug>                   스토리 프로젝트에 연결{RESET}\n");
 }
 
 fn print_breaking_list() {
@@ -8251,8 +8359,20 @@ mod tests {
 
     #[test]
     fn parse_breaking_update() {
-        match parse_breaking_input("/breaking update 사상자 3명 추가 확인") {
-            BreakingAction::Update(info) => assert_eq!(info, "사상자 3명 추가 확인"),
+        match parse_breaking_input("/breaking update 지진-발생") {
+            BreakingAction::Update(slug) => assert_eq!(slug, "지진-발생"),
+            _ => panic!("expected Update"),
+        }
+    }
+
+    #[test]
+    fn parse_breaking_update_with_story() {
+        match parse_breaking_input("/breaking update 지진 --story 재해-특집") {
+            BreakingAction::Update(raw) => {
+                let (story, slug) = extract_story_arg(&raw);
+                assert_eq!(slug.trim(), "지진");
+                assert_eq!(story.unwrap(), "재해-특집");
+            }
             _ => panic!("expected Update"),
         }
     }
@@ -8260,7 +8380,7 @@ mod tests {
     #[test]
     fn parse_breaking_update_empty() {
         match parse_breaking_input("/breaking update") {
-            BreakingAction::Update(info) => assert!(info.is_empty()),
+            BreakingAction::Update(slug) => assert!(slug.is_empty()),
             _ => panic!("expected Update"),
         }
     }
@@ -8279,6 +8399,111 @@ mod tests {
         let path = breaking_file_path_with_ts("", "2026-03-22_103000");
         let name = path.file_name().unwrap().to_string_lossy();
         assert_eq!(name, "2026-03-22_103000_breaking.md");
+    }
+
+    #[test]
+    fn breaking_update_file_path_format() {
+        let path = breaking_update_file_path_with_ts("지진 발생", "2026-03-22_110000", 1);
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert!(name.starts_with("2026-03-22_110000_"));
+        assert!(name.ends_with("-update-1.md"));
+        assert!(name.contains("지진"));
+    }
+
+    #[test]
+    fn breaking_update_file_path_increments() {
+        let p1 = breaking_update_file_path_with_ts("화재", "2026-03-22_110000", 1);
+        let p2 = breaking_update_file_path_with_ts("화재", "2026-03-22_120000", 2);
+        let p3 = breaking_update_file_path_with_ts("화재", "2026-03-22_130000", 3);
+        assert!(p1.to_string_lossy().contains("-update-1.md"));
+        assert!(p2.to_string_lossy().contains("-update-2.md"));
+        assert!(p3.to_string_lossy().contains("-update-3.md"));
+    }
+
+    #[test]
+    fn breaking_update_file_path_empty_slug() {
+        let path = breaking_update_file_path_with_ts("", "2026-03-22_110000", 2);
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert_eq!(name, "2026-03-22_110000_breaking-update-2.md");
+    }
+
+    #[test]
+    fn find_breaking_by_slug_matches() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("2026-03-22_103000_지진-발생.md"),
+            "original",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("2026-03-22_110000_지진-발생-update-1.md"),
+            "update1",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("2026-03-22_120000_화재-사고.md"),
+            "other",
+        )
+        .unwrap();
+
+        // Test the matching logic directly (can't override BREAKING_DIR, so test the filter)
+        let files: Vec<std::path::PathBuf> = vec![
+            tmp.path().join("2026-03-22_120000_화재-사고.md"),
+            tmp.path().join("2026-03-22_110000_지진-발생-update-1.md"),
+            tmp.path().join("2026-03-22_103000_지진-발생.md"),
+        ];
+        let slug = "지진";
+        let slug_lower = slug.to_lowercase();
+        let matched: Vec<_> = files
+            .into_iter()
+            .filter(|p| {
+                let stem = p.file_stem().unwrap_or_default().to_string_lossy().to_lowercase();
+                let topic_part = if stem.len() > 16 { &stem[16..] } else { &stem };
+                topic_part.contains(&slug_lower)
+            })
+            .collect();
+        assert_eq!(matched.len(), 2);
+    }
+
+    #[test]
+    fn next_update_number_empty_dir() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let n = next_update_number_in(tmp.path(), "지진");
+        assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn next_update_number_with_existing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("2026-03-22_103000_지진-발생.md"),
+            "original",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("2026-03-22_110000_지진-발생-update-1.md"),
+            "u1",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("2026-03-22_120000_지진-발생-update-2.md"),
+            "u2",
+        )
+        .unwrap();
+        let n = next_update_number_in(tmp.path(), "지진");
+        assert_eq!(n, 3);
+    }
+
+    #[test]
+    fn next_update_number_ignores_other_slugs() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("2026-03-22_103000_화재-update-5.md"),
+            "u5",
+        )
+        .unwrap();
+        let n = next_update_number_in(tmp.path(), "지진");
+        assert_eq!(n, 1);
     }
 
     #[test]
