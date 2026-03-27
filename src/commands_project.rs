@@ -2356,4 +2356,292 @@ mod tests {
         let ctx = profile_context_from(&map);
         assert_eq!(ctx, "");
     }
+
+    // ── fuzzy_score tests ──────────────────────────────────────────────
+
+    #[test]
+    fn fuzzy_score_no_match_returns_none() {
+        assert!(fuzzy_score("src/main.rs", "xyz").is_none());
+    }
+
+    #[test]
+    fn fuzzy_score_substring_match_returns_some() {
+        let score = fuzzy_score("src/main.rs", "main");
+        assert!(score.is_some());
+        assert!(score.unwrap() > 0);
+    }
+
+    #[test]
+    fn fuzzy_score_case_insensitive() {
+        let score = fuzzy_score("src/Main.rs", "main");
+        assert!(score.is_some());
+    }
+
+    #[test]
+    fn fuzzy_score_filename_match_beats_directory_match() {
+        // "main" in filename vs "main" only in directory path
+        let filename_score = fuzzy_score("src/main.rs", "main").unwrap();
+        let dir_score = fuzzy_score("main/lib.rs", "main").unwrap();
+        // filename match gets +50 bonus, so it should be higher
+        assert!(filename_score > dir_score);
+    }
+
+    #[test]
+    fn fuzzy_score_exact_stem_gets_highest_bonus() {
+        let exact = fuzzy_score("src/main.rs", "main").unwrap();
+        let partial = fuzzy_score("src/main_test.rs", "main").unwrap();
+        // exact stem match gets +20 bonus on top of +50 and +30
+        assert!(exact > partial);
+    }
+
+    #[test]
+    fn fuzzy_score_deeper_path_penalized() {
+        let shallow = fuzzy_score("src/main.rs", "main").unwrap();
+        let deep = fuzzy_score("a/b/c/d/main.rs", "main").unwrap();
+        assert!(shallow > deep);
+    }
+
+    // ── format_tree_from_paths tests ───────────────────────────────────
+
+    #[test]
+    fn format_tree_empty_paths() {
+        let result = format_tree_from_paths(&[], 3);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn format_tree_single_file_at_root() {
+        let paths = vec!["README.md".to_string()];
+        let result = format_tree_from_paths(&paths, 3);
+        assert_eq!(result, "README.md");
+    }
+
+    #[test]
+    fn format_tree_nested_files() {
+        let paths = vec![
+            "src/lib.rs".to_string(),
+            "src/main.rs".to_string(),
+        ];
+        let result = format_tree_from_paths(&paths, 3);
+        assert!(result.contains("src/"));
+        assert!(result.contains("lib.rs"));
+        assert!(result.contains("main.rs"));
+    }
+
+    #[test]
+    fn format_tree_respects_max_depth() {
+        let paths = vec![
+            "a/b/c/d/deep.rs".to_string(),
+        ];
+        // depth=1: should show "a/" dir entry but not the deep file
+        let result = format_tree_from_paths(&paths, 1);
+        assert!(result.contains("a/"));
+        // file at depth 4 exceeds max_depth=1, so file itself should NOT appear
+        assert!(!result.contains("deep.rs"));
+    }
+
+    // ── health_checks_for_project tests ────────────────────────────────
+
+    #[test]
+    fn health_checks_rust_includes_clippy_and_fmt() {
+        let checks = health_checks_for_project(&ProjectType::Rust);
+        let names: Vec<&str> = checks.iter().map(|(n, _)| *n).collect();
+        assert!(names.contains(&"clippy"));
+        assert!(names.contains(&"fmt"));
+        assert!(names.contains(&"build"));
+    }
+
+    #[test]
+    fn health_checks_unknown_is_empty() {
+        let checks = health_checks_for_project(&ProjectType::Unknown);
+        assert!(checks.is_empty());
+    }
+
+    #[test]
+    fn health_checks_go_includes_vet() {
+        let checks = health_checks_for_project(&ProjectType::Go);
+        let names: Vec<&str> = checks.iter().map(|(n, _)| *n).collect();
+        assert!(names.contains(&"vet"));
+        assert!(names.contains(&"build"));
+    }
+
+    // ── build_fix_prompt tests ─────────────────────────────────────────
+
+    #[test]
+    fn build_fix_prompt_empty_failures() {
+        assert_eq!(build_fix_prompt(&[]), "");
+    }
+
+    #[test]
+    fn build_fix_prompt_includes_all_failures() {
+        let failures = vec![
+            ("clippy", "warning: unused variable"),
+            ("test", "test failed: assertion error"),
+        ];
+        let prompt = build_fix_prompt(&failures);
+        assert!(prompt.contains("## clippy errors:"));
+        assert!(prompt.contains("unused variable"));
+        assert!(prompt.contains("## test errors:"));
+        assert!(prompt.contains("assertion error"));
+        assert!(prompt.contains("Fix the following"));
+    }
+
+    // ── extract_first_meaningful_line tests ─────────────────────────────
+
+    #[test]
+    fn extract_first_meaningful_line_skips_blanks() {
+        let content = "\n\n\n  //! Module docs\nfn main() {}";
+        let result = extract_first_meaningful_line(content);
+        assert_eq!(result, "//! Module docs");
+    }
+
+    #[test]
+    fn extract_first_meaningful_line_empty_content() {
+        assert_eq!(extract_first_meaningful_line(""), "");
+        assert_eq!(extract_first_meaningful_line("\n\n\n"), "");
+    }
+
+    // ── is_binary_extension tests ──────────────────────────────────────
+
+    #[test]
+    fn is_binary_extension_recognizes_images() {
+        assert!(is_binary_extension("photo.png"));
+        assert!(is_binary_extension("logo.JPG"));
+        assert!(is_binary_extension("archive.zip"));
+    }
+
+    #[test]
+    fn is_binary_extension_passes_source_files() {
+        assert!(!is_binary_extension("main.rs"));
+        assert!(!is_binary_extension("index.js"));
+        assert!(!is_binary_extension("README.md"));
+    }
+
+    // ── format_project_index tests ─────────────────────────────────────
+
+    #[test]
+    fn format_project_index_empty() {
+        assert_eq!(format_project_index(&[]), "(no indexable files found)");
+    }
+
+    #[test]
+    fn format_project_index_with_entries() {
+        let entries = vec![
+            IndexEntry { path: "src/main.rs".into(), lines: 100, summary: "//! Main entry".into() },
+            IndexEntry { path: "src/lib.rs".into(), lines: 50, summary: "//! Library".into() },
+        ];
+        let output = format_project_index(&entries);
+        assert!(output.contains("src/main.rs"));
+        assert!(output.contains("100"));
+        assert!(output.contains("//! Main entry"));
+        assert!(output.contains("2 files, 150 total lines"));
+    }
+
+    #[test]
+    fn format_project_index_single_file_no_plural() {
+        let entries = vec![
+            IndexEntry { path: "main.rs".into(), lines: 10, summary: "fn main".into() },
+        ];
+        let output = format_project_index(&entries);
+        assert!(output.contains("1 file,"));
+        assert!(!output.contains("1 files"));
+    }
+
+    // ── detect_project_type tests ──────────────────────────────────────
+
+    #[test]
+    fn detect_project_type_rust() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]").unwrap();
+        assert!(matches!(detect_project_type(dir.path()), ProjectType::Rust));
+    }
+
+    #[test]
+    fn detect_project_type_node() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("package.json"), "{}").unwrap();
+        assert!(matches!(detect_project_type(dir.path()), ProjectType::Node));
+    }
+
+    #[test]
+    fn detect_project_type_python() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("pyproject.toml"), "[build-system]").unwrap();
+        assert!(matches!(detect_project_type(dir.path()), ProjectType::Python));
+    }
+
+    #[test]
+    fn detect_project_type_go() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("go.mod"), "module test").unwrap();
+        assert!(matches!(detect_project_type(dir.path()), ProjectType::Go));
+    }
+
+    #[test]
+    fn detect_project_type_unknown() {
+        let dir = tempfile::TempDir::new().unwrap();
+        assert!(matches!(detect_project_type(dir.path()), ProjectType::Unknown));
+    }
+
+    // ── build_commands_for_project tests ────────────────────────────────
+
+    #[test]
+    fn build_commands_rust_has_cargo_test() {
+        let cmds = build_commands_for_project(&ProjectType::Rust);
+        assert!(cmds.iter().any(|(name, cmd)| *name == "Test" && cmd.contains("cargo test")));
+    }
+
+    #[test]
+    fn build_commands_unknown_is_empty() {
+        let cmds = build_commands_for_project(&ProjectType::Unknown);
+        assert!(cmds.is_empty());
+    }
+
+    // ── highlight_match tests ──────────────────────────────────────────
+
+    #[test]
+    fn highlight_match_contains_pattern() {
+        let result = highlight_match("src/main.rs", "main");
+        // Should contain the original path text and ANSI codes
+        assert!(result.contains("main"));
+        assert!(result.contains("src/"));
+        assert!(result.contains(".rs"));
+    }
+
+    #[test]
+    fn highlight_match_no_match_returns_path() {
+        let result = highlight_match("src/main.rs", "xyz");
+        assert_eq!(result, "src/main.rs");
+    }
+
+    // ── scan_important_files / scan_important_dirs tests ───────────────
+
+    #[test]
+    fn scan_important_files_finds_cargo_toml() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]").unwrap();
+        std::fs::write(dir.path().join("README.md"), "# Test").unwrap();
+        let files = scan_important_files(dir.path());
+        assert!(files.contains(&"Cargo.toml".to_string()));
+        assert!(files.contains(&"README.md".to_string()));
+    }
+
+    #[test]
+    fn scan_important_dirs_finds_src() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::create_dir(dir.path().join("docs")).unwrap();
+        let dirs = scan_important_dirs(dir.path());
+        assert!(dirs.contains(&"src".to_string()));
+        assert!(dirs.contains(&"docs".to_string()));
+    }
+
+    // ── ProjectType Display tests ──────────────────────────────────────
+
+    #[test]
+    fn project_type_display() {
+        assert_eq!(format!("{}", ProjectType::Rust), "Rust (Cargo)");
+        assert_eq!(format!("{}", ProjectType::Node), "Node.js (npm)");
+        assert_eq!(format!("{}", ProjectType::Unknown), "Unknown");
+    }
 }
