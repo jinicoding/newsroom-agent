@@ -34,3 +34,12 @@ SESSION_PLAN.md 작성 완료.
   계획된 태스크: 3개
 
   ── Task 1 / 3 ──
+완료. commands_workflow.rs의 프로덕션 코드에서 JSON load/save 함수 13개를 개선했다:
+
+- **load 함수 6개** (deadline, embargo, desk, coverage, calendar, performance): `serde_json::from_str().unwrap_or_default()` → 명시적 `match`로 교체, 파싱 실패 시 파일 경로와 에러 메시지를 `eprintln!`으로 출력
+- **save 함수 7개** (deadline, embargo, desk, collaborate, coverage, calendar): `to_string_pretty().unwrap_or_default()` + `let _ = write()` → 직렬화 실패와 파일 쓰기 실패 모두 경고 출력
+
+기존 테스트 67개 모두 통과 확인.
+    Task 1: 검증 OK
+
+  ── Task 2 / 3 ──

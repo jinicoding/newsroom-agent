@@ -6027,7 +6027,7 @@ pub fn handle_pipeline(input: &str) -> Option<String> {
 pub const STORIES_DIR: &str = ".journalist/stories";
 
 /// Subcommand names for `/story <Tab>` completion.
-pub const STORY_SUBCOMMANDS: &[&str] = &["new", "add", "list", "show", "status"];
+pub const STORY_SUBCOMMANDS: &[&str] = &["new", "add", "list", "show", "status", "review"];
 
 /// Valid story statuses.
 const STORY_STATUSES: &[&str] = &["취재중", "초고", "검증", "완료"];
@@ -6279,6 +6279,7 @@ pub fn handle_story(input: &str) {
         "list" => handle_story_list_cmd(&stories_dir()),
         "show" => handle_story_show_cmd(rest),
         "status" => handle_story_status_cmd(rest),
+        "review" => handle_story_review_cmd(rest),
         _ => {
             eprintln!("{RED}  알 수 없는 하위 커맨드: {sub}{RESET}");
             print_story_usage();
@@ -6293,6 +6294,7 @@ fn print_story_usage() {
     println!("    /story list                스토리 목록 (상태별)");
     println!("    /story show [제목]         스토리 상세 표시");
     println!("    /story status <상태>       상태 변경 (취재중/초고/검증/완료)");
+    println!("    /story review [제목]       취재 프로젝트 종합 리뷰");
     println!("    /story                     (list와 동일){RESET}\n");
 }
 
@@ -6456,6 +6458,213 @@ fn handle_story_status_cmd(args: &str) {
         }
         None => {
             eprintln!("{RED}  상태를 변경할 스토리가 없습니다{RESET}\n");
+        }
+    }
+}
+
+/// Artifact found in a story workspace directory.
+#[derive(Debug, Clone)]
+pub struct StoryArtifact {
+    pub file_name: String,
+    pub category: String,
+    pub size_bytes: u64,
+    pub preview: String,
+}
+
+/// Known reporting stage categories for completeness checking.
+const REPORTING_STAGES: &[(&str, &str)] = &[
+    ("research", "리서치/조사"),
+    ("interview", "인터뷰/취재"),
+    ("factcheck", "팩트체크/검증"),
+    ("draft", "기사 초고"),
+    ("source", "취재원 관리"),
+    ("legal", "법적 검토"),
+    ("rebuttal", "반론 취재"),
+    ("data", "데이터/통계"),
+    ("photo", "사진/미디어"),
+    ("timeline", "타임라인"),
+];
+
+/// Categorize a file by its name into a reporting stage.
+fn categorize_artifact(file_name: &str) -> String {
+    let lower = file_name.to_lowercase();
+    if lower == "story.md" {
+        return "meta".to_string();
+    }
+    for &(key, label) in REPORTING_STAGES {
+        if lower.contains(key) {
+            return label.to_string();
+        }
+    }
+    if lower.ends_with(".md") || lower.ends_with(".txt") {
+        "메모/노트".to_string()
+    } else if lower.ends_with(".json") || lower.ends_with(".csv") {
+        "데이터/통계".to_string()
+    } else if lower.ends_with(".jpg")
+        || lower.ends_with(".jpeg")
+        || lower.ends_with(".png")
+        || lower.ends_with(".gif")
+    {
+        "사진/미디어".to_string()
+    } else {
+        "기타".to_string()
+    }
+}
+
+/// Collect all artifacts from a story workspace directory.
+pub fn collect_story_artifacts(story_dir: &std::path::Path) -> Vec<StoryArtifact> {
+    let mut artifacts = Vec::new();
+    let entries = match std::fs::read_dir(story_dir) {
+        Ok(e) => e,
+        Err(_) => return artifacts,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let file_name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let category = categorize_artifact(&file_name);
+        if category == "meta" {
+            continue;
+        }
+        let size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let preview = if file_name.ends_with(".md") || file_name.ends_with(".txt") {
+            std::fs::read_to_string(&path)
+                .unwrap_or_default()
+                .chars()
+                .take(200)
+                .collect()
+        } else {
+            format!("[{category} 파일, {size_bytes} bytes]")
+        };
+        artifacts.push(StoryArtifact {
+            file_name,
+            category,
+            size_bytes,
+            preview,
+        });
+    }
+    artifacts.sort_by(|a, b| a.file_name.cmp(&b.file_name));
+    artifacts
+}
+
+/// Build a comprehensive review prompt for a story project.
+pub fn build_story_review_prompt(meta: &StoryMeta, artifacts: &[StoryArtifact]) -> String {
+    let mut prompt = String::new();
+    prompt.push_str("당신은 숙련된 데스크(편집자)입니다. 기자가 제출한 취재 프로젝트를 종합 리뷰해주세요.\n\n");
+
+    prompt.push_str(&format!("## 취재 프로젝트: {}\n", meta.title));
+    prompt.push_str(&format!("- 상태: {}\n", meta.status));
+    prompt.push_str(&format!("- 생성일: {}\n", meta.created));
+    if !meta.notes.is_empty() {
+        prompt.push_str(&format!("- 메모: {}건\n", meta.notes.len()));
+        for note in &meta.notes {
+            prompt.push_str(&format!("  - {note}\n"));
+        }
+    }
+    prompt.push('\n');
+
+    prompt.push_str("## 워크스페이스 산출물\n\n");
+    if artifacts.is_empty() {
+        prompt.push_str("(산출물 없음 — 스토리 메타데이터만 존재)\n\n");
+    } else {
+        for artifact in artifacts {
+            prompt.push_str(&format!(
+                "### [{category}] {name} ({size} bytes)\n",
+                category = artifact.category,
+                name = artifact.file_name,
+                size = artifact.size_bytes,
+            ));
+            prompt.push_str(&format!("{}\n\n", artifact.preview));
+        }
+    }
+
+    // Checklist of reporting stages
+    let found_categories: std::collections::HashSet<&str> =
+        artifacts.iter().map(|a| a.category.as_str()).collect();
+    prompt.push_str("## 취재 단계 체크리스트\n\n");
+    for &(_key, label) in REPORTING_STAGES {
+        let check = if found_categories.contains(label) {
+            "✅"
+        } else {
+            "❌"
+        };
+        prompt.push_str(&format!("{check} {label}\n"));
+    }
+    prompt.push('\n');
+
+    prompt.push_str(
+        "## 리뷰 요청사항\n\n\
+         위 취재 프로젝트를 종합적으로 검토하고 다음을 평가해주세요:\n\n\
+         1. **완성도**: 기사 제출 전 빠진 취재 단계가 있는가?\n\
+         2. **취재원 균형**: 다양한 시각이 반영되었는가? 반론 취재는 충분한가?\n\
+         3. **팩트체크**: 주요 사실에 대한 검증이 이루어졌는가?\n\
+         4. **법적 리스크**: 명예훼손, 저작권, 개인정보 등 법적 검토가 필요한 부분이 있는가?\n\
+         5. **보완 제안**: 기사 품질을 높이기 위해 추가로 필요한 취재나 자료는?\n\n\
+         한국어로 답변해주세요.\n",
+    );
+
+    prompt
+}
+
+fn handle_story_review_cmd(args: &str) {
+    let base = stories_dir();
+    let stories = list_stories(&base);
+
+    if stories.is_empty() {
+        println!("{DIM}  스토리가 없습니다{RESET}\n");
+        return;
+    }
+
+    let story = if args.is_empty() {
+        stories
+            .iter()
+            .rev()
+            .find(|s| s.status != "완료")
+            .or_else(|| stories.last())
+    } else {
+        let query = args.to_lowercase();
+        stories
+            .iter()
+            .find(|s| s.title.to_lowercase().contains(&query) || s.slug.contains(&query))
+    };
+
+    match story {
+        Some(s) => {
+            let story_dir = base.join(&s.slug);
+            let artifacts = collect_story_artifacts(&story_dir);
+
+            println!("  {BOLD}📋 [{title}] 종합 리뷰{RESET}", title = s.title);
+            println!(
+                "  산출물: {}건 | 상태: {}",
+                artifacts.len(),
+                s.status
+            );
+
+            // Show checklist
+            let found_categories: std::collections::HashSet<&str> =
+                artifacts.iter().map(|a| a.category.as_str()).collect();
+            let total = REPORTING_STAGES.len();
+            let covered = REPORTING_STAGES
+                .iter()
+                .filter(|&&(_, label)| found_categories.contains(label))
+                .count();
+            println!("  취재 단계: {covered}/{total} 완료\n");
+
+            let prompt = build_story_review_prompt(s, &artifacts);
+            println!("{DIM}  [AI에게 리뷰 프롬프트 전송 — {len}자]{RESET}\n", len = prompt.len());
+        }
+        None => {
+            if args.is_empty() {
+                println!("{DIM}  리뷰할 스토리가 없습니다{RESET}\n");
+            } else {
+                eprintln!("{RED}  스토리를 찾을 수 없습니다: {args}{RESET}\n");
+            }
         }
     }
 }
@@ -9213,6 +9422,189 @@ mod tests {
     fn story_meta_parse_invalid() {
         assert!(parse_story_meta("not a valid file").is_none());
         assert!(parse_story_meta("---\n---").is_none()); // empty frontmatter
+    }
+
+    // ── /story review tests ──────────────────────────────────────────────
+
+    #[test]
+    fn categorize_artifact_research_file() {
+        assert_eq!(categorize_artifact("research-notes.md"), "리서치/조사");
+        assert_eq!(categorize_artifact("Research_memo.txt"), "리서치/조사");
+    }
+
+    #[test]
+    fn categorize_artifact_interview_file() {
+        assert_eq!(categorize_artifact("interview-김철수.md"), "인터뷰/취재");
+    }
+
+    #[test]
+    fn categorize_artifact_factcheck_file() {
+        assert_eq!(categorize_artifact("factcheck-결과.md"), "팩트체크/검증");
+    }
+
+    #[test]
+    fn categorize_artifact_draft_file() {
+        assert_eq!(categorize_artifact("draft-v1.md"), "기사 초고");
+    }
+
+    #[test]
+    fn categorize_artifact_legal_file() {
+        assert_eq!(categorize_artifact("legal-review.md"), "법적 검토");
+    }
+
+    #[test]
+    fn categorize_artifact_data_by_extension() {
+        assert_eq!(categorize_artifact("stats.json"), "데이터/통계");
+        assert_eq!(categorize_artifact("export.csv"), "데이터/통계");
+    }
+
+    #[test]
+    fn categorize_artifact_image_files() {
+        assert_eq!(categorize_artifact("photo.jpg"), "사진/미디어");
+        assert_eq!(categorize_artifact("scene.png"), "사진/미디어");
+    }
+
+    #[test]
+    fn categorize_artifact_generic_text() {
+        assert_eq!(categorize_artifact("memo.md"), "메모/노트");
+        assert_eq!(categorize_artifact("notes.txt"), "메모/노트");
+    }
+
+    #[test]
+    fn categorize_artifact_unknown() {
+        assert_eq!(categorize_artifact("binary.bin"), "기타");
+    }
+
+    #[test]
+    fn categorize_artifact_story_md_is_meta() {
+        assert_eq!(categorize_artifact("story.md"), "meta");
+    }
+
+    #[test]
+    fn collect_story_artifacts_empty_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let artifacts = collect_story_artifacts(dir.path());
+        assert!(artifacts.is_empty());
+    }
+
+    #[test]
+    fn collect_story_artifacts_skips_story_md() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("story.md"), "---\ntitle: test\n---\n").unwrap();
+        std::fs::write(dir.path().join("research-memo.md"), "some research").unwrap();
+        let artifacts = collect_story_artifacts(dir.path());
+        assert_eq!(artifacts.len(), 1);
+        assert_eq!(artifacts[0].file_name, "research-memo.md");
+        assert_eq!(artifacts[0].category, "리서치/조사");
+    }
+
+    #[test]
+    fn collect_story_artifacts_preview_text_files() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let content = "이것은 리서치 내용입니다.";
+        std::fs::write(dir.path().join("research-notes.md"), content).unwrap();
+        let artifacts = collect_story_artifacts(dir.path());
+        assert_eq!(artifacts.len(), 1);
+        assert!(artifacts[0].preview.contains("리서치 내용"));
+    }
+
+    #[test]
+    fn collect_story_artifacts_sorted_by_name() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("z-notes.md"), "z").unwrap();
+        std::fs::write(dir.path().join("a-draft.md"), "a").unwrap();
+        let artifacts = collect_story_artifacts(dir.path());
+        assert_eq!(artifacts.len(), 2);
+        assert_eq!(artifacts[0].file_name, "a-draft.md");
+        assert_eq!(artifacts[1].file_name, "z-notes.md");
+    }
+
+    #[test]
+    fn collect_story_artifacts_nonexistent_dir() {
+        let artifacts = collect_story_artifacts(std::path::Path::new("/nonexistent/path"));
+        assert!(artifacts.is_empty());
+    }
+
+    #[test]
+    fn build_story_review_prompt_contains_title() {
+        let meta = StoryMeta {
+            title: "반도체 수출 동향".to_string(),
+            slug: "반도체-수출-동향".to_string(),
+            status: "취재중".to_string(),
+            created: "2026-03-25".to_string(),
+            notes: vec!["메모1".to_string()],
+        };
+        let prompt = build_story_review_prompt(&meta, &[]);
+        assert!(prompt.contains("반도체 수출 동향"));
+        assert!(prompt.contains("취재중"));
+        assert!(prompt.contains("2026-03-25"));
+        assert!(prompt.contains("메모1"));
+    }
+
+    #[test]
+    fn build_story_review_prompt_empty_artifacts() {
+        let meta = StoryMeta {
+            title: "테스트".to_string(),
+            slug: "테스트".to_string(),
+            status: "초고".to_string(),
+            created: "2026-03-25".to_string(),
+            notes: vec![],
+        };
+        let prompt = build_story_review_prompt(&meta, &[]);
+        assert!(prompt.contains("산출물 없음"));
+        // All stages should be unchecked
+        for &(_, label) in REPORTING_STAGES {
+            assert!(prompt.contains(&format!("❌ {label}")));
+        }
+    }
+
+    #[test]
+    fn build_story_review_prompt_with_artifacts() {
+        let meta = StoryMeta {
+            title: "테스트".to_string(),
+            slug: "테스트".to_string(),
+            status: "취재중".to_string(),
+            created: "2026-03-25".to_string(),
+            notes: vec![],
+        };
+        let artifacts = vec![
+            StoryArtifact {
+                file_name: "research-notes.md".to_string(),
+                category: "리서치/조사".to_string(),
+                size_bytes: 100,
+                preview: "리서치 내용 미리보기".to_string(),
+            },
+            StoryArtifact {
+                file_name: "interview-김철수.md".to_string(),
+                category: "인터뷰/취재".to_string(),
+                size_bytes: 200,
+                preview: "인터뷰 내용".to_string(),
+            },
+        ];
+        let prompt = build_story_review_prompt(&meta, &artifacts);
+        assert!(prompt.contains("✅ 리서치/조사"));
+        assert!(prompt.contains("✅ 인터뷰/취재"));
+        assert!(prompt.contains("❌ 팩트체크/검증"));
+        assert!(prompt.contains("❌ 반론 취재"));
+        assert!(prompt.contains("리서치 내용 미리보기"));
+        assert!(prompt.contains("인터뷰 내용"));
+    }
+
+    #[test]
+    fn build_story_review_prompt_review_sections() {
+        let meta = StoryMeta {
+            title: "테스트".to_string(),
+            slug: "테스트".to_string(),
+            status: "검증".to_string(),
+            created: "2026-03-25".to_string(),
+            notes: vec![],
+        };
+        let prompt = build_story_review_prompt(&meta, &[]);
+        assert!(prompt.contains("완성도"));
+        assert!(prompt.contains("취재원 균형"));
+        assert!(prompt.contains("팩트체크"));
+        assert!(prompt.contains("법적 리스크"));
+        assert!(prompt.contains("보완 제안"));
     }
 
     // ── Day 8: 테스트 보강 ─────────────────────────────────────────────
