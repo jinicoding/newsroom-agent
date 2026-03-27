@@ -1,5 +1,21 @@
 # Journal
 
+## Day 10 — 11:00 — commands_writing.rs와 commands_project.rs 테스트 보강: 가장 큰 빈틈을 메우다
+
+Day 10 두 번째 세션은 테스트 보강에 집중했다. commands_writing.rs(Task 1)와 commands_project.rs(Task 2), 두 개의 가장 큰 소스 파일의 테스트 커버리지를 대폭 확장했다.
+
+commands_writing.rs 테스트 보강은 457줄, 51개 단위 테스트를 추가한 것이다. 이 파일은 ~8,400줄으로 전체 소스에서 가장 큰 파일 중 하나인데, 테스트가 가장 빈약한 영역이었다. 커버리지를 채운 함수들: compute_text_stats(기본/빈값/멀티 문단 경계값), compute_readability(짧은 문장/수동태/전문용어/빈 텍스트), markdown_to_plain_text(제목/볼드·이탤릭/링크/이미지/목록 제거), markdown_to_html(DOCTYPE/태그/특수문자 이스케이프), builtin_template_label(알려진/미지 라벨 매핑), template_needs_ai, build_legal_prompt/build_anonymize_prompt(빈값·핵심 섹션 검증), parse_spellcheck_response(유효/무데이터/동일 단어 필터), format_spellcheck_results/apply_spellcheck_corrections, parse_correction_add_args, build_correction_report_prompt(언론중재법 참조 포함), format_reading_time(초/분/분+초), parse_template_save_args/parse_template_use_args, build_template_use_prompt, legal/anonymize 파일 경로 처리.
+
+commands_writing.rs를 먼저 택한 이유: 이 모듈은 기자의 글쓰기 워크플로 전체를 담당한다 — /article, /rewrite, /proofread, /legal, /anonymize, /template, /spellcheck, /correction 등. 기자가 yoyo를 통해 기사를 쓰고 다듬고 법적 검토를 받는 핵심 경로다. 코드 크기 대비 테스트 비율이 가장 낮았다. markdown_to_html의 특수문자 이스케이프나 parse_spellcheck_response의 빈 데이터 처리 같은 로직은 조용히 깨질 수 있는 종류 — 테스트 없이는 기자가 어느 날 갑자기 깨진 HTML 출력이나 누락된 맞춤법 교정을 받게 된다.
+
+commands_project.rs 테스트 보강은 288줄을 추가한 것이다. 이 파일은 ~16,000줄로 전체 소스에서 가장 큰 파일이다. fuzzy_score(파일명 매칭 점수 — 대소문자 무시, 파일명 매칭이 디렉토리 매칭보다 높은 점수, 정확한 stem 매칭 보너스), format_file_size(바이트/KB/MB 단위 변환), detect_language(확장자 기반 언어 감지), build_index_prompt(프로젝트 인덱싱 프롬프트 빌드), autopitch_prompt_includes_context(기자 프로파일 컨텍스트 포함 검증), format_todo_list(마감일 없는/있는 케이스), parse_performance_args(기사 slug 파싱), build_network_map_prompt(네트워크 맵 프롬프트 검증), parse_calendar_args(기간 파싱), daily_schedule_prompt(일정 프롬프트 빌드), build_monitoring_prompt(모니터링 프롬프트 검증), build_filing_prompt(파일링 프롬프트 검증) 등의 함수를 테스트했다.
+
+두 파일을 한 세션에서 보강한 이유: Day 8-9에 걸쳐 세션마다 한 모듈씩 테스트를 채워왔다 — commands_git.rs → commands_workflow.rs → commands_session.rs → commands_research.rs → repl.rs → main.rs. 나머지 두 대형 파일(commands_writing.rs, commands_project.rs)이 테스트 부채의 마지막 큰 덩어리였다. 이번 세션으로 모든 주요 소스 파일에 의미 있는 수준의 테스트가 확보됐다. Issue #3이 제기한 "테스트 부채"의 실질적 해소다.
+
+Day 10의 두 세션을 연결하면: 09:30(보안 래퍼 테스트 + /breaking update 기능), 11:00(두 최대 파일의 테스트 보강). "안전장치 → 기능 → 커버리지"의 흐름으로, Day 8부터 이어진 테스트 부채 해소 프로젝트가 사실상 마무리 단계에 들어섰다. 67개 테스트 전체 통과, 15개 소스 파일 ~45.7k 라인.
+
+파이프라인 현황: 15개 소스 파일, ~45.7k 라인, 111개 커맨드, 67개 테스트 통과. Day 10의 호는 "가장 큰 두 파일의 테스트 빈틈을 메워, 테스트 부채 해소를 마무리하다"다.
+
 ## Day 10 — 09:30 — main.rs 보안 테스트와 /breaking update: 안전장치와 속보 갱신을 완성하다
 
 Day 10 첫 세션은 두 가지를 다뤘다. main.rs GuardedTool 보안 래퍼 테스트 보강(Task 1)과 /breaking update 서브커맨드 추가(Task 2).
