@@ -8381,4 +8381,461 @@ mod tests {
         assert_eq!(loaded.notes.len(), 1);
         assert!(loaded.notes[0].contains("[녹취록]"));
     }
+
+    // ── compute_text_stats ─────────────────────────────────────────────
+
+    #[test]
+    fn text_stats_basic_korean() {
+        let text = "삼성전자가 실적을 발표했다. 영업이익은 15조원이다.";
+        let stats = compute_text_stats(text);
+        assert!(stats.chars_with_spaces > 0);
+        assert!(stats.chars_without_spaces > 0);
+        assert!(stats.chars_without_spaces < stats.chars_with_spaces);
+        assert_eq!(stats.sentences, 2);
+        assert_eq!(stats.paragraphs, 1);
+        assert!(stats.reading_time_secs > 0);
+    }
+
+    #[test]
+    fn text_stats_empty() {
+        let stats = compute_text_stats("");
+        assert_eq!(stats.chars_with_spaces, 0);
+        assert_eq!(stats.chars_without_spaces, 0);
+        assert_eq!(stats.words, 0);
+        assert_eq!(stats.sentences, 0);
+        assert_eq!(stats.paragraphs, 0);
+        assert_eq!(stats.reading_time_secs, 0);
+    }
+
+    #[test]
+    fn text_stats_multi_paragraph() {
+        let text = "첫 번째 문단입니다.\n\n두 번째 문단입니다.\n\n세 번째 문단입니다.";
+        let stats = compute_text_stats(text);
+        assert_eq!(stats.paragraphs, 3);
+        assert_eq!(stats.sentences, 3);
+    }
+
+    #[test]
+    fn text_stats_no_punctuation_counts_as_one_sentence() {
+        let text = "문장 부호가 없는 텍스트";
+        let stats = compute_text_stats(text);
+        assert_eq!(stats.sentences, 1);
+    }
+
+    // ── compute_readability ────────────────────────────────────────────
+
+    #[test]
+    fn readability_short_sentences_good_grade() {
+        let text = "짧은 문장이다. 읽기 쉽다. 좋은 기사다.";
+        let metrics = compute_readability(text);
+        assert_eq!(metrics.sentence_count, 3);
+        assert!(metrics.grade == 'A' || metrics.grade == 'B');
+    }
+
+    #[test]
+    fn readability_passive_voice_detected() {
+        let text = "예산이 삭감되었다. 법안이 통과됐다. 정책이 시행되었습니다.";
+        let metrics = compute_readability(text);
+        assert!(metrics.passive_ratio > 0.0);
+    }
+
+    #[test]
+    fn readability_jargon_detected() {
+        let text = "거버넌스 개혁이 필요하다. 컨센서스를 형성해야 한다. 패러다임이 전환되었다. 이니셔티브를 추진한다.";
+        let metrics = compute_readability(text);
+        assert!(metrics.jargon_density > 0.0);
+    }
+
+    #[test]
+    fn readability_empty_text_zero_metrics() {
+        let metrics = compute_readability("");
+        assert_eq!(metrics.sentence_count, 0);
+        assert_eq!(metrics.paragraph_count, 0);
+        assert_eq!(metrics.avg_sentence_len, 0.0);
+    }
+
+    // ── markdown_to_plain_text ─────────────────────────────────────────
+
+    #[test]
+    fn md_to_plain_strips_headings() {
+        let md = "# 제목\n## 소제목\n본문입니다.";
+        let plain = markdown_to_plain_text(md);
+        assert!(!plain.contains('#'));
+        assert!(plain.contains("제목"));
+        assert!(plain.contains("소제목"));
+        assert!(plain.contains("본문입니다."));
+    }
+
+    #[test]
+    fn md_to_plain_strips_bold_italic() {
+        let md = "**굵은 글씨**와 *기울임*";
+        let plain = markdown_to_plain_text(md);
+        assert!(!plain.contains("**"));
+        assert!(plain.contains("굵은 글씨"));
+    }
+
+    #[test]
+    fn md_to_plain_strips_links() {
+        let md = "[링크텍스트](https://example.com)";
+        let plain = markdown_to_plain_text(md);
+        assert!(plain.contains("링크텍스트"));
+        assert!(!plain.contains("https://"));
+    }
+
+    #[test]
+    fn md_to_plain_strips_images() {
+        let md = "![대체텍스트](image.png)";
+        let plain = markdown_to_plain_text(md);
+        assert!(plain.contains("대체텍스트"));
+        assert!(!plain.contains("image.png"));
+    }
+
+    #[test]
+    fn md_to_plain_strips_list_markers() {
+        let md = "- 항목 1\n- 항목 2\n1. 번호 항목";
+        let plain = markdown_to_plain_text(md);
+        assert!(plain.contains("항목 1"));
+        assert!(plain.contains("번호 항목"));
+        assert!(!plain.starts_with("- "));
+    }
+
+    // ── markdown_to_html ───────────────────────────────────────────────
+
+    #[test]
+    fn md_to_html_contains_doctype() {
+        let html = markdown_to_html("테스트");
+        assert!(html.starts_with("<!DOCTYPE html>"));
+        assert!(html.contains("</html>"));
+    }
+
+    #[test]
+    fn md_to_html_headings() {
+        let html = markdown_to_html("# 대제목\n## 중제목\n### 소제목");
+        assert!(html.contains("<h1>대제목</h1>"));
+        assert!(html.contains("<h2>중제목</h2>"));
+        assert!(html.contains("<h3>소제목</h3>"));
+    }
+
+    #[test]
+    fn md_to_html_paragraphs() {
+        let html = markdown_to_html("첫 줄\n\n둘째 줄");
+        assert!(html.contains("<p>첫 줄</p>"));
+        assert!(html.contains("<p>둘째 줄</p>"));
+    }
+
+    #[test]
+    fn md_to_html_list_items() {
+        let html = markdown_to_html("- 항목A\n- 항목B");
+        assert!(html.contains("<ul>"));
+        assert!(html.contains("<li>항목A</li>"));
+        assert!(html.contains("<li>항목B</li>"));
+        assert!(html.contains("</ul>"));
+    }
+
+    #[test]
+    fn md_to_html_blockquote() {
+        let html = markdown_to_html("> 인용문입니다");
+        assert!(html.contains("<blockquote>"));
+        assert!(html.contains("인용문입니다"));
+    }
+
+    #[test]
+    fn md_to_html_escapes_special_chars() {
+        let html = markdown_to_html("A < B & C > D");
+        assert!(html.contains("&lt;"));
+        assert!(html.contains("&amp;"));
+        assert!(html.contains("&gt;"));
+    }
+
+    // ── builtin_template_label ─────────────────────────────────────────
+
+    #[test]
+    fn builtin_template_label_known() {
+        assert_eq!(builtin_template_label("straight"), "스트레이트");
+        assert_eq!(builtin_template_label("analysis"), "해설");
+        assert_eq!(builtin_template_label("interview"), "인터뷰");
+        assert_eq!(builtin_template_label("feature"), "피처");
+    }
+
+    #[test]
+    fn builtin_template_label_unknown() {
+        assert_eq!(builtin_template_label("nonexistent"), "");
+        assert_eq!(builtin_template_label(""), "");
+    }
+
+    // ── template_needs_ai ──────────────────────────────────────────────
+
+    #[test]
+    fn template_needs_ai_builtin_name() {
+        assert!(template_needs_ai("/template straight 반도체"));
+        assert!(template_needs_ai("/template analysis 경제"));
+    }
+
+    #[test]
+    fn template_needs_ai_non_ai_subcommands() {
+        assert!(!template_needs_ai("/template list"));
+        assert!(!template_needs_ai("/template show mytemplate"));
+        assert!(!template_needs_ai("/template save mytemplate"));
+        assert!(!template_needs_ai("/template remove mytemplate"));
+        assert!(!template_needs_ai("/template"));
+    }
+
+    // ── build_legal_prompt ─────────────────────────────────────────────
+
+    #[test]
+    fn build_legal_prompt_empty_returns_none() {
+        assert!(build_legal_prompt("").is_none());
+        assert!(build_legal_prompt("   ").is_none());
+    }
+
+    #[test]
+    fn build_legal_prompt_contains_key_sections() {
+        let prompt = build_legal_prompt("김모씨가 횡령 혐의로 기소되었다.").unwrap();
+        assert!(prompt.contains("명예훼손"));
+        assert!(prompt.contains("초상권"));
+        assert!(prompt.contains("반론권"));
+        assert!(prompt.contains("공인/사인"));
+        assert!(prompt.contains("종합 판정"));
+        assert!(prompt.contains("김모씨가 횡령 혐의로 기소되었다."));
+    }
+
+    // ── build_anonymize_prompt ─────────────────────────────────────────
+
+    #[test]
+    fn anonymize_prompt_empty_returns_none() {
+        assert!(build_anonymize_prompt("").is_none());
+        assert!(build_anonymize_prompt("   ").is_none());
+    }
+
+    #[test]
+    fn anonymize_prompt_contains_pii_rules() {
+        let prompt = build_anonymize_prompt("홍길동 기자가 취재했다.").unwrap();
+        assert!(prompt.contains("익명화 규칙"));
+        assert!(prompt.contains("A씨"));
+        assert!(prompt.contains("개인식별정보"));
+        assert!(prompt.contains("홍길동 기자가 취재했다."));
+    }
+
+    // ── parse_spellcheck_response ──────────────────────────────────────
+
+    #[test]
+    fn parse_spellcheck_response_valid() {
+        let html = r#"<script>data = [{"orgStr":"됬다","candWord":"됐다","help":"맞춤법 오류"}];</script>"#;
+        let corrections = parse_spellcheck_response(html);
+        assert_eq!(corrections.len(), 1);
+        assert_eq!(corrections[0].original, "됬다");
+        assert_eq!(corrections[0].replacement, "됐다");
+    }
+
+    #[test]
+    fn parse_spellcheck_response_no_data() {
+        let html = "<html><body>no data here</body></html>";
+        let corrections = parse_spellcheck_response(html);
+        assert!(corrections.is_empty());
+    }
+
+    #[test]
+    fn parse_spellcheck_response_same_word_filtered() {
+        let html = r#"<script>data = [{"orgStr":"정상","candWord":"정상","help":""}];</script>"#;
+        let corrections = parse_spellcheck_response(html);
+        assert!(corrections.is_empty());
+    }
+
+    // ── format_spellcheck_results ──────────────────────────────────────
+
+    #[test]
+    fn spellcheck_results_no_errors_message() {
+        let result = format_spellcheck_results(&[]);
+        assert!(result.contains("오류가 발견되지 않았습니다"));
+    }
+
+    #[test]
+    fn spellcheck_results_shows_count_and_content() {
+        let corrections = vec![SpellCorrection {
+            original: "됬다".to_string(),
+            replacement: "됐다".to_string(),
+            help: String::new(),
+        }];
+        let result = format_spellcheck_results(&corrections);
+        assert!(result.contains("1건"));
+        assert!(result.contains("됬다"));
+        assert!(result.contains("됐다"));
+    }
+
+    // ── apply_spellcheck_corrections ───────────────────────────────────
+
+    #[test]
+    fn apply_spellcheck_basic() {
+        let text = "그는 됬다고 말했다.";
+        let corrections = vec![SpellCorrection {
+            original: "됬다".to_string(),
+            replacement: "됐다".to_string(),
+            help: String::new(),
+        }];
+        let result = apply_spellcheck_corrections(text, &corrections);
+        assert_eq!(result, "그는 됐다고 말했다.");
+    }
+
+    #[test]
+    fn apply_spellcheck_no_match() {
+        let text = "정상적인 문장입니다.";
+        let corrections = vec![SpellCorrection {
+            original: "비정상".to_string(),
+            replacement: "정상".to_string(),
+            help: String::new(),
+        }];
+        let result = apply_spellcheck_corrections(text, &corrections);
+        assert_eq!(result, text);
+    }
+
+    // ── parse_correction_add_args ──────────────────────────────────────
+
+    #[test]
+    fn correction_args_all_three_flags() {
+        let (article, error, fix) =
+            parse_correction_add_args("--article 제목 --error 오류내용 --fix 수정내용");
+        assert_eq!(article, "제목");
+        assert_eq!(error, "오류내용");
+        assert_eq!(fix, "수정내용");
+    }
+
+    #[test]
+    fn correction_args_partial_only_article() {
+        let (article, error, fix) = parse_correction_add_args("--article 제목");
+        assert_eq!(article, "제목");
+        assert!(error.is_empty());
+        assert!(fix.is_empty());
+    }
+
+    #[test]
+    fn correction_args_empty_input() {
+        let (article, error, fix) = parse_correction_add_args("");
+        assert!(article.is_empty());
+        assert!(error.is_empty());
+        assert!(fix.is_empty());
+    }
+
+    // ── build_correction_report_prompt ──────────────────────────────────
+
+    #[test]
+    fn correction_report_prompt_includes_law_reference() {
+        let records = vec![CorrectionRecord {
+            date: "2026-03-27".to_string(),
+            article: "테스트 기사".to_string(),
+            error: "날짜 오류".to_string(),
+            fix: "날짜 수정".to_string(),
+            status: "pending".to_string(),
+        }];
+        let prompt = build_correction_report_prompt("테스트 기사", &records);
+        assert!(prompt.contains("정정보도문"));
+        assert!(prompt.contains("테스트 기사"));
+        assert!(prompt.contains("날짜 오류"));
+        assert!(prompt.contains("언론중재법"));
+    }
+
+    // ── format_reading_time ────────────────────────────────────────────
+
+    #[test]
+    fn reading_time_under_minute() {
+        assert_eq!(format_reading_time(30), "30초");
+        assert_eq!(format_reading_time(0), "0초");
+    }
+
+    #[test]
+    fn reading_time_exact_minute() {
+        assert_eq!(format_reading_time(60), "1분");
+        assert_eq!(format_reading_time(120), "2분");
+    }
+
+    #[test]
+    fn reading_time_minutes_with_remainder() {
+        assert_eq!(format_reading_time(90), "1분 30초");
+        assert_eq!(format_reading_time(150), "2분 30초");
+    }
+
+    // ── parse_template_save_args / parse_template_use_args ─────────────
+
+    #[test]
+    fn template_save_args_name_without_file() {
+        let (name, file) = parse_template_save_args("mytemplate");
+        assert_eq!(name, "mytemplate");
+        assert!(file.is_none());
+    }
+
+    #[test]
+    fn template_save_args_name_with_file_flag() {
+        let (name, file) = parse_template_save_args("mytemplate --file draft.md");
+        assert_eq!(name, "mytemplate");
+        assert_eq!(file.as_deref(), Some("draft.md"));
+    }
+
+    #[test]
+    fn template_save_args_empty_input() {
+        let (name, file) = parse_template_save_args("");
+        assert!(name.is_empty());
+        assert!(file.is_none());
+    }
+
+    #[test]
+    fn template_use_args_name_and_topic() {
+        let (name, topic) = parse_template_use_args("straight 반도체 수출");
+        assert_eq!(name, "straight");
+        assert_eq!(topic, "반도체 수출");
+    }
+
+    #[test]
+    fn template_use_args_name_without_topic() {
+        let (name, topic) = parse_template_use_args("straight");
+        assert_eq!(name, "straight");
+        assert!(topic.is_empty());
+    }
+
+    // ── build_template_use_prompt ──────────────────────────────────────
+
+    #[test]
+    fn template_use_prompt_includes_all_parts() {
+        let prompt = build_template_use_prompt("템플릿 내용", "straight", "반도체 수출");
+        assert!(prompt.contains("템플릿 내용"));
+        assert!(prompt.contains("straight"));
+        assert!(prompt.contains("반도체 수출"));
+        assert!(prompt.contains("양식"));
+    }
+
+    // ── legal/anonymize file paths ─────────────────────────────────────
+
+    #[test]
+    fn legal_path_with_topic_slug() {
+        let path = legal_file_path_with_date("횡령 사건", "2026-03-27");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/legal/2026-03-27_횡령-사건.md"
+        );
+    }
+
+    #[test]
+    fn legal_path_fallback_when_empty() {
+        let path = legal_file_path_with_date("", "2026-03-27");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/legal/2026-03-27_legal.md"
+        );
+    }
+
+    #[test]
+    fn anonymize_path_with_topic_slug() {
+        let path = anonymize_file_path_with_date("취재원 보호", "2026-03-27");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/anonymize/2026-03-27_취재원-보호.md"
+        );
+    }
+
+    #[test]
+    fn anonymize_path_fallback_when_empty() {
+        let path = anonymize_file_path_with_date("", "2026-03-27");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/anonymize/2026-03-27_anonymize.md"
+        );
+    }
 }
