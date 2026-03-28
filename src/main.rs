@@ -35,6 +35,7 @@
 
 mod cli;
 mod commands;
+mod commands_data;
 mod commands_foia;
 mod commands_git;
 mod commands_series;
