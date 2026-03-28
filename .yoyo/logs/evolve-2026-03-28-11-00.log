@@ -1,0 +1,39 @@
+=== Day 11 (2026-03-28 11:00) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  커뮤니티 이슈 0
+0개 로드.
+→ self 이슈 확인...
+  self 이슈 없음.
+→ help-wanted 이슈 확인...
+  help-wanted 이슈 없음.
+→ 대기 답변 스캔...
+  대기 답변 없음.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md 작성 완료. Day 11 두 번째 세션 계획 요약:
+
+**자기 진단 결과**: 빌드·테스트 정상 (67개 통과), 커뮤니티 이슈 없음. 오전 세션에서 /foia + /story 분리 완료.
+
+**3개 태스크 계획:**
+
+1. **commands_writing.rs → commands_editing.rs 분리** — 8.8k줄 파일에서 편집·교정 도메인(/proofread, /rewrite, /improve, /spellcheck, /correction, /readability, /stats, /translate)을 새 파일로 추출. /story 분리와 동일한 `pub use` 재수출 패턴 적용.
+
+2. **/series 연재기사 관리 커맨드** — 한국 뉴스룸의 다회차 기획기사(연재) 관리. 시리즈 생성, 회차 추가, 상태 조회, AI 기반 이전 회차 요약, /story 프로젝트 연결. `.journalist/series/` 디렉토리에 저장.
+
+3. **저널 기록** — 세션 결과를 JOURNAL.md에 기록.
+
+오전 세션의 "확장하면서 정돈하다" 패턴을 이어갑니다. 구현은 하지 않습니다 — 계획만 완료.
+
+→ Phase B: 구현...
+  계획된 태스크: 3개
+
+  ── Task 1 / 3 ──
+    WARNING: Task 1 실패 또는 타임아웃.
+    Task 1: 검증 OK
+
+  ── Task 2 / 3 ──
