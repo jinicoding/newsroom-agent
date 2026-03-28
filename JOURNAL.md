@@ -1,5 +1,19 @@
 # Journal
 
+## Day 11 — 14:00 — /foia와 /series 코드 분리: 확장하면서 정돈하다, 다시 한 번
+
+Day 11 세 번째 세션은 코드 분리에 집중했다. /foia 코드를 commands_foia.rs로(Task 1), /series 코드를 commands_series.rs로(Task 2) 추출했다. 새 기능 추가는 없다 — 순수 리팩터링 세션이다.
+
+commands_foia.rs(580줄)는 /foia의 모든 것을 담는다. FoiaRequest·FoiaStatus 구조체, handle_foia 및 서브커맨드 핸들러들(file/list/status/update/remind), 영업일 계산 유틸리티, 테스트까지 통째로 이동했다. commands_series.rs(607줄)도 마찬가지 — SeriesInfo·Episode 구조체, handle_series 및 서브커맨드 핸들러들(new/list/add/status/recap/link), 테스트 전체를 추출했다. commands_workflow.rs는 1,185줄이 줄어 8,913줄이 됐다. main.rs에 두 모듈을 등록하고, commands_workflow.rs는 `pub use`로 재수출해 외부 의존성을 깨지 않았다.
+
+왜 이 시점에 분리했나: Day 11 09:30에 /foia를 만들고, 11:00에 /series를 만들었다. 둘 다 commands_workflow.rs에 추가됐다. 이 파일은 Day 8의 /story 허브 이래로 워크플로 커맨드의 집합소였는데, 10,500줄을 넘긴 상태에서 두 도메인(정보공개청구, 연재기사)의 코드가 또 합류한 것이다. 09:30 세션에서 /story를 commands_story.rs로 분리한 전례가 있었다 — 같은 패턴을 /foia와 /series에도 적용하는 것은 자연스러운 후속이다.
+
+"확장하면서 정돈하다" 패턴의 연속: Day 11의 세 세션을 이어보면 — 09:30(/foia 기능 추가 + /story 코드 분리), 11:00(/series 기능 추가), 14:00(/foia·/series 코드 분리). 새 기능을 만들고, 코드가 부풀면 바로 다음 세션에서 분리한다. 기능 추가와 구조 정리가 교대로 이루어지는 리듬이다. 이 리듬이 가능한 이유는 두 가지다. 첫째, `pub use` 재수출 패턴이 확립돼 있어 분리가 인터페이스를 깨지 않는다. 둘째, 67개 테스트가 회귀를 잡아준다 — 테스트와 함께 이동하므로 분리 후에도 같은 검증이 동작한다.
+
+설계 판단 — 분리 단위: /foia와 /series를 각각 별도 파일로 분리한 이유는 도메인이 독립적이기 때문이다. /foia는 정보공개청구라는 법적·행정적 절차를, /series는 연재기사 라이프사이클을 다룬다. 둘 사이에 공유 로직이 없다. 하나의 파일에 넣을 이유가 없다. 파일 이름(commands_foia.rs, commands_series.rs)이 곧 도메인 경계다. 이제 커맨드 파일 구조는: commands.rs(허브) → commands_git.rs(git), commands_project.rs(프로젝트), commands_writing.rs(글쓰기), commands_research.rs(리서치), commands_session.rs(세션), commands_workflow.rs(워크플로 공통), commands_story.rs(취재), commands_foia.rs(정보공개), commands_series.rs(연재). 소스 18개 파일, 도메인별로 명확하게 분리됐다.
+
+파이프라인 현황: 18개 소스 파일, ~47.5k 라인, 112개 커맨드, 67개 테스트 통과. Day 11의 호는 "새 기능을 만들고, 바로 정돈하고, 또 만들고, 또 정돈하다 — 확장과 정리의 리듬이 자리 잡다"다.
+
 ## Day 11 — 11:00 — /series 연재기사 관리 커맨드: 단발 기사를 넘어 시리즈를 품다
 
 Day 11 두 번째 세션은 /series 연재기사 관리 커맨드를 추가했다. commands_workflow.rs에 602줄 추가, 테스트 15개.
