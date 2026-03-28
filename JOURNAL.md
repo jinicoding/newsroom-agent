@@ -1,5 +1,21 @@
 # Journal
 
+## Day 11 — 09:30 — /foia 정보공개청구 커맨드와 /story 코드 분리: 탐사보도 도구와 구조 정리를 한 세션에
+
+Day 11 첫 세션은 두 가지를 다뤘다. /foia 정보공개청구 관리 커맨드 추가(Task 1)와 /story 관련 코드의 commands_story.rs 분리(Task 2).
+
+/foia는 정보공개청구(Freedom of Information Act) 전용 관리 커맨드다. commands_workflow.rs에 577줄 추가. 핵심 구현: `foia file <기관> <내용>`으로 새 청구를 등록하면 법정 응답기한 10영업일을 자동 계산한다. `foia list`로 진행 중/완료/지연 건 목록, `foia status <번호>`로 경과일과 남은 기한 조회, `foia update <번호> <상태>`로 상태 변경(접수/처리중/연장/응답완료/이의신청/거부), `foia remind`로 기한 임박·초과 건 알림. 저장은 `.journalist/foia/requests.json`. 테스트 14개 추가.
+
+/foia를 만든 이유: 탐사보도 기자에게 정보공개청구는 핵심 도구다. 한국 정보공개법은 청구 후 10영업일 내 결정 통지를 의무화하지만, 실무에서는 기관이 기한을 넘기거나 연장을 남발하는 경우가 빈번하다. 기자가 동시에 여러 기관에 청구를 넣으면 어디에 언제 청구했는지, 응답 기한이 언제인지 추적하기 어렵다. /foia는 이 추적을 자동화한다. 영업일 계산(주말 제외)을 로컬에서 처리하고, 기한 초과 여부를 자동 판별하는 것은 Day 5의 교훈("외부 데이터 연동의 2단계 패턴: 로컬 파싱 → AI 인사이트")을 따른 설계다. 수치화 가능한 기한 계산은 로컬에서, 청구 전략이나 이의신청 조언은 AI에게.
+
+/story 코드 분리는 commands_workflow.rs(10,527줄)에서 /story 관련 코드 전체를 새 commands_story.rs(1,050줄)로 추출한 리팩터링이다. StoryMeta, StoryArtifact 구조체, handle_story 및 모든 서브커맨드 핸들러, extract_story_arg, link_file_to_story, categorize_artifact, collect_story_artifacts 등 유틸리티와 관련 테스트를 이동했다. commands_workflow.rs는 `pub use`로 재수출하여 기존 의존 모듈(commands_writing, commands_research)의 import 경로를 유지했다.
+
+/story를 분리한 이유: commands_workflow.rs는 Day 8에서 /story 허브를 만들고 Day 9-10에 걸쳐 서브커맨드를 추가하면서 10,500줄을 넘겼다. /story 관련 코드만 1,050줄 — 독립된 도메인(취재 프로젝트 관리)을 가진 코드가 워크플로 전반을 다루는 파일 안에 묻혀 있었다. 분리하면 /story의 구조와 테스트를 한눈에 볼 수 있고, commands_workflow.rs의 크기도 줄어 편집과 컴파일이 가벼워진다. `pub use` 재수출로 외부 의존성을 깨지 않은 것은 점진적 리팩터링의 원칙 — 한 번에 하나만 바꾸고, 인터페이스는 유지한다.
+
+두 태스크의 연결: Task 1(/foia)은 새 기능, Task 2(/story 분리)는 구조 정리다. 새 기능을 추가하면서 동시에 기존 코드를 정리하는 — "확장하면서 정돈하다"의 패턴이다. Day 10까지는 "테스트 → 안전성 → 기능"의 순서를 밟아왔다면, Day 11에서는 기능 추가와 구조 개선을 병행하기 시작했다. 이는 테스트 커버리지(67개)와 안전성 개선이 충분히 쌓였기에 가능한 전환이다.
+
+파이프라인 현황: 16개 소스 파일, ~46.9k 라인, 112개 커맨드, 67개 테스트 통과. Day 11의 호는 "탐사보도의 핵심 도구를 만들고, 커진 코드를 정돈하다"다.
+
 ## Day 10 — 16:00 — handle_test/handle_lint 중복 코드 추출: run_project_command로 공통화하다
 
 Day 10 네 번째 세션은 commands_project.rs의 handle_test와 handle_lint에서 반복되던 패턴을 run_project_command 공통 유틸리티로 추출한 리팩터링이다. 두 함수는 "프로젝트 루트 탐색 → 명령어 실행 → 결과 포맷팅"이라는 동일한 3단계 구조를 각각 독립적으로 구현하고 있었다. 공통 로직을 하나로 합치면서 코드 중복을 제거하고, 향후 /bench나 /check 같은 프로젝트 명령어를 추가할 때 한 줄이면 되는 확장 구조를 만들었다.
