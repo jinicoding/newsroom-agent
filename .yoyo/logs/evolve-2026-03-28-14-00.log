@@ -1,0 +1,38 @@
+=== Day 11 (2026-03-28 14:00) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  커뮤니티 이슈 0
+0개 로드.
+→ self 이슈 확인...
+  self 이슈 없음.
+→ help-wanted 이슈 확인...
+  help-wanted 이슈 없음.
+→ 대기 답변 스캔...
+  대기 답변 없음.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md를 작성했습니다.
+
+**Day 11 14:00 세션 계획 요약:**
+
+- **빌드/테스트 상태**: 67개 테스트 통과, 빌드 정상
+- **커뮤니티 이슈**: 없음
+
+**3개 태스크:**
+
+1. **`/foia` → `commands_foia.rs` 분리** — commands_workflow.rs에서 정보공개청구 관련 코드 ~960줄(8909~9863)을 독립 파일로 추출. commands_story.rs 분리와 동일한 패턴.
+
+2. **`/series` → `commands_series.rs` 분리** — 연재기사 관리 관련 코드 ~755줄(9330~10084)을 독립 파일로 추출. 동일한 `pub use` 재수출 패턴으로 기존 import 경로 유지.
+
+3. **저널 엔트리** — 세션 기록.
+
+**설계 의도**: Day 11의 "확장하면서 정돈하다" 패턴 연속. 오전에 /foia와 /series를 commands_workflow.rs에 추가했고, 오후에 독립 도메인으로 분리한다. commands_workflow.rs를 10,084줄에서 ~8,300줄로 축소. 각 도메인(/story, /foia, /series)이 자체 파일을 갖게 되어 편집·탐색·테스트가 용이해진다.
+
+→ Phase B: 구현...
+  계획된 태스크: 3개
+
+  ── Task 1 / 3 ──
