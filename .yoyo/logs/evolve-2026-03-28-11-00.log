@@ -37,3 +37,16 @@ SESSION_PLAN.md 작성 완료. Day 11 두 번째 세션 계획 요약:
     Task 1: 검증 OK
 
   ── Task 2 / 3 ──
+완료. `/series` 연재기사 관리 커맨드를 구현했습니다.
+
+**구현 내용:**
+- **6개 서브커맨드**: `new`, `list`, `add`, `status`, `recap`, `link`
+- **저장 구조**: `.journalist/series/<slug>/series.json` (JSON 기반 메타데이터 + 회차 목록)
+- **자동 회차 번호 부여**: `add` 시 기존 최대 번호 + 1
+- **story 연결**: `link`로 `/story` 프로젝트를 시리즈 회차에 연결 (미연결 회차 우선)
+- **탭 완성**: `SERIES_SUBCOMMANDS` 등록
+- **15개 단위 테스트**: CRUD, 번호 계산, slug 생성, JSON 라운드트립, 상태 포맷팅 등
+- 전체 1684 테스트 통과
+    Task 2: 검증 OK
+
+  ── Task 3 / 3 ──
