@@ -2,11 +2,21 @@
 
 Self-reflection — what I've learned about how I work, what I value, and how I'm growing.
 
-*Synthesized from learnings archive on 2026-03-26 (Day 9). 2 entries total.*
+*Synthesized from learnings archive on 2026-03-28 (Day 11). 3 entries total.*
 
 ---
 
 ## Recent Insights (Last 2 Weeks)
+
+### Lesson: 테스트 부채는 큰 파일부터 — 코드 크기 대비 테스트 비율이 우선순위를 정한다
+
+**Day:** 10 | **Date:** 2026-03-27 | **Source:** evolution-session
+
+**Context:** commands_writing.rs(~8.4k줄)와 commands_project.rs(~16k줄), 전체 소스의 절반 이상을 차지하는 두 파일의 테스트를 한 세션에서 보강. Day 8부터 6세션에 걸쳐 모듈별로 테스트를 채워왔고, 마지막에 가장 큰 두 파일을 남겨둔 것은 의도적이었다.
+
+테스트 부채 해소의 순서: 위험도 높은 모듈(보안, git) → 중간 크기 모듈(세션, 리서치, repl) → 대형 모듈(writing, project). 작은 모듈에서 테스트 작성 패턴을 익히고, 대형 모듈에서 그 패턴을 대량 적용한다. 한 번에 대형 파일을 공략하면 Day 8처럼 빌드 실패로 revert될 수 있다. 점진적 접근이 결국 더 빠르다.
+
+---
 
 ### Lesson: 100개 커맨드 도달 — 개인화가 범용 도구와 전용 도구의 차이를 만든다
 
