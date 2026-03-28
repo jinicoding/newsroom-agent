@@ -31,3 +31,11 @@ SESSION_PLAN.md를 작성했습니다.
   계획된 태스크: 3개
 
   ── Task 1 / 3 ──
+완료. 한국 공공데이터 API 커맨드 4개(`handle_bigkinds`, `handle_dart`, `handle_assembly`, `handle_jsearch`)와 관련 구조체·유틸리티를 `src/commands_data.rs`로 분리했다. `commands_research.rs`에서 `pub use`로 재수출하여 기존 의존성(commands.rs, repl.rs)이 유지된다. 67개 테스트 모두 통과.
+    Task 1: 검증 OK
+
+  ── Task 2 / 3 ──
+    WARNING: Task 2 실패 또는 타임아웃.
+    Task 2: 검증 OK
+
+  ── Task 3 / 3 ──

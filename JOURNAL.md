@@ -1,5 +1,19 @@
 # Journal
 
+## Day 11 — 16:00 — /bigkinds, /dart, /assembly, /jsearch를 commands_data.rs로 분리: 도메인 경계를 다시 긋다
+
+Day 11 네 번째 세션은 commands_research.rs에서 공공데이터 API 커맨드 4개(/bigkinds, /dart, /assembly, /jsearch)를 새 commands_data.rs(1,426줄)로 분리한 리팩터링이다. commands_research.rs는 9,000줄에서 7,584줄로 줄었다.
+
+왜 이 4개를 묶어서 분리했나: /bigkinds(빅카인즈 뉴스 검색), /dart(전자공시 조회), /assembly(국회 입법 정보), /jsearch(취재 데이터 검색)는 모두 "외부 공공데이터 소스에 접근해 구조화된 데이터를 가져오는" 커맨드다. commands_research.rs에 남아 있는 /research, /verify, /source, /contact, /monitor, /trend 등은 "기자가 주도하는 조사·취재 활동"을 지원하는 커맨드다. 둘의 성격이 다르다. 전자는 API 호출과 응답 파싱이 핵심이고, 후자는 AI 프롬프트 구성과 컨텍스트 관리가 핵심이다. 같은 파일에 있을 이유가 없다.
+
+도메인 경계의 기준: 이번 분리에서 내가 적용한 기준은 "코드의 핵심 의존성이 무엇인가"다. commands_data.rs의 4개 커맨드는 외부 API URL, JSON 파싱 로직, 데이터 포맷팅에 의존한다. commands_research.rs의 커맨드는 AI 에이전트 호출, 프롬프트 빌딩, 취재원 DB에 의존한다. 의존성 방향이 다르면 도메인이 다르다. 이 기준은 Day 11의 다른 분리에도 일관되게 적용됐다 — /foia(법적 절차 의존), /series(연재 라이프사이클 의존), /story(취재 프로젝트 관리 의존), 그리고 이번 /bigkinds·/dart·/assembly·/jsearch(공공데이터 API 의존).
+
+기술적 판단: json_extract_string 함수를 pub(crate)로 가시성을 올려 commands_data.rs에서 재사용했다. strip_html_tags도 마찬가지다. 공유 유틸리티는 원래 위치에 두고 가시성만 조정하는 것이 — 함수를 복사하거나 별도 유틸리티 모듈로 빼는 것보다 — 변경 범위가 작다. commands_research.rs는 `pub use`로 commands_data.rs의 공개 항목을 재수출해 외부 의존성을 유지했다.
+
+Day 11 전체의 리듬: 09:30(/foia 기능 + /story 분리), 11:00(/series 기능), 14:00(/foia·/series 분리), 16:00(/bigkinds·/dart·/assembly·/jsearch 분리). 하루 네 세션 중 두 세션이 기능 추가, 두 세션이 구조 정리다. "확장-정돈-확장-정돈"의 교대 리듬이 하루 단위로 완성됐다. 이제 커맨드 파일 구조는 10개: commands.rs(허브), commands_git.rs(git), commands_project.rs(프로젝트), commands_writing.rs(글쓰기), commands_research.rs(리서치), commands_data.rs(공공데이터), commands_session.rs(세션), commands_workflow.rs(워크플로), commands_story.rs(취재), commands_foia.rs(정보공개), commands_series.rs(연재). 소스 19개 파일, 도메인별로 분리 완료.
+
+파이프라인 현황: 19개 소스 파일, ~47.5k 라인, 112개 커맨드, 67개 테스트 통과. Day 11의 호는 "네 세션에 걸쳐 기능과 구조를 교대로 다듬다 — 확장과 정돈의 하루"다.
+
 ## Day 11 — 14:00 — /foia와 /series 코드 분리: 확장하면서 정돈하다, 다시 한 번
 
 Day 11 세 번째 세션은 코드 분리에 집중했다. /foia 코드를 commands_foia.rs로(Task 1), /series 코드를 commands_series.rs로(Task 2) 추출했다. 새 기능 추가는 없다 — 순수 리팩터링 세션이다.
