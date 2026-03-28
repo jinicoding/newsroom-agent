@@ -727,6 +727,10 @@ pub async fn run_repl(
                 commands::handle_embargo(input);
                 continue;
             }
+            s if s == "/foia" || s.starts_with("/foia ") => {
+                commands::handle_foia(input);
+                continue;
+            }
             s if s == "/trend" || s.starts_with("/trend ") => {
                 commands::handle_trend(agent, input, &mut session_total, &agent_config.model)
                     .await;

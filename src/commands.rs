@@ -128,6 +128,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/transcript",
     "/verify",
     "/story",
+    "/foia",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -233,8 +234,8 @@ pub use crate::commands_research::{
     MONITOR_SUBCOMMANDS, RESEARCH_SUBCOMMANDS, RSS_SUBCOMMANDS, WIRE_SUBCOMMANDS,
 };
 pub use crate::commands_workflow::{
-    COVERAGE_SUBCOMMANDS, DIARY_SUBCOMMANDS, PITCH_SUBCOMMANDS, RECAP_SUBCOMMANDS,
-    RIVAL_SUBCOMMANDS, STORY_SUBCOMMANDS,
+    COVERAGE_SUBCOMMANDS, DIARY_SUBCOMMANDS, FOIA_SUBCOMMANDS, PITCH_SUBCOMMANDS,
+    RECAP_SUBCOMMANDS, RIVAL_SUBCOMMANDS, STORY_SUBCOMMANDS,
 };
 pub use crate::commands_writing::{CORRECTION_SUBCOMMANDS, QUALITY_SUBCOMMANDS, TRANSCRIPT_SUBCOMMANDS};
 
@@ -288,6 +289,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/pitch" => filter_candidates(PITCH_SUBCOMMANDS, &partial_lower),
         "/recap" => filter_candidates(RECAP_SUBCOMMANDS, &partial_lower),
         "/story" => filter_candidates(STORY_SUBCOMMANDS, &partial_lower),
+        "/foia" => filter_candidates(FOIA_SUBCOMMANDS, &partial_lower),
         "/multiformat" => {
             if partial_arg.starts_with("--format ") {
                 let fmt_part = &partial_arg[9..];
@@ -599,6 +601,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /embargo <sub>         엠바고 시간 관리 (set|list|clear)\n",
+    );
+    out.push_str(
+        "  /foia <sub>            정보공개청구 관리 (file|list|status|update|remind)\n",
     );
     out.push_str(
         "  /calendar [cmd]        취재 일정 관리 (add|list|today|week)\n",
@@ -975,7 +980,7 @@ pub use crate::commands_writing::{
 pub use crate::commands_workflow::{
     handle_autopitch, handle_breaking, handle_briefing, handle_calendar, handle_collaborate,
     handle_compare, handle_coverage, handle_dashboard, handle_data, handle_deadline,
-    handle_desk, handle_diary, handle_embargo, handle_interview, handle_morning,
+    handle_desk, handle_diary, handle_embargo, handle_foia, handle_interview, handle_morning,
     handle_performance, handle_pipeline, handle_pitch, handle_recap, handle_rival,
     handle_story, handle_timeline,
 };
