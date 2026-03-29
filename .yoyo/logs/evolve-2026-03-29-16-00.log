@@ -27,3 +27,15 @@ SESSION_PLAN.md 작성 완료. 요약:
   계획된 태스크: 3개
 
   ── Task 1 / 3 ──
+완료. `/correction search <키워드>` 서브커맨드를 추가했다.
+
+**변경 사항:**
+- `search_corrections()` — article, error, fix 필드에서 대소문자 무시 키워드 검색
+- `correction_search()` — 검색 결과 출력 핸들러
+- `CORRECTION_SUBCOMMANDS`에 `"search"` 추가, `handle_correction`에 search 분기 추가
+- usage 메시지에 search 설명 추가
+- `commands.rs`의 탭 완성 테스트 업데이트 (3→4개)
+- 테스트 10개 추가: `parse_correction_add_args` 3개, `search_corrections` 5개, `load_corrections` 1개, roundtrip 1개
+    Task 1: 검증 OK
+
+  ── Task 2 / 3 ──

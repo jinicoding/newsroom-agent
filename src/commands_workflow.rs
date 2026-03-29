@@ -7502,6 +7502,390 @@ mod tests {
         assert!(result.contains("최댓값: 30.00"));
         assert!(result.contains("평균: 20.00"));
     }
+
+    // ── Day 12: 파싱 유틸리티 엣지케이스 테스트 보강 ────────────────────
+
+    // -- parse_deadline_datetime_with_today --
+
+    #[test]
+    fn deadline_parse_time_only_uses_today() {
+        let r = parse_deadline_datetime_with_today("14:00", "2026-04-01");
+        assert_eq!(r, Some("2026-04-01T14:00:00".to_string()));
+    }
+
+    #[test]
+    fn deadline_parse_date_only_returns_none() {
+        // Date without time should return None
+        assert!(parse_deadline_datetime_with_today("2026-03-20", "2026-03-29").is_none());
+    }
+
+    #[test]
+    fn deadline_parse_time_boundary() {
+        // "0:00" has length 4 <= 5 and contains ':', should parse
+        let r = parse_deadline_datetime_with_today("0:00", "2026-03-29");
+        assert_eq!(r, Some("2026-03-29T0:00:00".to_string()));
+    }
+
+    // -- is_leap_year --
+
+    #[test]
+    fn leap_year_divisible_by_4() {
+        assert!(is_leap_year(2024));
+        assert!(is_leap_year(2028));
+    }
+
+    #[test]
+    fn leap_year_century_not_leap() {
+        assert!(!is_leap_year(1900));
+        assert!(!is_leap_year(2100));
+    }
+
+    #[test]
+    fn leap_year_400_is_leap() {
+        assert!(is_leap_year(2000));
+        assert!(is_leap_year(2400));
+    }
+
+    #[test]
+    fn leap_year_odd_not_leap() {
+        assert!(!is_leap_year(2025));
+        assert!(!is_leap_year(2023));
+    }
+
+    // -- datetime_to_epoch edge cases --
+
+    #[test]
+    fn datetime_to_epoch_leap_day() {
+        // 2024-02-29T00:00:00 should be valid
+        let epoch = datetime_to_epoch("2024-02-29T00:00:00");
+        assert!(epoch.is_some());
+        // 2024-03-01 should be exactly 86400 seconds later
+        let next = datetime_to_epoch("2024-03-01T00:00:00").unwrap();
+        assert_eq!(next - epoch.unwrap(), 86400);
+    }
+
+    #[test]
+    fn datetime_to_epoch_with_seconds() {
+        let a = datetime_to_epoch("2026-01-01T00:00:00").unwrap();
+        let b = datetime_to_epoch("2026-01-01T00:00:30").unwrap();
+        assert_eq!(b - a, 30);
+    }
+
+    // -- format_date_from_epoch --
+
+    #[test]
+    fn format_date_from_epoch_unix_zero() {
+        assert_eq!(format_date_from_epoch(0), "1970-01-01");
+    }
+
+    #[test]
+    fn format_date_from_epoch_known_date() {
+        // 2026-01-01T00:00:00 UTC
+        let epoch = datetime_to_epoch("2026-01-01T00:00:00").unwrap();
+        assert_eq!(format_date_from_epoch(epoch), "2026-01-01");
+    }
+
+    // -- parse_calendar_date --
+
+    #[test]
+    fn calendar_date_valid() {
+        assert_eq!(
+            parse_calendar_date("2026-03-29"),
+            Some("2026-03-29".to_string())
+        );
+    }
+
+    #[test]
+    fn calendar_date_boundary_months() {
+        assert_eq!(parse_calendar_date("2026-01-01"), Some("2026-01-01".to_string()));
+        assert_eq!(parse_calendar_date("2026-12-31"), Some("2026-12-31".to_string()));
+    }
+
+    #[test]
+    fn calendar_date_invalid_month() {
+        assert!(parse_calendar_date("2026-00-15").is_none());
+        assert!(parse_calendar_date("2026-13-15").is_none());
+    }
+
+    #[test]
+    fn calendar_date_invalid_day() {
+        assert!(parse_calendar_date("2026-03-00").is_none());
+        assert!(parse_calendar_date("2026-03-32").is_none());
+    }
+
+    #[test]
+    fn calendar_date_wrong_format() {
+        assert!(parse_calendar_date("").is_none());
+        assert!(parse_calendar_date("2026/03/29").is_none());
+        assert!(parse_calendar_date("26-03-29").is_none());
+        assert!(parse_calendar_date("not-a-date").is_none());
+    }
+
+    // -- parse_calendar_time --
+
+    #[test]
+    fn calendar_time_valid() {
+        assert_eq!(parse_calendar_time("09:30"), Some("09:30".to_string()));
+        assert_eq!(parse_calendar_time("0:00"), Some("00:00".to_string()));
+        assert_eq!(parse_calendar_time("23:59"), Some("23:59".to_string()));
+    }
+
+    #[test]
+    fn calendar_time_invalid_hour() {
+        assert!(parse_calendar_time("24:00").is_none());
+        assert!(parse_calendar_time("25:30").is_none());
+    }
+
+    #[test]
+    fn calendar_time_invalid_minute() {
+        assert!(parse_calendar_time("12:60").is_none());
+    }
+
+    #[test]
+    fn calendar_time_wrong_format() {
+        assert!(parse_calendar_time("").is_none());
+        assert!(parse_calendar_time("0930").is_none());
+        assert!(parse_calendar_time("09:30:00").is_none());
+        assert!(parse_calendar_time("abc").is_none());
+    }
+
+    // -- next_day --
+
+    #[test]
+    fn next_day_normal() {
+        assert_eq!(next_day("2026-03-15"), Some("2026-03-16".to_string()));
+    }
+
+    #[test]
+    fn next_day_end_of_month() {
+        assert_eq!(next_day("2026-03-31"), Some("2026-04-01".to_string()));
+        assert_eq!(next_day("2026-04-30"), Some("2026-05-01".to_string()));
+    }
+
+    #[test]
+    fn next_day_end_of_year() {
+        assert_eq!(next_day("2025-12-31"), Some("2026-01-01".to_string()));
+    }
+
+    #[test]
+    fn next_day_leap_feb() {
+        assert_eq!(next_day("2024-02-28"), Some("2024-02-29".to_string()));
+        assert_eq!(next_day("2024-02-29"), Some("2024-03-01".to_string()));
+    }
+
+    #[test]
+    fn next_day_non_leap_feb() {
+        assert_eq!(next_day("2025-02-28"), Some("2025-03-01".to_string()));
+    }
+
+    #[test]
+    fn next_day_invalid() {
+        assert!(next_day("").is_none());
+        assert!(next_day("not-a-date").is_none());
+    }
+
+    // -- date_color_index --
+
+    #[test]
+    fn date_color_index_today() {
+        assert_eq!(date_color_index("2026-03-29", "2026-03-29"), 0);
+    }
+
+    #[test]
+    fn date_color_index_tomorrow() {
+        assert_eq!(date_color_index("2026-03-30", "2026-03-29"), 1);
+    }
+
+    #[test]
+    fn date_color_index_past() {
+        assert_eq!(date_color_index("2026-03-28", "2026-03-29"), 2);
+    }
+
+    #[test]
+    fn date_color_index_future() {
+        assert_eq!(date_color_index("2026-04-01", "2026-03-29"), 3);
+    }
+
+    // -- day_of_week --
+
+    #[test]
+    fn day_of_week_known_dates() {
+        // 1970-01-01 was Thursday = 3
+        assert_eq!(day_of_week("1970-01-01"), Some(3));
+        // 2026-03-29 is Sunday = 6
+        assert_eq!(day_of_week("2026-03-29"), Some(6));
+        // 2026-03-30 is Monday = 0
+        assert_eq!(day_of_week("2026-03-30"), Some(0));
+    }
+
+    #[test]
+    fn day_of_week_invalid() {
+        assert!(day_of_week("").is_none());
+        assert!(day_of_week("not-a-date").is_none());
+    }
+
+    // -- week_start / week_end --
+
+    #[test]
+    fn week_start_from_sunday() {
+        // 2026-03-29 is Sunday, Monday is 2026-03-23
+        assert_eq!(week_start("2026-03-29"), Some("2026-03-23".to_string()));
+    }
+
+    #[test]
+    fn week_start_from_monday() {
+        // 2026-03-30 is Monday
+        assert_eq!(week_start("2026-03-30"), Some("2026-03-30".to_string()));
+    }
+
+    #[test]
+    fn week_end_from_monday() {
+        // 2026-03-30 is Monday, Sunday is 2026-04-05
+        assert_eq!(week_end("2026-03-30"), Some("2026-04-05".to_string()));
+    }
+
+    #[test]
+    fn week_end_from_sunday() {
+        // 2026-03-29 is Sunday
+        assert_eq!(week_end("2026-03-29"), Some("2026-03-29".to_string()));
+    }
+
+    // -- parse_pipeline_steps --
+
+    #[test]
+    fn pipeline_steps_simple() {
+        let steps = parse_pipeline_steps("취재 작성 편집");
+        assert_eq!(steps, vec!["취재", "작성", "편집"]);
+    }
+
+    #[test]
+    fn pipeline_steps_quoted() {
+        let steps = parse_pipeline_steps("\"팩트 체크\" 편집 \"최종 교정\"");
+        assert_eq!(steps, vec!["팩트 체크", "편집", "최종 교정"]);
+    }
+
+    #[test]
+    fn pipeline_steps_empty() {
+        let steps = parse_pipeline_steps("");
+        assert!(steps.is_empty());
+    }
+
+    #[test]
+    fn pipeline_steps_whitespace_only() {
+        let steps = parse_pipeline_steps("   ");
+        assert!(steps.is_empty());
+    }
+
+    #[test]
+    fn pipeline_steps_empty_quotes() {
+        let steps = parse_pipeline_steps("\"\" 취재 \"  \"");
+        // Empty quoted strings should be skipped
+        assert_eq!(steps, vec!["취재"]);
+    }
+
+    // -- parse_csv edge cases --
+
+    #[test]
+    fn parse_csv_empty_input() {
+        let (headers, rows) = parse_csv("");
+        assert!(headers.is_empty());
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn parse_csv_normal() {
+        let (headers, rows) = parse_csv("a,b,c\n1,2,3\n4,5,6\n");
+        assert_eq!(headers, vec!["a", "b", "c"]);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], vec!["1", "2", "3"]);
+    }
+
+    #[test]
+    fn parse_csv_blank_lines_skipped() {
+        let (headers, rows) = parse_csv("x,y\n1,2\n\n3,4\n");
+        assert_eq!(headers, vec!["x", "y"]);
+        assert_eq!(rows.len(), 2);
+    }
+
+    // -- compute_column_stats edge cases --
+
+    #[test]
+    fn compute_column_stats_empty() {
+        let (count, _min, _max, mean) = compute_column_stats(&[]);
+        assert_eq!(count, 0);
+        assert!((mean - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn compute_column_stats_multiple() {
+        let (count, min, max, mean) = compute_column_stats(&[10.0, 20.0, 30.0]);
+        assert_eq!(count, 3);
+        assert!((min - 10.0).abs() < f64::EPSILON);
+        assert!((max - 30.0).abs() < f64::EPSILON);
+        assert!((mean - 20.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn compute_column_stats_negative_values() {
+        let (count, min, max, mean) = compute_column_stats(&[-5.0, 0.0, 5.0]);
+        assert_eq!(count, 3);
+        assert!((min - (-5.0)).abs() < f64::EPSILON);
+        assert!((max - 5.0).abs() < f64::EPSILON);
+        assert!((mean - 0.0).abs() < f64::EPSILON);
+    }
+
+    // -- parse_briefing_args --
+
+    #[test]
+    fn briefing_args_empty() {
+        let (file, rest) = parse_briefing_args("");
+        assert!(file.is_none());
+        assert!(rest.is_empty());
+    }
+
+    #[test]
+    fn briefing_args_no_file_flag() {
+        let (file, rest) = parse_briefing_args("보도자료 텍스트");
+        assert!(file.is_none());
+        assert_eq!(rest, "보도자료 텍스트");
+    }
+
+    #[test]
+    fn briefing_args_file_with_path() {
+        let (file, rest) = parse_briefing_args("--file press.txt 추가 텍스트");
+        assert_eq!(file, Some("press.txt".to_string()));
+        assert_eq!(rest, "추가 텍스트");
+    }
+
+    #[test]
+    fn briefing_args_file_only() {
+        let (file, rest) = parse_briefing_args("--file press.txt");
+        assert_eq!(file, Some("press.txt".to_string()));
+        assert!(rest.is_empty());
+    }
+
+    #[test]
+    fn briefing_args_file_flag_no_value() {
+        let (file, rest) = parse_briefing_args("--file");
+        assert!(file.is_none());
+        assert!(rest.is_empty());
+    }
+
+    // -- parse_embargo_args edge cases --
+
+    #[test]
+    fn embargo_parse_args_title_only_no_time() {
+        let (title, time) = parse_embargo_args("단순 제목");
+        assert!(title.is_empty());
+        assert!(time.is_empty());
+    }
+
+    #[test]
+    fn embargo_parse_args_quoted_with_datetime() {
+        let (title, time) = parse_embargo_args("\"정상회담 결과\" 2026-03-30 10:00");
+        assert_eq!(title, "정상회담 결과");
+        assert_eq!(time, "2026-03-30 10:00");
+    }
 }
 
 // ── /foia — extracted to commands_foia.rs ─────────────────────────────
