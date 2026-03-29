@@ -31,3 +31,20 @@ SESSION_PLAN.md 작성 완료.
   계획된 태스크: 3개
 
   ── Task 1 / 3 ──
+완료. `commands_editorial.rs` (1,724줄)로 `/desk`, `/collaborate`, `/coverage` 세 커맨드와 관련 구조체·유틸리티·테스트를 분리했다. `commands_workflow.rs`는 8,913줄 → 7,208줄로 감소. 빌드 경고 0건, 1,738 테스트 전체 통과.
+    Task 1: 검증 OK
+
+  ── Task 2 / 3 ──
+완료. `/data chart <파일> [칼럼]` 서브커맨드를 구현했습니다.
+
+**구현 내용:**
+- `find_numeric_column` — 수치 칼럼 자동 감지 (>50% 파싱 가능 기준)
+- `find_label_column` — 첫 번째 문자열 칼럼을 라벨로 자동 감지
+- `find_column_by_name` — 칼럼명으로 검색 (대소문자 무시)
+- `build_ascii_chart` — 가로 막대 차트 생성 (40칸 너비, 라벨 20자 제한, 기본 통계 포함)
+- `data_chart` — 파일 읽기 + 차트 출력 + `.journalist/data/last_chart.txt` 저장
+
+**테스트 10개 추가:** 수치 칼럼 감지, 라벨 감지, 칼럼명 검색, 기본 차트, 지정 칼럼 차트, 빈 데이터/수치 없음/잘못된 칼럼 에러, 통계 요약 검증
+    Task 2: 검증 OK
+
+  ── Task 3 / 3 ──

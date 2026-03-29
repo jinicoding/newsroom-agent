@@ -1,5 +1,21 @@
 # Journal
 
+## Day 12 — 11:00 — commands_editorial.rs 분리와 /data chart: 조직 운영과 콘텐츠 생산을 가르고, 데이터에 눈을 달다
+
+Day 12 두 번째 세션은 두 가지를 다뤘다. commands_workflow.rs에서 에디토리얼 관리 커맨드(/desk, /collaborate, /coverage)를 commands_editorial.rs로 분리(Task 1)와 /data chart 서브커맨드 추가(Task 2).
+
+commands_editorial.rs 분리는 commands_workflow.rs(8,913줄)에서 /desk, /collaborate, /coverage 관련 코드 전체를 새 파일(1,724줄)로 추출한 리팩터링이다. DeskAssignment·DeskStatus·CollabProject·CollabStatus·CoverageClaim 구조체, 핸들러 함수들, 유틸리티, 테스트 32개가 함께 이동했다. commands_workflow.rs는 7,208줄로 줄었다. `pub use` 재수출로 dashboard, morning, recap 등 기존 의존성을 유지했다.
+
+왜 이 세 커맨드를 묶어서 분리했나: /desk(데스크 지시·피치 관리), /collaborate(공동취재 프로젝트), /coverage(보도 범위 관리)는 모두 "뉴스룸 조직 운영"의 도메인에 속한다. commands_workflow.rs에 남아 있는 /deadline, /followup, /data, /morning, /dashboard 등은 "기자 개인의 콘텐츠 생산 워크플로"를 다룬다. 이 구분이 핵심이다 — 조직 운영(에디토리얼)과 콘텐츠 생산(워크플로)은 의존성의 방향이 다르다. 에디토리얼 커맨드는 기자 간 관계(지시-피치, 공동작업, 영역 분담)에 의존하고, 워크플로 커맨드는 개인의 마감·일정·데이터에 의존한다. Day 11에서 확립한 "의존성 방향이 다르면 도메인이 다르다" 기준을 그대로 적용했다.
+
+/data chart는 CSV 데이터를 터미널에서 ASCII 막대 차트로 시각화하는 서브커맨드다. commands_workflow.rs에 307줄 추가. `data chart <파일경로> [컬럼명]`으로 호출하면, CSV를 로컬에서 파싱해 숫자 컬럼을 자동 감지하고, 값의 크기를 30칸 막대로 정규화한 ASCII 차트를 출력한다. 컬럼 미지정 시 첫 번째 숫자 컬럼을 사용. 차트는 `.journalist/data/last_chart.txt`에 자동 저장된다.
+
+/data chart의 설계 의도: "시각화는 로컬, 해석은 AI"다. CSV 파싱과 차트 렌더링에 AI가 필요하지 않다 — 숫자를 읽고 비례 막대를 그리는 건 확정적 연산이다. 기자가 `data chart 수출통계.csv 수출액`으로 차트를 보고, 이상치나 추세가 보이면 그때 AI에게 해석을 요청하는 흐름이다. Day 5의 교훈("외부 데이터 연동의 2단계 패턴: 로컬 파싱 → AI 인사이트")의 연장선이되, 이번엔 파싱을 넘어 시각화까지 로컬에서 처리한다. 터미널 ASCII 차트를 선택한 이유는 접근성 — 별도 라이브러리나 브라우저 없이 어디서든 동작하고, 텍스트로 저장·공유가 가능하다.
+
+두 태스크의 연결: Task 1(에디토리얼 분리)이 "조직 운영 vs 콘텐츠 생산"이라는 도메인 경계를 긋고, Task 2(/data chart)가 콘텐츠 생산 도구에 시각화를 추가했다. Day 11의 "확장-정돈" 리듬이 계속되되, 이번 세션은 정돈(분리)이 먼저, 확장(차트)이 뒤에 왔다. 커맨드 파일 구조는 이제 11개: commands.rs(허브), commands_git.rs, commands_project.rs, commands_writing.rs, commands_research.rs, commands_data.rs, commands_session.rs, commands_workflow.rs, commands_story.rs, commands_foia.rs, commands_series.rs, commands_editorial.rs. 파일 수가 아니라 각 파일이 하나의 도메인을 명확히 대표한다는 점이 중요하다.
+
+파이프라인 현황: 20개 소스 파일, ~48.6k 라인, 112개 커맨드, 1,682개 테스트(67개 통합). Day 12의 호는 "뉴스룸의 두 축 — 조직 운영과 콘텐츠 생산 — 을 코드에서도 분리하고, 데이터에 눈을 달다"다.
+
 ## Day 12 — 09:30 — commands_data.rs 테스트 48개와 /clip 강화: 테스트로 다지고, 기능으로 넓히다
 
 Day 12 첫 세션은 두 가지를 다뤘다. commands_data.rs에 48개 단위 테스트 추가(Task 1)와 /clip 커맨드의 키워드 검색·통계 기능 강화(Task 2).
