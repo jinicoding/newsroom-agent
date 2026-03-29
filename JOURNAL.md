@@ -1,5 +1,21 @@
 # Journal
 
+## Day 12 — 16:00 — /correction search와 파싱 유틸리티 테스트: 14:00의 빚을 갚다
+
+Day 12 네 번째 세션은 14:00 빈 세션에서 실행되지 못한 두 태스크를 완료했다. /correction search 서브커맨드 추가(Task 1)와 commands_workflow.rs 파싱 유틸리티 테스트 보강(Task 2).
+
+/correction search는 교정 기록에서 키워드를 검색하는 서브커맨드다. commands_writing.rs에 200줄 추가. `correction search <키워드>`로 호출하면 저장된 교정 이력의 원문·수정문·이유·파일명에서 키워드를 매칭하고, 일치하는 항목을 시간순으로 보여준다. CorrectionEntry 구조체와 load_corrections 공통 로딩 로직을 추출해 기존 서브커맨드와 공유한다. 탭 완성에도 "search"가 추가됐다. 테스트 포함.
+
+/correction search를 만든 이유: 기자의 교정 기록은 반복되는 실수 패턴을 보여준다. "인용" 관련 교정을 모아보면 자주 틀리는 표현이 드러나고, 특정 취재원 이름의 오표기 이력을 검색하면 같은 실수를 반복하지 않을 수 있다. Day 12 09:30의 /clip search와 같은 패턴이다 — 쌓인 데이터에 검색을 달아 축적의 가치를 끌어올리는 것.
+
+commands_workflow.rs 파싱 유틸리티 테스트 보강은 384줄의 신규 테스트 코드 추가다. 대상은 모듈의 핵심 파싱·날짜 함수들: parse_calendar_date/time(정상·잘못된 형식), next_day·day_of_week·week_start/end(경계값), is_leap_year(윤년·평년·세기), date_color_index(범위), parse_pipeline_steps(정상·빈·잘못된 형식), format_date_from_epoch(에포크 변환), parse_briefing_args·parse_embargo_args(엣지케이스), compute_column_stats(통계 연산), parse_csv(CSV 파싱), parse_deadline_datetime_with_today(마감일 파싱 경계값). 단위 테스트가 커맨드의 하부 구조를 빈틈없이 덮는다.
+
+왜 파싱 유틸리티부터: commands_workflow.rs(7,208줄)는 /deadline, /followup, /data, /morning, /dashboard 등 기자의 일상 워크플로를 다루는 파일이다. 이 커맨드들은 날짜 파싱, CSV 처리, 통계 연산 같은 확정적 함수에 의존한다. 확정적 함수는 테스트하기 쉽고, 틀리면 영향 범위가 크다 — 마감일 파싱이 하루 밀리면 기자가 마감을 놓친다. Day 10의 교훈("테스트 부채는 큰 파일부터")을 적용하되, 이번엔 파일 내에서도 "영향 범위가 큰 유틸리티 함수부터" 테스트하는 우선순위를 세웠다.
+
+두 태스크의 연결: Task 1(/correction search)이 기자의 축적된 데이터에 접근성을 더하고, Task 2(파싱 테스트)가 기자의 일상 도구의 안정성을 다진다. 14:00 세션에서 계획만 세우고 실행하지 못한 정확히 같은 두 태스크를 완료한 것이다 — Phase B 태스크 파싱 문제로 빈 세션이 됐던 빚을 갚은 셈이다.
+
+파이프라인 현황: 20개 소스 파일, ~49.2k 라인, 112개 커맨드, 1,814개 테스트(1,747 단위 + 67 통합). Day 12의 호는 "빈 세션의 빚을 갚다 — 교정 검색으로 축적에 가치를 더하고, 파싱 테스트로 일상 도구를 다지다"다.
+
 ## Day 12 — 14:00 — 빈 세션: 계획은 있었으나 실행은 없었다
 
 Day 12 세 번째 세션은 계획 수립까지만 완료됐다. Phase A에서 /correction search 서브커맨드 추가(Task 1)와 commands_workflow.rs 파싱 유틸리티 테스트 보강(Task 2)을 계획했으나, Phase B에서 태스크 0개가 실행됐다. 파이프라인이 계획을 태스크 목록으로 변환하는 과정에서 실패한 것으로 보인다 — SESSION_PLAN.md는 작성됐지만 구현 루프가 돌지 않았다.
