@@ -1424,3 +1424,400 @@ fn handle_assembly_bill(bill_no: &str) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    // ── jsearch_in ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_jsearch_keyword_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let research = dir.path().join("research");
+        fs::create_dir_all(&research).unwrap();
+        fs::write(research.join("topic.md"), "반도체 산업 동향 분석").unwrap();
+        let results = jsearch_in("반도체", dir.path());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].category, "리서치");
+        assert!(results[0].preview.contains("반도체"));
+    }
+
+    #[test]
+    fn test_jsearch_empty_keyword() {
+        let dir = tempfile::tempdir().unwrap();
+        let results = jsearch_in("", dir.path());
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_jsearch_whitespace_keyword() {
+        let dir = tempfile::tempdir().unwrap();
+        let results = jsearch_in("   ", dir.path());
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_jsearch_no_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let research = dir.path().join("research");
+        fs::create_dir_all(&research).unwrap();
+        fs::write(research.join("topic.md"), "AI 기술 동향").unwrap();
+        let results = jsearch_in("반도체", dir.path());
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_jsearch_category_classification() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = dir.path().join("notes");
+        fs::create_dir_all(&notes).unwrap();
+        fs::write(notes.join("meeting.jsonl"), r#"{"note":"삼성전자 취재"}"#).unwrap();
+        let drafts = dir.path().join("drafts");
+        fs::create_dir_all(&drafts).unwrap();
+        fs::write(drafts.join("article.md"), "삼성전자 실적 발표").unwrap();
+
+        let results = jsearch_in("삼성전자", dir.path());
+        assert_eq!(results.len(), 2);
+        let categories: Vec<&str> = results.iter().map(|r| r.category).collect();
+        assert!(categories.contains(&"취재노트"));
+        assert!(categories.contains(&"초안"));
+    }
+
+    #[test]
+    fn test_jsearch_filename_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let research = dir.path().join("research");
+        fs::create_dir_all(&research).unwrap();
+        fs::write(research.join("반도체.md"), "내용 없음").unwrap();
+        let results = jsearch_in("반도체", dir.path());
+        assert_eq!(results.len(), 1);
+        assert!(results[0].preview.contains("파일명 매칭"));
+    }
+
+    // ── parse_bigkinds_search ───────────────────────────────────────────
+
+    #[test]
+    fn test_parse_bigkinds_search_normal() {
+        let json = r#"{"result":{"docs":[{"TITLE":"반도체 수출 증가","PROVIDER":"조선일보","DATE":"2026-03-29","PROVIDER_LINK_PAGE":"https://example.com","CONTENT":"반도체 수출이 크게 증가했다"}]}}"#;
+        let items = parse_bigkinds_search(json);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "반도체 수출 증가");
+        assert_eq!(items[0].provider, "조선일보");
+        assert_eq!(items[0].date, "2026-03-29");
+    }
+
+    #[test]
+    fn test_parse_bigkinds_search_empty() {
+        let json = r#"{"result":{"docs":[]}}"#;
+        let items = parse_bigkinds_search(json);
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn test_parse_bigkinds_search_invalid_json() {
+        let items = parse_bigkinds_search("not json at all");
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn test_parse_bigkinds_search_no_title() {
+        let json = r#"{"result":{"docs":[{"TITLE":"","PROVIDER":"A","DATE":"2026-01-01","PROVIDER_LINK_PAGE":"","CONTENT":""}]}}"#;
+        let items = parse_bigkinds_search(json);
+        assert!(items.is_empty());
+    }
+
+    // ── parse_single_bigkinds_item ──────────────────────────────────────
+
+    #[test]
+    fn test_parse_single_bigkinds_item_valid() {
+        let obj = r#"{"TITLE":"테스트 기사","PROVIDER":"한겨레","DATE":"2026-03-28","PROVIDER_LINK_PAGE":"https://ex.com","CONTENT":"짧은 내용"}"#;
+        let item = parse_single_bigkinds_item(obj).unwrap();
+        assert_eq!(item.title, "테스트 기사");
+        assert_eq!(item.provider, "한겨레");
+    }
+
+    #[test]
+    fn test_parse_single_bigkinds_item_missing_title() {
+        let obj = r#"{"PROVIDER":"A","DATE":"2026-01-01"}"#;
+        assert!(parse_single_bigkinds_item(obj).is_none());
+    }
+
+    // ── parse_bigkinds_trend ────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_bigkinds_trend_normal() {
+        let json = r#"{"result":{"timeline":[{"date":"2026-03-01","count":"42"},{"date":"2026-03-02","count":"55"}]}}"#;
+        let trends = parse_bigkinds_trend(json);
+        assert_eq!(trends.len(), 2);
+        assert_eq!(trends[0].date, "2026-03-01");
+        assert_eq!(trends[0].count, 42);
+        assert_eq!(trends[1].count, 55);
+    }
+
+    #[test]
+    fn test_parse_bigkinds_trend_empty() {
+        let json = r#"{"result":{"timeline":[]}}"#;
+        let trends = parse_bigkinds_trend(json);
+        assert!(trends.is_empty());
+    }
+
+    #[test]
+    fn test_parse_bigkinds_trend_no_timeline() {
+        let trends = parse_bigkinds_trend(r#"{"result":{}}"#);
+        assert!(trends.is_empty());
+    }
+
+    // ── parse_bigkinds_related ──────────────────────────────────────────
+
+    #[test]
+    fn test_parse_bigkinds_related_normal() {
+        let json = r#"{"result":{"nodes":[{"name":"AI","weight":"0.85"},{"name":"GPU","weight":"0.72"}]}}"#;
+        let related = parse_bigkinds_related(json);
+        assert_eq!(related.len(), 2);
+        assert_eq!(related[0].keyword, "AI");
+        assert!((related[0].score - 0.85).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_parse_bigkinds_related_empty() {
+        let json = r#"{"result":{"nodes":[]}}"#;
+        let related = parse_bigkinds_related(json);
+        assert!(related.is_empty());
+    }
+
+    // ── format_trend_chart ──────────────────────────────────────────────
+
+    #[test]
+    fn test_format_trend_chart_normal() {
+        let trends = vec![
+            BigKindsTrend { date: "2026-03-01".into(), count: 10 },
+            BigKindsTrend { date: "2026-03-02".into(), count: 20 },
+        ];
+        let chart = format_trend_chart(&trends);
+        assert!(chart.contains("2026-03-01"));
+        assert!(chart.contains("2026-03-02"));
+        assert!(chart.contains("10건"));
+        assert!(chart.contains("20건"));
+        assert!(chart.contains('█'));
+    }
+
+    #[test]
+    fn test_format_trend_chart_empty() {
+        let chart = format_trend_chart(&[]);
+        assert!(chart.contains("데이터 없음"));
+    }
+
+    // ── parse_dart_list ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_dart_list_normal() {
+        let json = r#"{"status":"000","message":"정상","list":[{"corp_name":"삼성전자","report_nm":"분기보고서","rcept_no":"20260315000123","rcept_dt":"20260315","flr_nm":"삼성전자"}]}"#;
+        let items = parse_dart_list(json);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].corp_name, "삼성전자");
+        assert_eq!(items[0].report_nm, "분기보고서");
+        assert_eq!(items[0].rcept_no, "20260315000123");
+    }
+
+    #[test]
+    fn test_parse_dart_list_empty() {
+        let json = r#"{"status":"013","message":"조회된 데이터가 없습니다.","list":[]}"#;
+        let items = parse_dart_list(json);
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn test_parse_dart_list_no_list_key() {
+        let items = parse_dart_list(r#"{"status":"000"}"#);
+        assert!(items.is_empty());
+    }
+
+    // ── parse_single_dart_item ──────────────────────────────────────────
+
+    #[test]
+    fn test_parse_single_dart_item_valid() {
+        let obj = r#"{"corp_name":"LG화학","report_nm":"사업보고서","rcept_no":"123","rcept_dt":"20260101","flr_nm":"LG화학"}"#;
+        let item = parse_single_dart_item(obj).unwrap();
+        assert_eq!(item.corp_name, "LG화학");
+        assert_eq!(item.report_nm, "사업보고서");
+    }
+
+    #[test]
+    fn test_parse_single_dart_item_empty() {
+        let obj = r#"{"corp_name":"","report_nm":""}"#;
+        assert!(parse_single_dart_item(obj).is_none());
+    }
+
+    // ── format_dart_date ────────────────────────────────────────────────
+
+    #[test]
+    fn test_format_dart_date_valid() {
+        assert_eq!(format_dart_date("20260329"), "2026-03-29");
+        assert_eq!(format_dart_date("20251231"), "2025-12-31");
+    }
+
+    #[test]
+    fn test_format_dart_date_passthrough() {
+        assert_eq!(format_dart_date("2026-03-29"), "2026-03-29");
+        assert_eq!(format_dart_date("short"), "short");
+        assert_eq!(format_dart_date(""), "");
+    }
+
+    // ── parse_assembly_list ─────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_assembly_list_normal() {
+        let xml = r#"<response><body><items><row><BILL_ID>B001</BILL_ID><BILL_NO>2200001</BILL_NO><BILL_NAME>반도체산업 지원법</BILL_NAME><PROPOSER>홍길동</PROPOSER><PROPOSE_DT>20260301</PROPOSE_DT><COMMITTEE>산업통상자원위원회</COMMITTEE><PROC_RESULT>계류</PROC_RESULT></row></items></body></response>"#;
+        let bills = parse_assembly_list(xml);
+        assert_eq!(bills.len(), 1);
+        assert_eq!(bills[0].bill_name, "반도체산업 지원법");
+        assert_eq!(bills[0].proposer, "홍길동");
+        assert_eq!(bills[0].bill_no, "2200001");
+    }
+
+    #[test]
+    fn test_parse_assembly_list_multiple() {
+        let xml = "<items><row><BILL_ID>1</BILL_ID><BILL_NO>100</BILL_NO><BILL_NAME>법안A</BILL_NAME><PROPOSER></PROPOSER><PROPOSE_DT></PROPOSE_DT><COMMITTEE></COMMITTEE><PROC_RESULT></PROC_RESULT></row><row><BILL_ID>2</BILL_ID><BILL_NO>200</BILL_NO><BILL_NAME>법안B</BILL_NAME><PROPOSER></PROPOSER><PROPOSE_DT></PROPOSE_DT><COMMITTEE></COMMITTEE><PROC_RESULT></PROC_RESULT></row></items>";
+        let bills = parse_assembly_list(xml);
+        assert_eq!(bills.len(), 2);
+        assert_eq!(bills[0].bill_name, "법안A");
+        assert_eq!(bills[1].bill_name, "법안B");
+    }
+
+    #[test]
+    fn test_parse_assembly_list_empty() {
+        let bills = parse_assembly_list("<response></response>");
+        assert!(bills.is_empty());
+    }
+
+    #[test]
+    fn test_parse_assembly_list_empty_name() {
+        let xml = "<row><BILL_ID>1</BILL_ID><BILL_NO>100</BILL_NO><BILL_NAME></BILL_NAME><PROPOSER></PROPOSER><PROPOSE_DT></PROPOSE_DT><COMMITTEE></COMMITTEE><PROC_RESULT></PROC_RESULT></row>";
+        let bills = parse_assembly_list(xml);
+        assert!(bills.is_empty());
+    }
+
+    // ── format_assembly_date ────────────────────────────────────────────
+
+    #[test]
+    fn test_format_assembly_date_yyyymmdd() {
+        assert_eq!(format_assembly_date("20260329"), "2026-03-29");
+    }
+
+    #[test]
+    fn test_format_assembly_date_passthrough() {
+        assert_eq!(format_assembly_date("2026-03-29"), "2026-03-29");
+        assert_eq!(format_assembly_date(""), "");
+    }
+
+    // ── xml_extract ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_xml_extract_found() {
+        assert_eq!(xml_extract("<TAG>value</TAG>", "TAG"), "value");
+    }
+
+    #[test]
+    fn test_xml_extract_not_found() {
+        assert_eq!(xml_extract("<OTHER>value</OTHER>", "TAG"), "");
+    }
+
+    #[test]
+    fn test_xml_extract_nested() {
+        let xml = "<row><A>hello</A><B>world</B></row>";
+        assert_eq!(xml_extract(xml, "A"), "hello");
+        assert_eq!(xml_extract(xml, "B"), "world");
+    }
+
+    #[test]
+    fn test_xml_extract_whitespace() {
+        assert_eq!(xml_extract("<TAG>  value  </TAG>", "TAG"), "value");
+    }
+
+    // ── url_encode ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_url_encode_ascii() {
+        assert_eq!(url_encode("hello"), "hello");
+        assert_eq!(url_encode("test123"), "test123");
+    }
+
+    #[test]
+    fn test_url_encode_korean() {
+        let encoded = url_encode("삼성전자");
+        assert!(encoded.starts_with('%'));
+        assert!(!encoded.contains("삼성"));
+    }
+
+    #[test]
+    fn test_url_encode_special() {
+        assert_eq!(url_encode("a b"), "a%20b");
+        assert_eq!(url_encode("a&b=c"), "a%26b%3Dc");
+    }
+
+    #[test]
+    fn test_url_encode_unreserved() {
+        assert_eq!(url_encode("a-b_c.d~e"), "a-b_c.d~e");
+    }
+
+    // ── find_matching_bracket ───────────────────────────────────────────
+
+    #[test]
+    fn test_find_matching_bracket_simple() {
+        assert_eq!(find_matching_bracket("[]"), 1);
+        assert_eq!(find_matching_bracket("[1,2,3]"), 6);
+    }
+
+    #[test]
+    fn test_find_matching_bracket_nested() {
+        assert_eq!(find_matching_bracket("[[1],[2]]"), 8);
+    }
+
+    #[test]
+    fn test_find_matching_bracket_with_strings() {
+        let s = r#"["a]b","c"]"#;
+        assert_eq!(find_matching_bracket(s), 10);
+    }
+
+    #[test]
+    fn test_find_matching_bracket_escaped_quote() {
+        let s = r#"["a\"b"]"#;
+        assert_eq!(find_matching_bracket(s), 7);
+    }
+
+    // ── epoch_days_to_date / is_leap_year ───────────────────────────────
+
+    #[test]
+    fn test_epoch_days_to_date_epoch() {
+        assert_eq!(epoch_days_to_date(0), "1970-01-01");
+    }
+
+    #[test]
+    fn test_epoch_days_to_date_known() {
+        // 2026-03-29 = days since epoch
+        // 2026-01-01 is day 20454 (from 1970-01-01)
+        // Jan=31, Feb=28, so Mar 29 = 31+28+29-1 = 87 days into 2026
+        // Total = 20454 + 87 = 20541
+        assert_eq!(epoch_days_to_date(20541), "2026-03-29");
+    }
+
+    #[test]
+    fn test_is_leap_year() {
+        assert!(is_leap_year(2000));
+        assert!(is_leap_year(2024));
+        assert!(!is_leap_year(1900));
+        assert!(!is_leap_year(2023));
+        assert!(is_leap_year(2400));
+    }
+
+    #[test]
+    fn test_epoch_days_to_date_leap_day() {
+        // 2024-02-29: leap year
+        // 2024-01-01 is day 19723
+        // Jan=31, Feb=29 → Feb 29 = day 31+28 = 59th day (0-indexed: 58)
+        // 19723 + 59 = 19782
+        assert_eq!(epoch_days_to_date(19782), "2024-02-29");
+    }
+}
