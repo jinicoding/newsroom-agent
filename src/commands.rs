@@ -192,7 +192,7 @@ pub const ALERT_SUBCOMMANDS: &[&str] = &["add", "list", "check", "remove"];
 pub const ARCHIVE_SUBCOMMANDS: &[&str] = &["save", "list", "search", "view"];
 
 /// Data subcommand names for `/data <Tab>` completion.
-pub const DATA_SUBCOMMANDS: &[&str] = &["analyze", "summarize", "compare"];
+pub const DATA_SUBCOMMANDS: &[&str] = &["analyze", "summarize", "compare", "chart"];
 
 /// Follow subcommand names for `/follow <Tab>` completion.
 pub const FOLLOW_SUBCOMMANDS: &[&str] = &["add", "list", "done", "remind"];

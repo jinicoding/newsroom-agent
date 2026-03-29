@@ -1226,16 +1226,31 @@ pub async fn handle_data(
                 data_compare(agent, files[0], files[1], session_total, model).await;
             }
         }
+        "chart" => {
+            let rest = args.strip_prefix("chart").unwrap_or("").trim();
+            let parts: Vec<&str> = rest.split_whitespace().collect();
+            if parts.is_empty() {
+                println!("{DIM}  사용법: /data chart <파일경로> [칼럼명]   ASCII 막대 차트 생성 (로컬){RESET}");
+                println!("{DIM}  예시:   /data chart sales.csv{RESET}");
+                println!("{DIM}          /data chart sales.csv revenue{RESET}");
+                println!("{DIM}  결과:   수치 칼럼의 가로 막대 차트, 기본 통계{RESET}\n");
+            } else {
+                let file = parts[0];
+                let col = parts.get(1).copied();
+                data_chart(file, col);
+            }
+        }
         "help" | _ if args.is_empty() || args == "help" => {
             println!("{DIM}  /data — 데이터 저널리즘 분석 지원{RESET}");
             println!("{DIM}  하위 커맨드:{RESET}");
             println!("{DIM}    analyze  <파일>          AI 분석 (핵심 수치, 추세, 이상치, 기사 앵글){RESET}");
             println!("{DIM}    summarize <파일>         로컬 기본 통계 (행/열, 수치 통계, 결측치){RESET}");
-            println!("{DIM}    compare  <파일1> <파일2> 두 데이터셋 차이 분석{RESET}\n");
+            println!("{DIM}    compare  <파일1> <파일2> 두 데이터셋 차이 분석{RESET}");
+            println!("{DIM}    chart    <파일> [칼럼]   ASCII 막대 차트 (로컬){RESET}\n");
         }
         other => {
             eprintln!("{RED}  알 수 없는 하위 커맨드: {other}{RESET}");
-            println!("{DIM}  사용법: /data [analyze|summarize|compare]{RESET}\n");
+            println!("{DIM}  사용법: /data [analyze|summarize|compare|chart]{RESET}\n");
         }
     }
 }
@@ -1473,6 +1488,190 @@ async fn data_compare(
             }
             Err(e) => eprintln!("{RED}  저장 실패: {e}{RESET}\n"),
         }
+    }
+}
+
+// ── /data chart — CSV ASCII bar chart (local, no AI) ────────────────────
+
+/// Find the first numeric column index in parsed CSV data.
+/// A column is numeric if >50% of non-empty cells parse as f64.
+pub fn find_numeric_column(headers: &[String], rows: &[Vec<String>]) -> Option<usize> {
+    for (col_idx, _header) in headers.iter().enumerate() {
+        let mut numeric_count = 0usize;
+        let mut non_empty = 0usize;
+        for row in rows {
+            if col_idx < row.len() {
+                let cell = row[col_idx].trim();
+                if !cell.is_empty() && cell != "NA" && cell != "N/A" && cell != "-" {
+                    non_empty += 1;
+                    if cell.replace(['_', ' '], "").parse::<f64>().is_ok() {
+                        numeric_count += 1;
+                    }
+                }
+            }
+        }
+        if non_empty > 0 && numeric_count * 2 > non_empty {
+            return Some(col_idx);
+        }
+    }
+    None
+}
+
+/// Find the first string (non-numeric) column index for use as labels.
+pub fn find_label_column(headers: &[String], rows: &[Vec<String>]) -> Option<usize> {
+    for (col_idx, _header) in headers.iter().enumerate() {
+        let mut string_count = 0usize;
+        let mut non_empty = 0usize;
+        for row in rows {
+            if col_idx < row.len() {
+                let cell = row[col_idx].trim();
+                if !cell.is_empty() && cell != "NA" && cell != "N/A" && cell != "-" {
+                    non_empty += 1;
+                    if cell.replace(['_', ' '], "").parse::<f64>().is_err() {
+                        string_count += 1;
+                    }
+                }
+            }
+        }
+        if non_empty > 0 && string_count * 2 > non_empty {
+            return Some(col_idx);
+        }
+    }
+    None
+}
+
+/// Find a column index by name (case-insensitive).
+pub fn find_column_by_name(headers: &[String], name: &str) -> Option<usize> {
+    let lower = name.to_lowercase();
+    headers
+        .iter()
+        .position(|h| h.trim().to_lowercase() == lower)
+}
+
+/// Build an ASCII horizontal bar chart from CSV content.
+/// `value_col` specifies the numeric column name (None = auto-detect first numeric).
+/// Returns the chart as a string, or an error message.
+pub fn build_ascii_chart(content: &str, value_col: Option<&str>) -> Result<String, String> {
+    let (headers, rows) = parse_csv(content);
+    if headers.is_empty() || rows.is_empty() {
+        return Err("데이터가 비어 있습니다.".to_string());
+    }
+
+    // Resolve value column
+    let val_idx = match value_col {
+        Some(name) => find_column_by_name(&headers, name)
+            .ok_or_else(|| format!("칼럼 '{name}'을(를) 찾을 수 없습니다. 사용 가능: {}", headers.join(", ")))?,
+        None => find_numeric_column(&headers, &rows)
+            .ok_or_else(|| "수치 칼럼을 찾을 수 없습니다.".to_string())?,
+    };
+
+    // Resolve label column (first string column, excluding value column)
+    let label_idx = find_label_column(&headers, &rows);
+
+    // Extract (label, value) pairs
+    let mut entries: Vec<(String, f64)> = Vec::new();
+    for (i, row) in rows.iter().enumerate() {
+        let label = if let Some(li) = label_idx {
+            if li < row.len() {
+                row[li].trim().to_string()
+            } else {
+                format!("행 {}", i + 1)
+            }
+        } else {
+            format!("행 {}", i + 1)
+        };
+
+        if val_idx < row.len() {
+            let cell = row[val_idx].trim();
+            if let Ok(v) = cell.replace(['_', ' '], "").parse::<f64>() {
+                entries.push((label, v));
+            }
+        }
+    }
+
+    if entries.is_empty() {
+        return Err("유효한 수치 데이터가 없습니다.".to_string());
+    }
+
+    // Chart parameters
+    let chart_width: usize = 40;
+    let max_val = entries
+        .iter()
+        .map(|(_, v)| v.abs())
+        .fold(0.0f64, f64::max);
+    let max_label_len = entries.iter().map(|(l, _)| l.chars().count()).max().unwrap_or(0);
+    let max_label_len = max_label_len.min(20); // cap label width
+
+    let val_header = &headers[val_idx];
+    let mut out = format!("## {} 차트", val_header);
+    if let Some(li) = label_idx {
+        out.push_str(&format!(" (라벨: {})", headers[li]));
+    }
+    out.push_str("\n\n");
+
+    for (label, val) in &entries {
+        // Truncate label
+        let display_label: String = if label.chars().count() > max_label_len {
+            label.chars().take(max_label_len - 1).chain(std::iter::once('…')).collect()
+        } else {
+            label.clone()
+        };
+        let padding = max_label_len - display_label.chars().count();
+
+        let bar_len = if max_val > 0.0 {
+            ((val.abs() / max_val) * chart_width as f64).round() as usize
+        } else {
+            0
+        };
+        let bar: String = "█".repeat(bar_len);
+
+        out.push_str(&format!(
+            "{}{} │ {:<width$} {:>10.2}\n",
+            " ".repeat(padding),
+            display_label,
+            bar,
+            val,
+            width = chart_width,
+        ));
+    }
+
+    // Summary line
+    let sum: f64 = entries.iter().map(|(_, v)| v).sum();
+    let mean = sum / entries.len() as f64;
+    let min_val = entries.iter().map(|(_, v)| *v).fold(f64::INFINITY, f64::min);
+    let max_val_actual = entries.iter().map(|(_, v)| *v).fold(f64::NEG_INFINITY, f64::max);
+    out.push_str(&format!(
+        "\n  항목: {}  |  최솟값: {:.2}  |  최댓값: {:.2}  |  평균: {:.2}\n",
+        entries.len(),
+        min_val,
+        max_val_actual,
+        mean,
+    ));
+
+    Ok(out)
+}
+
+/// Handle `/data chart <file> [column]` — local ASCII bar chart.
+fn data_chart(file_path: &str, col_name: Option<&str>) {
+    let content = match std::fs::read_to_string(file_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{RED}  파일 읽기 실패: {e}{RESET}\n");
+            return;
+        }
+    };
+
+    match build_ascii_chart(&content, col_name) {
+        Ok(chart) => {
+            println!("\n{chart}");
+            let save_path = std::path::Path::new(DATA_DIR).join("last_chart.txt");
+            ensure_sources_dir_at(&save_path);
+            match std::fs::write(&save_path, &chart) {
+                Ok(_) => println!("{GREEN}  ✓ 차트 저장: {}{RESET}\n", save_path.display()),
+                Err(e) => eprintln!("{RED}  저장 실패: {e}{RESET}\n"),
+            }
+        }
+        Err(e) => eprintln!("{RED}  차트 생성 실패: {e}{RESET}\n"),
     }
 }
 
@@ -7198,6 +7397,110 @@ mod tests {
         let (sub, topic) = parse_pitch_args(&rest);
         assert_eq!(sub, "new");
         assert_eq!(topic, "반도체 수출");
+    }
+
+    // ── /data chart tests ───────────────────────────────────────────────
+
+    #[test]
+    fn find_numeric_column_basic() {
+        let headers = vec!["name".into(), "score".into(), "grade".into()];
+        let rows = vec![
+            vec!["Alice".into(), "95".into(), "A".into()],
+            vec!["Bob".into(), "82".into(), "B".into()],
+        ];
+        assert_eq!(find_numeric_column(&headers, &rows), Some(1));
+    }
+
+    #[test]
+    fn find_numeric_column_no_numeric() {
+        let headers = vec!["name".into(), "city".into()];
+        let rows = vec![
+            vec!["Alice".into(), "Seoul".into()],
+            vec!["Bob".into(), "Busan".into()],
+        ];
+        assert_eq!(find_numeric_column(&headers, &rows), None);
+    }
+
+    #[test]
+    fn find_label_column_basic() {
+        let headers = vec!["name".into(), "score".into()];
+        let rows = vec![
+            vec!["Alice".into(), "95".into()],
+            vec!["Bob".into(), "82".into()],
+        ];
+        assert_eq!(find_label_column(&headers, &rows), Some(0));
+    }
+
+    #[test]
+    fn find_column_by_name_case_insensitive() {
+        let headers = vec!["Name".into(), "Score".into(), "Grade".into()];
+        assert_eq!(find_column_by_name(&headers, "score"), Some(1));
+        assert_eq!(find_column_by_name(&headers, "GRADE"), Some(2));
+        assert_eq!(find_column_by_name(&headers, "missing"), None);
+    }
+
+    #[test]
+    fn build_ascii_chart_basic() {
+        let csv = "이름,매출\n서울,100\n부산,50\n대구,75\n";
+        let result = build_ascii_chart(csv, None).unwrap();
+        assert!(result.contains("매출 차트"));
+        assert!(result.contains("서울"));
+        assert!(result.contains("부산"));
+        assert!(result.contains("대구"));
+        assert!(result.contains("█"));
+        // Seoul has max value, should have longest bar
+        assert!(result.contains("100.00"));
+        assert!(result.contains("50.00"));
+    }
+
+    #[test]
+    fn build_ascii_chart_specified_column() {
+        let csv = "city,pop,area\nSeoul,9700000,605\nBusan,3400000,770\n";
+        let result = build_ascii_chart(csv, Some("area")).unwrap();
+        assert!(result.contains("area 차트"));
+        assert!(result.contains("605.00"));
+        assert!(result.contains("770.00"));
+    }
+
+    #[test]
+    fn build_ascii_chart_auto_detect_first_numeric() {
+        let csv = "region,year,value\nA,2024,10\nB,2024,20\n";
+        // year is numeric but comes first
+        let result = build_ascii_chart(csv, None).unwrap();
+        assert!(result.contains("year 차트"));
+    }
+
+    #[test]
+    fn build_ascii_chart_empty_data() {
+        let csv = "";
+        let result = build_ascii_chart(csv, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn build_ascii_chart_no_numeric_column() {
+        let csv = "name,city\nAlice,Seoul\nBob,Busan\n";
+        let result = build_ascii_chart(csv, None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("수치 칼럼"));
+    }
+
+    #[test]
+    fn build_ascii_chart_invalid_column_name() {
+        let csv = "name,value\nA,10\nB,20\n";
+        let result = build_ascii_chart(csv, Some("nonexistent"));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("찾을 수 없습니다"));
+    }
+
+    #[test]
+    fn build_ascii_chart_summary_stats() {
+        let csv = "item,price\nA,10\nB,30\nC,20\n";
+        let result = build_ascii_chart(csv, None).unwrap();
+        assert!(result.contains("항목: 3"));
+        assert!(result.contains("최솟값: 10.00"));
+        assert!(result.contains("최댓값: 30.00"));
+        assert!(result.contains("평균: 20.00"));
     }
 }
 
