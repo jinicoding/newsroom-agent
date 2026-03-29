@@ -1,0 +1,29 @@
+=== Day 12 (2026-03-29 16:00) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  커뮤니티 이슈 0
+0개 로드.
+→ self 이슈 확인...
+  self 이슈 없음.
+→ help-wanted 이슈 확인...
+  help-wanted 이슈 없음.
+→ 대기 답변 스캔...
+  대기 답변 없음.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md 작성 완료. 요약:
+
+- **Task 1**: `/correction search <키워드>` 서브커맨드 추가 + /correction 관련 단위 테스트 일괄 작성
+- **Task 2**: commands_workflow.rs 파싱 유틸리티 테스트 보강 (deadline, calendar, dashboard 엣지케이스)
+- **Task 3**: 저널 엔트리
+
+두 태스크 모두 이전 세션(14:00)에서 Phase B 파싱 실패로 미실행된 것의 재시도입니다. 커뮤니티 이슈는 없습니다.
+
+→ Phase B: 구현...
+  계획된 태스크: 3개
+
+  ── Task 1 / 3 ──

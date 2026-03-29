@@ -3063,10 +3063,11 @@ mod tests {
     #[test]
     fn test_arg_completions_correction() {
         let all = command_arg_completions("/correction", "");
-        assert_eq!(all.len(), 3);
+        assert_eq!(all.len(), 4);
         assert!(all.contains(&"add".to_string()));
         assert!(all.contains(&"list".to_string()));
         assert!(all.contains(&"report".to_string()));
+        assert!(all.contains(&"search".to_string()));
     }
 
     #[test]

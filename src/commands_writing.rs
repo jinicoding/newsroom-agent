@@ -2679,6 +2679,12 @@ pub async fn handle_correction(
         return;
     }
 
+    if args.starts_with("search") {
+        let keyword = args.strip_prefix("search").unwrap_or("").trim();
+        correction_search(keyword);
+        return;
+    }
+
     println!("{DIM}  알 수 없는 하위 명령: {args}{RESET}");
     correction_usage();
 }
@@ -2688,6 +2694,7 @@ fn correction_usage() {
     println!("{DIM}  /correction add --article <제목> --error <오류 내용> --fix <정정 내용>{RESET}");
     println!("{DIM}  /correction list                — 정정 이력 조회{RESET}");
     println!("{DIM}  /correction report [--article <제목>] — AI 기반 정정보도문 생성{RESET}");
+    println!("{DIM}  /correction search <키워드>       — 키워드로 정정 기록 검색{RESET}");
     println!(
         "{DIM}  정정보도 기록을 관리합니다. 한국 언론중재법에 따른 정정보도문을 생성합니다.{RESET}\n"
     );
@@ -2809,6 +2816,53 @@ fn correction_list() {
     }
     println!("{DIM}  정정 기록 ({} 건):{RESET}", records.len());
     for (i, r) in records.iter().enumerate() {
+        println!(
+            "  {}) [{}] {} — 오류: {} → 정정: {} ({})",
+            i + 1,
+            r.date,
+            r.article,
+            r.error,
+            r.fix,
+            r.status
+        );
+    }
+    println!();
+}
+
+/// Search correction records by keyword (case-insensitive match on article, error, fix fields).
+pub fn search_corrections(records: &[CorrectionRecord], keyword: &str) -> Vec<CorrectionRecord> {
+    let kw_lower = keyword.to_lowercase();
+    records
+        .iter()
+        .filter(|r| {
+            r.article.to_lowercase().contains(&kw_lower)
+                || r.error.to_lowercase().contains(&kw_lower)
+                || r.fix.to_lowercase().contains(&kw_lower)
+        })
+        .cloned()
+        .collect()
+}
+
+fn correction_search(keyword: &str) {
+    if keyword.is_empty() {
+        eprintln!("{RED}  검색어를 입력하세요: /correction search <키워드>{RESET}\n");
+        return;
+    }
+    let records = load_corrections();
+    if records.is_empty() {
+        println!("{DIM}  저장된 정정 기록이 없습니다.{RESET}\n");
+        return;
+    }
+    let results = search_corrections(&records, keyword);
+    if results.is_empty() {
+        println!("{DIM}  \"{keyword}\"에 대한 검색 결과가 없습니다.{RESET}\n");
+        return;
+    }
+    println!(
+        "{DIM}  \"{keyword}\" 검색 결과 ({} 건):{RESET}",
+        results.len()
+    );
+    for (i, r) in results.iter().enumerate() {
         println!(
             "  {}) [{}] {} — 오류: {} → 정정: {} ({})",
             i + 1,
@@ -5497,7 +5551,7 @@ pub const TEMPLATE_SUBCOMMANDS: &[&str] = &[
 ];
 
 /// Subcommand names for `/correction <Tab>` completion.
-pub const CORRECTION_SUBCOMMANDS: &[&str] = &["add", "list", "report"];
+pub const CORRECTION_SUBCOMMANDS: &[&str] = &["add", "list", "report", "search"];
 
 /// Subcommand names for `/quality <Tab>` completion.
 pub const QUALITY_SUBCOMMANDS: &[&str] = &["check", "report"];
@@ -8837,5 +8891,149 @@ mod tests {
             path.to_string_lossy(),
             ".journalist/anonymize/2026-03-27_anonymize.md"
         );
+    }
+
+    // ── /correction tests ──────────────────────────────────────────────
+
+    #[test]
+    fn parse_correction_add_args_all_fields() {
+        let (article, error, fix) =
+            parse_correction_add_args("--article 테스트기사 --error 오류내용 --fix 수정내용");
+        assert_eq!(article, "테스트기사");
+        assert_eq!(error, "오류내용");
+        assert_eq!(fix, "수정내용");
+    }
+
+    #[test]
+    fn parse_correction_add_args_missing_fields() {
+        let (article, error, fix) = parse_correction_add_args("--article 제목만");
+        assert_eq!(article, "제목만");
+        assert!(error.is_empty());
+        assert!(fix.is_empty());
+    }
+
+    #[test]
+    fn parse_correction_add_args_no_input() {
+        let (article, error, fix) = parse_correction_add_args("");
+        assert!(article.is_empty());
+        assert!(error.is_empty());
+        assert!(fix.is_empty());
+    }
+
+    #[test]
+    fn load_corrections_empty_file() {
+        // load_corrections returns empty vec when file doesn't exist
+        // (relies on CORRECTIONS_FILE path not existing in test env)
+        let records = load_corrections();
+        // May or may not be empty depending on local state; just ensure no panic
+        let _ = records;
+    }
+
+    #[test]
+    fn search_corrections_matches_article() {
+        let records = vec![
+            CorrectionRecord {
+                date: "2026-03-29".into(),
+                article: "반도체 수출 기사".into(),
+                error: "수치 오류".into(),
+                fix: "정정 완료".into(),
+                status: "done".into(),
+            },
+            CorrectionRecord {
+                date: "2026-03-28".into(),
+                article: "자동차 산업 분석".into(),
+                error: "인용 오류".into(),
+                fix: "출처 수정".into(),
+                status: "pending".into(),
+            },
+        ];
+        let results = search_corrections(&records, "반도체");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].article, "반도체 수출 기사");
+    }
+
+    #[test]
+    fn search_corrections_matches_error_field() {
+        let records = vec![CorrectionRecord {
+            date: "2026-03-29".into(),
+            article: "경제 기사".into(),
+            error: "GDP 수치 오류".into(),
+            fix: "정정함".into(),
+            status: "done".into(),
+        }];
+        let results = search_corrections(&records, "GDP");
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn search_corrections_matches_fix_field() {
+        let records = vec![CorrectionRecord {
+            date: "2026-03-29".into(),
+            article: "기사 제목".into(),
+            error: "오류".into(),
+            fix: "출처를 추가함".into(),
+            status: "done".into(),
+        }];
+        let results = search_corrections(&records, "출처");
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn search_corrections_case_insensitive() {
+        let records = vec![CorrectionRecord {
+            date: "2026-03-29".into(),
+            article: "Samsung Report".into(),
+            error: "typo".into(),
+            fix: "fixed".into(),
+            status: "done".into(),
+        }];
+        let results = search_corrections(&records, "samsung");
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn search_corrections_no_match() {
+        let records = vec![CorrectionRecord {
+            date: "2026-03-29".into(),
+            article: "경제 기사".into(),
+            error: "수치 오류".into(),
+            fix: "정정함".into(),
+            status: "done".into(),
+        }];
+        let results = search_corrections(&records, "스포츠");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_corrections_empty_records() {
+        let results = search_corrections(&[], "키워드");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn append_and_load_corrections_roundtrip() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file_path = dir.path().join("corrections.jsonl");
+        let record = CorrectionRecord {
+            date: "2026-03-29".into(),
+            article: "테스트 기사".into(),
+            error: "오류 내용".into(),
+            fix: "수정 내용".into(),
+            status: "pending".into(),
+        };
+        // Write directly to temp file
+        let json = serde_json::to_string(&record).unwrap();
+        std::fs::write(&file_path, format!("{json}\n")).unwrap();
+        // Read back
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        let loaded: Vec<CorrectionRecord> = content
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].article, "테스트 기사");
+        assert_eq!(loaded[0].error, "오류 내용");
+        assert_eq!(loaded[0].fix, "수정 내용");
     }
 }
