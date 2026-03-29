@@ -22,6 +22,9 @@ pub const WIRE_SUBCOMMANDS: &[&str] = &["save"];
 /// Subcommand names for `/rss <Tab>` completion.
 pub const RSS_SUBCOMMANDS: &[&str] = &["add", "list", "check", "search", "remove"];
 
+/// Subcommand names for `/clip <Tab>` completion.
+pub const CLIP_SUBCOMMANDS: &[&str] = &["list", "search", "stats"];
+
 /// Subcommand names for `/contact <Tab>` completion.
 pub const CONTACT_SUBCOMMANDS: &[&str] = &["log", "history", "recent", "stale", "suggest"];
 
@@ -827,6 +830,156 @@ fn save_clip(path: &std::path::Path, url: &str, content: &str) -> std::io::Resul
     std::fs::write(path, full)
 }
 
+/// Represents a single clip entry with metadata extracted from the file.
+struct ClipEntry {
+    filename: String,
+    source_url: String,
+    content: String,
+}
+
+/// Load all clips from `.journalist/clips/`, returning entries with metadata.
+fn load_clips(dir: &std::path::Path) -> Vec<ClipEntry> {
+    let rd = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(_) => return Vec::new(),
+    };
+    let mut entries: Vec<ClipEntry> = rd
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map(|ext| ext == "md")
+                .unwrap_or(false)
+        })
+        .filter_map(|e| {
+            let content = std::fs::read_to_string(e.path()).ok()?;
+            let source_url = content
+                .lines()
+                .next()
+                .and_then(|l| l.strip_prefix("<!-- source: "))
+                .and_then(|l| l.strip_suffix(" -->"))
+                .unwrap_or("")
+                .to_string();
+            Some(ClipEntry {
+                filename: e.file_name().to_string_lossy().to_string(),
+                source_url,
+                content,
+            })
+        })
+        .collect();
+    entries.sort_by(|a, b| b.filename.cmp(&a.filename)); // newest first
+    entries
+}
+
+/// Search clips by keyword, matching against filename, source URL, and content.
+fn clip_search(dir: &std::path::Path, keyword: &str) -> Vec<ClipEntry> {
+    let kw_lower = keyword.to_lowercase();
+    load_clips(dir)
+        .into_iter()
+        .filter(|e| {
+            e.filename.to_lowercase().contains(&kw_lower)
+                || e.source_url.to_lowercase().contains(&kw_lower)
+                || e.content.to_lowercase().contains(&kw_lower)
+        })
+        .collect()
+}
+
+/// Compute clip statistics: total count, this week's count, today's count,
+/// and top keyword frequencies extracted from filenames.
+fn clip_stats(dir: &std::path::Path, today: &str) -> (usize, usize, usize, Vec<(String, usize)>) {
+    let entries = load_clips(dir);
+    let total = entries.len();
+
+    // Parse today to compute week start (Monday)
+    let today_count = entries
+        .iter()
+        .filter(|e| e.filename.starts_with(today))
+        .count();
+
+    // Compute week start (Monday of current week)
+    let week_start = if today.len() >= 10 {
+        // Parse YYYY-MM-DD manually
+        let parts: Vec<&str> = today.split('-').collect();
+        if parts.len() == 3 {
+            if let (Ok(y), Ok(m), Ok(d)) = (
+                parts[0].parse::<i32>(),
+                parts[1].parse::<u32>(),
+                parts[2].parse::<u32>(),
+            ) {
+                // Simple day-of-week calculation (Zeller-like)
+                // chrono not available, use a simpler approach: count days from a known Monday
+                // 2026-01-05 is a Monday
+                let days_from_ref = days_from_date(y, m, d) - days_from_date(2026, 1, 5);
+                let weekday = ((days_from_ref % 7) + 7) % 7; // 0=Mon, 6=Sun
+                let monday = days_from_date(y, m, d) - weekday;
+                Some(monday)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let week_count = if let Some(mon) = week_start {
+        entries
+            .iter()
+            .filter(|e| {
+                // Extract date from filename: YYYY-MM-DD_...
+                if e.filename.len() >= 10 {
+                    let date_str = &e.filename[..10];
+                    let parts: Vec<&str> = date_str.split('-').collect();
+                    if parts.len() == 3 {
+                        if let (Ok(y), Ok(m), Ok(d)) = (
+                            parts[0].parse::<i32>(),
+                            parts[1].parse::<u32>(),
+                            parts[2].parse::<u32>(),
+                        ) {
+                            let entry_day = days_from_date(y, m, d);
+                            return entry_day >= mon && entry_day < mon + 7;
+                        }
+                    }
+                }
+                false
+            })
+            .count()
+    } else {
+        0
+    };
+
+    // Extract keywords from filenames (slug parts after date)
+    let mut keyword_freq: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for e in &entries {
+        // Filename format: YYYY-MM-DD_slug.md
+        if let Some(slug) = e.filename.get(11..).and_then(|s| s.strip_suffix(".md")) {
+            for part in slug.split('-') {
+                let part = part.trim();
+                if part.len() >= 2 {
+                    *keyword_freq.entry(part.to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+    let mut top_keywords: Vec<(String, usize)> = keyword_freq.into_iter().collect();
+    top_keywords.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    top_keywords.truncate(10);
+
+    (total, week_count, today_count, top_keywords)
+}
+
+/// Convert a date (year, month, day) to a day number for comparison purposes.
+fn days_from_date(y: i32, m: u32, d: u32) -> i64 {
+    // Rata Die algorithm
+    let m = m as i64;
+    let y = if m <= 2 { y as i64 - 1 } else { y as i64 };
+    let m = if m <= 2 { m + 9 } else { m - 3 };
+    let d = d as i64;
+    365 * y + y / 4 - y / 100 + y / 400 + (m * 153 + 2) / 5 + d - 1
+}
+
 /// List saved clips in `.journalist/clips/`.
 fn clip_list() {
     let dir = std::path::Path::new(CLIPS_DIR);
@@ -891,14 +1044,59 @@ pub async fn handle_clip(
     let args = input.strip_prefix("/clip").unwrap_or("").trim();
 
     if args.is_empty() || args == "help" {
-        println!("{DIM}  사용법: /clip <URL>       URL 기사 스크랩{RESET}");
-        println!("{DIM}          /clip list        스크랩 목록 보기{RESET}");
+        println!("{DIM}  사용법: /clip <URL>          URL 기사 스크랩{RESET}");
+        println!("{DIM}          /clip list           스크랩 목록 보기{RESET}");
+        println!("{DIM}          /clip search <키워드>  키워드로 클리핑 검색{RESET}");
+        println!("{DIM}          /clip stats          클리핑 현황 통계{RESET}");
         println!("{DIM}  예시:   /clip https://news.example.com/article/123{RESET}\n");
         return;
     }
 
     if args == "list" {
         clip_list();
+        return;
+    }
+
+    if args == "stats" {
+        let dir = std::path::Path::new(CLIPS_DIR);
+        let today = today_str();
+        let (total, week, today_cnt, top_kw) = clip_stats(dir, &today);
+        println!("{DIM}  ── 클리핑 통계 ──{RESET}");
+        println!("  총 클리핑 수:  {BOLD}{total}{RESET}건");
+        println!("  이번 주:       {week}건");
+        println!("  오늘:          {today_cnt}건");
+        if !top_kw.is_empty() {
+            println!("{DIM}  ── 상위 키워드 (URL 슬러그 기반) ──{RESET}");
+            for (kw, cnt) in &top_kw {
+                println!("    {kw}: {cnt}건");
+            }
+        }
+        println!();
+        return;
+    }
+
+    if let Some(keyword) = args.strip_prefix("search").map(|s| s.trim()) {
+        if keyword.is_empty() {
+            eprintln!("{RED}  검색어를 입력하세요: /clip search <키워드>{RESET}\n");
+            return;
+        }
+        let dir = std::path::Path::new(CLIPS_DIR);
+        let results = clip_search(dir, keyword);
+        if results.is_empty() {
+            println!("{DIM}  '{keyword}' 검색 결과가 없습니다.{RESET}\n");
+            return;
+        }
+        println!(
+            "{DIM}  ── '{keyword}' 검색 결과 ({} 건) ──{RESET}",
+            results.len()
+        );
+        for (i, entry) in results.iter().enumerate() {
+            println!("  {: >3}. {}", i + 1, entry.filename);
+            if !entry.source_url.is_empty() {
+                println!("{DIM}       {}{RESET}", entry.source_url);
+            }
+        }
+        println!();
         return;
     }
 
@@ -5370,6 +5568,132 @@ mod tests {
         assert!(content.contains("<!-- source: https://example.com/test -->"));
         assert!(content.contains("기사 제목"));
         assert!(content.contains("본문 내용"));
+    }
+
+    #[test]
+    fn clip_search_finds_matching_entries() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let clips = dir.path().join("clips");
+        std::fs::create_dir_all(&clips).unwrap();
+
+        // Create test clip files
+        save_clip(
+            &clips.join("2026-03-29_semiconductor-news.md"),
+            "https://example.com/semi",
+            "# 반도체 수출 호조\n\n반도체 수출이 늘어났다.",
+        )
+        .unwrap();
+        save_clip(
+            &clips.join("2026-03-28_ai-market.md"),
+            "https://example.com/ai",
+            "# AI 시장 동향\n\n인공지능 시장이 성장 중이다.",
+        )
+        .unwrap();
+        save_clip(
+            &clips.join("2026-03-27_battery-tech.md"),
+            "https://example.com/battery",
+            "# 배터리 기술 혁신\n\n전고체 배터리가 주목받고 있다.",
+        )
+        .unwrap();
+
+        // Search by content keyword
+        let results = clip_search(&clips, "반도체");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].filename.contains("semiconductor"));
+
+        // Search by URL keyword
+        let results = clip_search(&clips, "battery");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].source_url.contains("battery"));
+
+        // Search by filename keyword
+        let results = clip_search(&clips, "ai-market");
+        assert_eq!(results.len(), 1);
+
+        // No match
+        let results = clip_search(&clips, "자동차");
+        assert!(results.is_empty());
+
+        // Case insensitive
+        let results = clip_search(&clips, "AI");
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn clip_search_empty_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let clips = dir.path().join("no_clips");
+        let results = clip_search(&clips, "test");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn clip_stats_counts_correctly() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let clips = dir.path();
+
+        // Create test clips with different dates
+        save_clip(
+            &clips.join("2026-03-29_news-a.md"),
+            "https://a.com",
+            "# A",
+        )
+        .unwrap();
+        save_clip(
+            &clips.join("2026-03-29_news-b.md"),
+            "https://b.com",
+            "# B",
+        )
+        .unwrap();
+        save_clip(
+            &clips.join("2026-03-28_news-c.md"),
+            "https://c.com",
+            "# C",
+        )
+        .unwrap();
+        save_clip(
+            &clips.join("2026-03-20_news-d.md"),
+            "https://d.com",
+            "# D",
+        )
+        .unwrap();
+
+        let (total, week, today, top_kw) = clip_stats(clips, "2026-03-29");
+        assert_eq!(total, 4);
+        assert_eq!(today, 2); // two clips on 2026-03-29
+        // 2026-03-29 is Sunday, week starts Mon 2026-03-23
+        // 2026-03-28 and 2026-03-29 are in the same week
+        assert_eq!(week, 3); // 03-28 + 2x 03-29
+        assert!(!top_kw.is_empty());
+        // "news" should be the top keyword (appears in all 4 filenames)
+        assert_eq!(top_kw[0].0, "news");
+        assert_eq!(top_kw[0].1, 4);
+    }
+
+    #[test]
+    fn clip_stats_empty_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let (total, week, today, top_kw) = clip_stats(dir.path(), "2026-03-29");
+        assert_eq!(total, 0);
+        assert_eq!(week, 0);
+        assert_eq!(today, 0);
+        assert!(top_kw.is_empty());
+    }
+
+    #[test]
+    fn days_from_date_ordering() {
+        // Later dates should have higher day numbers
+        assert!(days_from_date(2026, 3, 29) > days_from_date(2026, 3, 28));
+        assert!(days_from_date(2026, 3, 1) > days_from_date(2026, 2, 28));
+        assert!(days_from_date(2027, 1, 1) > days_from_date(2026, 12, 31));
+    }
+
+    #[test]
+    fn days_from_date_same_week() {
+        // 2026-03-23 is Monday, 2026-03-29 is Sunday — same week
+        let mon = days_from_date(2026, 3, 23);
+        let sun = days_from_date(2026, 3, 29);
+        assert_eq!(sun - mon, 6);
     }
 
     #[test]

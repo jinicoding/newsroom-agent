@@ -231,8 +231,9 @@ pub use crate::commands_writing::TEMPLATE_SUBCOMMANDS;
 
 /// Re-export subcommand constants from domain modules.
 pub use crate::commands_research::{
-    ASSEMBLY_SUBCOMMANDS, BIGKINDS_SUBCOMMANDS, CONTACT_SUBCOMMANDS, DART_SUBCOMMANDS,
-    MONITOR_SUBCOMMANDS, RESEARCH_SUBCOMMANDS, RSS_SUBCOMMANDS, WIRE_SUBCOMMANDS,
+    ASSEMBLY_SUBCOMMANDS, BIGKINDS_SUBCOMMANDS, CLIP_SUBCOMMANDS, CONTACT_SUBCOMMANDS,
+    DART_SUBCOMMANDS, MONITOR_SUBCOMMANDS, RESEARCH_SUBCOMMANDS, RSS_SUBCOMMANDS,
+    WIRE_SUBCOMMANDS,
 };
 pub use crate::commands_workflow::{
     COVERAGE_SUBCOMMANDS, DIARY_SUBCOMMANDS, FOIA_SUBCOMMANDS, PITCH_SUBCOMMANDS,
@@ -278,6 +279,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/rss" => filter_candidates(RSS_SUBCOMMANDS, &partial_lower),
         "/correction" => filter_candidates(CORRECTION_SUBCOMMANDS, &partial_lower),
         "/coverage" => filter_candidates(COVERAGE_SUBCOMMANDS, &partial_lower),
+        "/clip" => filter_candidates(CLIP_SUBCOMMANDS, &partial_lower),
         "/contact" => filter_candidates(CONTACT_SUBCOMMANDS, &partial_lower),
         "/quality" => filter_candidates(QUALITY_SUBCOMMANDS, &partial_lower),
         "/rival" => filter_candidates(RIVAL_SUBCOMMANDS, &partial_lower),
