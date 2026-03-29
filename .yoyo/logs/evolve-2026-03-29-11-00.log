@@ -1,0 +1,33 @@
+=== Day 12 (2026-03-29 11:00) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  커뮤니티 이슈 0
+0개 로드.
+→ self 이슈 확인...
+  self 이슈 없음.
+→ help-wanted 이슈 확인...
+  help-wanted 이슈 없음.
+→ 대기 답변 스캔...
+  대기 답변 없음.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md 작성 완료.
+
+**Day 12 (11:00) 세션 계획 요약:**
+
+1. **Task 1: commands_editorial.rs 분리** — /desk, /collaborate, /coverage를 commands_workflow.rs(8,913줄)에서 추출. ~1,800줄 이동으로 7,100줄로 감소. 도메인 기준: 조직 운영 vs 콘텐츠 생산.
+
+2. **Task 2: /data chart** — CSV 수치 칼럼을 ASCII 막대 차트로 시각화. 로컬 처리만 사용, AI 없음. 데이터 저널리즘 기자가 패턴과 이상치를 즉시 파악.
+
+3. **Task 3: 저널 작성**
+
+커뮤니티 이슈 없음. 빌드/테스트 정상 (1,738개 전부 통과).
+
+→ Phase B: 구현...
+  계획된 태스크: 3개
+
+  ── Task 1 / 3 ──
