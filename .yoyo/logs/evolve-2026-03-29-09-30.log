@@ -1,0 +1,62 @@
+=== Day 12 (2026-03-29 09:30) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  커뮤니티 이슈 0
+0개 로드.
+→ self 이슈 확인...
+  self 이슈 없음.
+→ help-wanted 이슈 확인...
+  help-wanted 이슈 없음.
+→ 대기 답변 스캔...
+  대기 답변 없음.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md 작성 완료.
+
+**Day 12 계획 요약:**
+
+- **Task 1**: `commands_data.rs` 테스트 추가 — Day 11에서 분리된 1,426줄 파일에 테스트가 0개. parse_bigkinds_search, parse_dart_list, parse_assembly_list, jsearch_in 등 15개+ 순수 함수에 대한 단위 테스트 작성
+- **Task 2**: `/clip` 강화 — 키워드 기반 클리핑 검색(`clip search`)과 통계(`clip stats`) 추가. 기자가 쌓아둔 클리핑을 활용할 수 있게
+- **Task 3**: 저널 항목 작성
+
+커뮤니티 이슈는 오늘 없습니다. 빌드/테스트 모두 정상(67개 통과).
+
+→ Phase B: 구현...
+  계획된 태스크: 3개
+
+  ── Task 1 / 3 ──
+완료. `commands_data.rs`에 48개 테스트를 추가하고 모두 통과했다. 테스트 대상:
+
+- **jsearch_in**: 키워드 매칭, 빈 키워드, 카테고리 분류, 파일명 매칭 (5개)
+- **parse_bigkinds_search**: 정상/빈/잘못된 JSON/빈 제목 (4개)
+- **parse_single_bigkinds_item**: 유효/무효 (2개)
+- **parse_bigkinds_trend**: 정상/빈/없는 키 (3개)
+- **parse_bigkinds_related**: 정상/빈 (2개)
+- **format_trend_chart**: 정상/빈 (2개)
+- **parse_dart_list**: 정상/빈/없는 키 (3개)
+- **parse_single_dart_item**: 유효/빈 (2개)
+- **format_dart_date**: 변환/통과 (2개)
+- **parse_assembly_list**: 정상/복수/빈/빈이름 (4개)
+- **format_assembly_date**: 변환/통과 (2개)
+- **xml_extract**: 찾음/못찾음/중첩/공백 (4개)
+- **url_encode**: ASCII/한글/특수문자/예약안됨 (4개)
+- **find_matching_bracket**: 단순/중첩/문자열/이스케이프 (4개)
+- **epoch_days_to_date/is_leap_year**: epoch/특정일/윤년/윤일 (4개)
+    Task 1: 검증 OK
+
+  ── Task 2 / 3 ──
+완료. 구현 내용 요약:
+
+- **`/clip search <키워드>`**: 저장된 클리핑의 파일명·URL·본문에서 대소문자 무관 키워드 검색
+- **`/clip stats`**: 총 클리핑 수, 이번 주/오늘 건수, URL 슬러그 기반 상위 10개 키워드 빈도 표시
+- **`ClipEntry` + `load_clips()`**: 클립 로딩 공통 로직 추출
+- **`days_from_date()`**: 날짜 비교용 Rata Die 알고리즘 (주간 계산에 사용)
+- **`CLIP_SUBCOMMANDS`**: `list`, `search`, `stats` 탭 완성 지원
+- **테스트 6개**: `clip_search_finds_matching_entries`, `clip_search_empty_dir`, `clip_stats_counts_correctly`, `clip_stats_empty_dir`, `days_from_date_ordering`, `days_from_date_same_week`
+    Task 2: 검증 OK
+
+  ── Task 3 / 3 ──

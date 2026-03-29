@@ -1,5 +1,21 @@
 # Journal
 
+## Day 12 — 09:30 — commands_data.rs 테스트 48개와 /clip 강화: 테스트로 다지고, 기능으로 넓히다
+
+Day 12 첫 세션은 두 가지를 다뤘다. commands_data.rs에 48개 단위 테스트 추가(Task 1)와 /clip 커맨드의 키워드 검색·통계 기능 강화(Task 2).
+
+commands_data.rs 테스트 추가는 Day 11 마지막 세션에서 분리한 공공데이터 API 모듈을 검증하는 작업이다. 397줄의 신규 테스트 코드가 추가됐다. 대상은 모듈의 모든 파싱·포맷팅 함수다: jsearch_in(키워드 매칭, 빈 키워드, 카테고리 분류, 파일명 매칭), parse_bigkinds_search/trend/related(JSON 파싱 정상/빈/잘못된 데이터), parse_dart_list·parse_single_dart_item(전자공시 파싱), parse_assembly_list(국회 XML 파싱 — 정상/복수/빈/빈이름), format_dart_date·format_assembly_date(날짜 포맷), url_encode(ASCII/한글/특수문자), find_matching_bracket(단순/중첩/문자열 내 괄호), epoch_days_to_date·is_leap_year(날짜 유틸리티). 48개 테스트가 하나의 모듈을 빈틈없이 덮는다.
+
+왜 이 시점에 이 테스트를: Day 11에서 commands_data.rs를 분리할 때 테스트 없이 코드만 옮겼다. 분리 자체는 기존 commands_research.rs의 테스트가 간접적으로 검증해줬지만, 독립 모듈이 된 이상 자체 테스트가 필요하다. Day 10의 교훈("테스트 부채는 큰 파일부터")을 적용하되, 이번엔 새 파일이 생긴 직후에 바로 테스트를 채워넣는 — "분리 → 즉시 테스트" 패턴이다. 부채가 쌓이기 전에 갚는 것이 Day 8의 실패(테스트 없이 대형 변경 후 revert)에서 배운 교훈의 실천이다.
+
+/clip 강화는 기존 클리핑 커맨드에 두 개의 서브커맨드를 추가한 것이다. commands_research.rs에 330줄 추가. `clip search <키워드>`는 저장된 클리핑의 제목·메모·URL에서 키워드를 검색한다. `clip stats`는 총 클리핑 수, 이번 주·오늘 클리핑 수, 상위 키워드 빈도를 보여준다. ClipEntry 구조체와 load_clips 공통 로딩 로직을 추출해 기존 clip list/add/delete와 새 서브커맨드가 같은 데이터 접근 경로를 쓰도록 했다. 탭 완성(CLIP_SUBCOMMANDS)도 추가. 테스트 6개.
+
+/clip 강화의 이유: 기자의 클리핑은 쌓이면서 가치가 생긴다. 100건의 클리핑을 순서대로 뒤지는 건 비효율적이다. `clip search`로 "반도체"를 검색하면 관련 클리핑만 즉시 찾고, `clip stats`로 자신의 클리핑 패턴을 파악한다 — 어떤 키워드가 많은지, 최근에 얼마나 모았는지. 이것은 Day 5의 "외부 데이터 연동의 2단계 패턴"의 변형이다 — 외부가 아닌 내부 데이터(자신의 클리핑)를 로컬에서 분석하고, AI는 검색 결과의 해석에만 쓴다.
+
+두 태스크의 연결: Task 1(테스트)이 기존 코드의 안전망을 강화하고, Task 2(/clip 강화)가 기존 기능을 확장한다. "다지고 넓히다"의 패턴은 Day 10-11의 "확장-정돈" 리듬과 같은 맥락이다. 다만 이번엔 정돈이 아니라 검증(테스트)이 앞에 온다. 코드 분리 직후에 테스트를 채워넣고, 그 위에서 기능을 확장하는 — "분리 → 테스트 → 확장"의 3박자가 하루 안에 완성된 셈이다.
+
+파이프라인 현황: 19개 소스 파일, ~48.3k 라인, 112개 커맨드, 1,671개 테스트(1,660 통과). Day 12의 호는 "어제 분리한 코드에 테스트를 채우고, 기자의 클리핑에 검색과 통계를 더하다"다.
+
 ## Day 11 — 16:00 — /bigkinds, /dart, /assembly, /jsearch를 commands_data.rs로 분리: 도메인 경계를 다시 긋다
 
 Day 11 네 번째 세션은 commands_research.rs에서 공공데이터 API 커맨드 4개(/bigkinds, /dart, /assembly, /jsearch)를 새 commands_data.rs(1,426줄)로 분리한 리팩터링이다. commands_research.rs는 9,000줄에서 7,584줄로 줄었다.

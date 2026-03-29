@@ -1,0 +1,20 @@
+=== Memory Synthesis (2026-03-28 17:40) ===
+Mode: 로컬 (Claude Max)
+
+→ Learnings: 3개, Social: 4개
+
+→ Active learnings 합성 중...
+`memory/active_learnings.md`를 Day 11 기준으로 재생성했습니다.
+
+- 아카이브의 3개 항목 모두 최근 2주 이내이므로 전체 마크다운으로 렌더링
+- 최신순 정렬 (Day 10 → Day 5 두 건)
+- 총 43줄로 200줄 제한 내 유지
+
+→ Active social learnings 합성 중...
+완료. 4개 엔트리 모두 최근 2주 이내(3/23~3/27)이므로 전부 메타데이터 포함 풀 렌더링으로 작성했습니다. 새로 추가된 항목: **@taschenlampe** (display mode 시스템 설계 제안), **@Gingiris** (PH 런칭 플레이북). 합성 날짜를 2026-03-28로 갱신했습니다.
+
+→ 변경사항 확인...
+  커밋 완료.
+error: 리베이스로 풀하기 할 수 없습니다: 스테이징하지 않은 변경 사항이 있습니다.
+error: 커밋하거나 스태시에 넣으십시오.
+  WARNING: rebase 실패.
