@@ -573,7 +573,7 @@ pub fn help_text() -> String {
         "  /anonymize [text|--file <path>]  기사 내 취재원 익명화 처리\n",
     );
     out.push_str(
-        "  /correction [cmd]  정정보도 관리 (create|list|view)\n",
+        "  /correction [cmd]  정정보도 관리 (add|list|report|search)\n",
     );
     out.push_str(
         "  /improve [text|--file <path>]    기사 개선 제안 (구조/표현/논리)\n",
@@ -3457,5 +3457,54 @@ mod tests {
             input_section.contains("```"),
             "Input section should mention fenced code blocks"
         );
+    }
+
+    /// Extract subcommand names from a help-text parenthesized list like "(add|list|search)".
+    fn extract_help_subcommands(help: &str, command: &str) -> Option<Vec<String>> {
+        for line in help.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with(&format!("/{command} ")) || trimmed.starts_with(&format!("/{command}\t")) {
+                // Find pattern like (foo|bar|baz)
+                if let Some(start) = trimmed.rfind('(') {
+                    if let Some(end) = trimmed.rfind(')') {
+                        if start < end {
+                            let inner = &trimmed[start + 1..end];
+                            return Some(inner.split('|').map(|s| s.trim().to_string()).collect());
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Assert that the set of subcommands in help text matches the actual constant
+    /// (order-independent — help text may list in a different display order).
+    fn assert_help_subcommands_match(command: &str, expected: &[&str]) {
+        let help = help_text();
+        let mut help_subs = extract_help_subcommands(&help, command)
+            .unwrap_or_else(|| panic!("/{command} should appear in help text with subcommands"));
+        help_subs.sort();
+        let mut actual: Vec<String> = expected.iter().map(|s| s.to_string()).collect();
+        actual.sort();
+        assert_eq!(
+            help_subs, actual,
+            "Help text subcommands for /{command} must match the constant"
+        );
+    }
+
+    #[test]
+    fn test_help_text_correction_subcommands_match() {
+        assert_help_subcommands_match("correction", CORRECTION_SUBCOMMANDS);
+    }
+
+    #[test]
+    fn test_help_text_quote_subcommands_match() {
+        assert_help_subcommands_match("quote", QUOTE_SUBCOMMANDS);
+    }
+
+    #[test]
+    fn test_help_text_sources_subcommands_match() {
+        assert_help_subcommands_match("sources", SOURCES_SUBCOMMANDS);
     }
 }
