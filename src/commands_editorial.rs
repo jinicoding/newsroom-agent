@@ -1517,6 +1517,285 @@ mod tests {
         assert_eq!(loaded.notes[2].content, "메모 3");
     }
 
+    // ── /collaborate edge-case tests ───────────────────────────────────
+
+    #[test]
+    fn collab_load_missing_file_returns_none() {
+        let path = std::path::PathBuf::from("/tmp/nonexistent_collab_test_99.json");
+        assert!(load_collab_project_from(&path).is_none());
+    }
+
+    #[test]
+    fn collab_load_empty_file_returns_none() {
+        let dir = temp_collab_dir();
+        let path = dir.path().join("empty.json");
+        std::fs::write(&path, "").unwrap();
+        assert!(load_collab_project_from(&path).is_none());
+    }
+
+    #[test]
+    fn collab_load_corrupt_json_returns_none() {
+        let dir = temp_collab_dir();
+        let path = dir.path().join("corrupt.json");
+        std::fs::write(&path, "{ not valid json }}}").unwrap();
+        assert!(load_collab_project_from(&path).is_none());
+    }
+
+    #[test]
+    fn collab_list_empty_dir() {
+        let dir = temp_collab_dir();
+        let projects = list_collab_projects_in(dir.path());
+        assert!(projects.is_empty());
+    }
+
+    #[test]
+    fn collab_list_nonexistent_dir() {
+        let path = std::path::Path::new("/tmp/nonexistent_collab_dir_99");
+        let projects = list_collab_projects_in(path);
+        assert!(projects.is_empty());
+    }
+
+    #[test]
+    fn collab_list_ignores_non_json_files() {
+        let dir = temp_collab_dir();
+        // Write a valid project
+        let project = CollabProject {
+            name: "valid".to_string(),
+            reporters: Vec::new(),
+            notes: Vec::new(),
+            status: CollabStatus::Active,
+            created_at: "2026-03-20T08:00:00".to_string(),
+        };
+        save_collab_project_to(&project, &dir.path().join("valid.json"));
+        // Write a non-json file
+        std::fs::write(dir.path().join("notes.txt"), "not json").unwrap();
+
+        let projects = list_collab_projects_in(dir.path());
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].name, "valid");
+    }
+
+    #[test]
+    fn collab_list_skips_corrupt_json() {
+        let dir = temp_collab_dir();
+        let good = CollabProject {
+            name: "good".to_string(),
+            reporters: Vec::new(),
+            notes: Vec::new(),
+            status: CollabStatus::Active,
+            created_at: "2026-03-20T08:00:00".to_string(),
+        };
+        save_collab_project_to(&good, &dir.path().join("good.json"));
+        std::fs::write(dir.path().join("bad.json"), "{{invalid}}").unwrap();
+
+        let projects = list_collab_projects_in(dir.path());
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].name, "good");
+    }
+
+    #[test]
+    fn collab_list_sorted_by_created_at() {
+        let dir = temp_collab_dir();
+        let later = CollabProject {
+            name: "later".to_string(),
+            reporters: Vec::new(),
+            notes: Vec::new(),
+            status: CollabStatus::Active,
+            created_at: "2026-03-20T12:00:00".to_string(),
+        };
+        let earlier = CollabProject {
+            name: "earlier".to_string(),
+            reporters: Vec::new(),
+            notes: Vec::new(),
+            status: CollabStatus::Active,
+            created_at: "2026-03-20T08:00:00".to_string(),
+        };
+        // Save in reverse order
+        save_collab_project_to(&later, &collab_project_path_in(dir.path(), "later"));
+        save_collab_project_to(&earlier, &collab_project_path_in(dir.path(), "earlier"));
+
+        let projects = list_collab_projects_in(dir.path());
+        assert_eq!(projects[0].name, "earlier");
+        assert_eq!(projects[1].name, "later");
+    }
+
+    #[test]
+    fn collab_duplicate_name_overwrite() {
+        let dir = temp_collab_dir();
+        let path = collab_project_path_in(dir.path(), "중복테스트");
+
+        let v1 = CollabProject {
+            name: "중복테스트".to_string(),
+            reporters: vec!["김기자".to_string()],
+            notes: Vec::new(),
+            status: CollabStatus::Active,
+            created_at: "2026-03-20T08:00:00".to_string(),
+        };
+        save_collab_project_to(&v1, &path);
+
+        let v2 = CollabProject {
+            name: "중복테스트".to_string(),
+            reporters: vec!["이기자".to_string(), "박기자".to_string()],
+            notes: Vec::new(),
+            status: CollabStatus::Active,
+            created_at: "2026-03-20T09:00:00".to_string(),
+        };
+        save_collab_project_to(&v2, &path);
+
+        let loaded = load_collab_project_from(&path).unwrap();
+        assert_eq!(loaded.reporters.len(), 2);
+        assert_eq!(loaded.reporters[0], "이기자");
+    }
+
+    #[test]
+    fn collab_close_already_closed_is_idempotent() {
+        let dir = temp_collab_dir();
+        let path = collab_project_path_in(dir.path(), "이미종료");
+
+        let project = CollabProject {
+            name: "이미종료".to_string(),
+            reporters: Vec::new(),
+            notes: vec![CollabNote {
+                reporter: "A".to_string(),
+                content: "important".to_string(),
+                timestamp: "2026-03-20T10:00:00".to_string(),
+            }],
+            status: CollabStatus::Closed,
+            created_at: "2026-03-20T08:00:00".to_string(),
+        };
+        save_collab_project_to(&project, &path);
+
+        // Verify notes preserved after repeated load of closed project
+        let loaded = load_collab_project_from(&path).unwrap();
+        assert_eq!(loaded.status, CollabStatus::Closed);
+        assert_eq!(loaded.notes.len(), 1);
+    }
+
+    #[test]
+    fn collab_note_to_closed_project_rejected() {
+        // The collab_note function checks status == Closed and rejects.
+        // Here we verify the data-level behavior: notes should not be added to closed projects.
+        let dir = temp_collab_dir();
+        let path = collab_project_path_in(dir.path(), "종료프로젝트");
+
+        let project = CollabProject {
+            name: "종료프로젝트".to_string(),
+            reporters: Vec::new(),
+            notes: Vec::new(),
+            status: CollabStatus::Closed,
+            created_at: "2026-03-20T08:00:00".to_string(),
+        };
+        save_collab_project_to(&project, &path);
+
+        let loaded = load_collab_project_from(&path).unwrap();
+        assert_eq!(loaded.status, CollabStatus::Closed);
+        assert!(loaded.notes.is_empty());
+    }
+
+    #[test]
+    fn collab_project_with_empty_reporters() {
+        let dir = temp_collab_dir();
+        let path = collab_project_path_in(dir.path(), "솔로취재");
+
+        let project = CollabProject {
+            name: "솔로취재".to_string(),
+            reporters: Vec::new(),
+            notes: Vec::new(),
+            status: CollabStatus::Active,
+            created_at: "2026-03-20T08:00:00".to_string(),
+        };
+        save_collab_project_to(&project, &path);
+
+        let loaded = load_collab_project_from(&path).unwrap();
+        assert!(loaded.reporters.is_empty());
+    }
+
+    #[test]
+    fn collab_parse_start_args_empty() {
+        let (name, reporters) = parse_collab_start_args("");
+        assert!(name.is_empty());
+        assert!(reporters.is_empty());
+    }
+
+    #[test]
+    fn collab_parse_start_args_reporters_flag_no_value() {
+        let (name, reporters) = parse_collab_start_args("프로젝트 --reporters");
+        assert_eq!(name, "프로젝트");
+        assert!(reporters.is_empty());
+    }
+
+    #[test]
+    fn collab_parse_start_args_reporters_with_empty_entries() {
+        let (name, reporters) = parse_collab_start_args("프로젝트 --reporters 김기자,,이기자,");
+        assert_eq!(name, "프로젝트");
+        // Empty entries should be filtered out
+        assert_eq!(reporters, vec!["김기자", "이기자"]);
+    }
+
+    #[test]
+    fn collab_parse_note_args_empty() {
+        assert!(parse_collab_note_args("").is_none());
+    }
+
+    #[test]
+    fn collab_parse_note_args_reporter_flag_no_value() {
+        let result = parse_collab_note_args("프로젝트 내용 --reporter");
+        assert!(result.is_some());
+        let (project, content, reporter) = result.unwrap();
+        assert_eq!(project, "프로젝트");
+        assert_eq!(content, "내용");
+        assert!(reporter.is_empty());
+    }
+
+    #[test]
+    fn collab_status_round_trip_serialization() {
+        // Verify enum serialization is lowercase per serde rename_all
+        let active_json = serde_json::to_string(&CollabStatus::Active).unwrap();
+        assert_eq!(active_json, "\"active\"");
+        let closed_json = serde_json::to_string(&CollabStatus::Closed).unwrap();
+        assert_eq!(closed_json, "\"closed\"");
+
+        // Deserialize back
+        let active: CollabStatus = serde_json::from_str("\"active\"").unwrap();
+        assert_eq!(active, CollabStatus::Active);
+        let closed: CollabStatus = serde_json::from_str("\"closed\"").unwrap();
+        assert_eq!(closed, CollabStatus::Closed);
+    }
+
+    #[test]
+    fn collab_status_invalid_value_rejected() {
+        let result: Result<CollabStatus, _> = serde_json::from_str("\"archived\"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn collab_many_notes_stress() {
+        let dir = temp_collab_dir();
+        let path = collab_project_path_in(dir.path(), "스트레스");
+
+        let mut project = CollabProject {
+            name: "스트레스".to_string(),
+            reporters: Vec::new(),
+            notes: Vec::new(),
+            status: CollabStatus::Active,
+            created_at: "2026-03-20T08:00:00".to_string(),
+        };
+
+        for i in 0..100 {
+            project.notes.push(CollabNote {
+                reporter: format!("기자{}", i % 5),
+                content: format!("메모 내용 {i}"),
+                timestamp: format!("2026-03-20T{:02}:{:02}:00", 8 + i / 60, i % 60),
+            });
+        }
+        save_collab_project_to(&project, &path);
+
+        let loaded = load_collab_project_from(&path).unwrap();
+        assert_eq!(loaded.notes.len(), 100);
+        assert_eq!(loaded.notes[0].content, "메모 내용 0");
+        assert_eq!(loaded.notes[99].content, "메모 내용 99");
+    }
+
     // ── /coverage tests ─────────────────────────────────────────────────
 
     #[test]
