@@ -18,6 +18,7 @@ use yoagent::*;
 /// Known REPL command prefixes. Used to detect unknown slash commands
 /// and for tab-completion in the REPL.
 pub const KNOWN_COMMANDS: &[&str] = &[
+    "/agenda",
     "/help",
     "/quit",
     "/exit",
@@ -237,9 +238,9 @@ pub use crate::commands_research::{
     WIRE_SUBCOMMANDS,
 };
 pub use crate::commands_workflow::{
-    COVERAGE_SUBCOMMANDS, DIARY_SUBCOMMANDS, FOIA_SUBCOMMANDS, HANDOFF_SUBCOMMANDS,
-    PITCH_SUBCOMMANDS, RECAP_SUBCOMMANDS, RIVAL_SUBCOMMANDS, SERIES_SUBCOMMANDS,
-    STORY_SUBCOMMANDS,
+    AGENDA_SUBCOMMANDS, COVERAGE_SUBCOMMANDS, DIARY_SUBCOMMANDS, FOIA_SUBCOMMANDS,
+    HANDOFF_SUBCOMMANDS, PITCH_SUBCOMMANDS, RECAP_SUBCOMMANDS, RIVAL_SUBCOMMANDS,
+    SERIES_SUBCOMMANDS, STORY_SUBCOMMANDS,
 };
 pub use crate::commands_writing::{CORRECTION_SUBCOMMANDS, QUALITY_SUBCOMMANDS, TRANSCRIPT_SUBCOMMANDS};
 
@@ -250,6 +251,7 @@ pub use crate::commands_writing::{CORRECTION_SUBCOMMANDS, QUALITY_SUBCOMMANDS, T
 pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
     let partial_lower = partial_arg.to_lowercase();
     match cmd {
+        "/agenda" => filter_candidates(AGENDA_SUBCOMMANDS, &partial_lower),
         "/model" => filter_candidates(KNOWN_MODELS, &partial_lower),
         "/think" => filter_candidates(THINKING_LEVELS, &partial_lower),
         "/git" => filter_candidates(GIT_SUBCOMMANDS, &partial_lower),
@@ -591,6 +593,9 @@ pub fn help_text() -> String {
 
     // ── 워크플로우·관리 ──
     out.push_str("  ── 워크플로우·관리 ──\n");
+    out.push_str(
+        "  /agenda <sub> [주제]   회의·기자회견 준비 자료 (create|list|show|delete)\n",
+    );
     out.push_str(
         "  /morning [topic]       모닝 브리핑 (오늘의 뉴스·일정·할일 요약)\n",
     );
@@ -991,11 +996,11 @@ pub use crate::commands_writing::{
 
 // Workflow & management handlers
 pub use crate::commands_workflow::{
-    handle_autopitch, handle_breaking, handle_briefing, handle_calendar, handle_collaborate,
-    handle_compare, handle_coverage, handle_dashboard, handle_data, handle_deadline,
-    handle_desk, handle_diary, handle_embargo, handle_foia, handle_handoff, handle_interview,
-    handle_morning, handle_performance, handle_pipeline, handle_pitch, handle_recap,
-    handle_rival, handle_series, handle_story, handle_timeline,
+    handle_agenda, handle_autopitch, handle_breaking, handle_briefing, handle_calendar,
+    handle_collaborate, handle_compare, handle_coverage, handle_dashboard, handle_data,
+    handle_deadline, handle_desk, handle_diary, handle_embargo, handle_foia, handle_handoff,
+    handle_interview, handle_morning, handle_performance, handle_pipeline, handle_pitch,
+    handle_recap, handle_rival, handle_series, handle_story, handle_timeline,
 };
 
 // Session-related handlers
@@ -3117,6 +3122,18 @@ mod tests {
         assert_eq!(all.len(), 2);
         assert!(all.contains(&"list".to_string()));
         assert!(all.contains(&"search".to_string()));
+    }
+
+    #[test]
+    fn test_arg_completions_agenda() {
+        let all = command_arg_completions("/agenda", "");
+        assert_eq!(all.len(), 4);
+        assert!(all.contains(&"create".to_string()));
+        assert!(all.contains(&"list".to_string()));
+        assert!(all.contains(&"show".to_string()));
+        assert!(all.contains(&"delete".to_string()));
+        let filtered = command_arg_completions("/agenda", "c");
+        assert_eq!(filtered, vec!["create"]);
     }
 
     #[test]

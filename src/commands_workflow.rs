@@ -1,5 +1,5 @@
 //! Workflow & management command handlers (워크플로우·관리 도메인)
-//! Commands: /autopitch, /breaking, /briefing, /calendar, /collaborate, /compare, /coverage, /dashboard, /data, /deadline, /desk, /diary, /embargo, /foia, /interview, /morning, /performance, /pitch, /recap, /rival, /timeline
+//! Commands: /agenda, /autopitch, /breaking, /briefing, /calendar, /collaborate, /compare, /coverage, /dashboard, /data, /deadline, /desk, /diary, /embargo, /foia, /interview, /morning, /performance, /pitch, /recap, /rival, /timeline
 //! Note: /story commands extracted to commands_story.rs
 
 use crate::commands::auto_compact_if_needed;
@@ -30,6 +30,382 @@ pub const RECAP_SUBCOMMANDS: &[&str] = &["list"];
 
 /// Subcommand names for `/pitch <Tab>` completion.
 pub const PITCH_SUBCOMMANDS: &[&str] = &["new", "list", "show", "submit"];
+
+// ── /agenda ──────────────────────────────────────────────────────────────
+
+/// Directory for saved agenda/meeting prep files.
+const AGENDAS_DIR: &str = ".journalist/agendas";
+
+/// Subcommand names for `/agenda <Tab>` completion.
+pub const AGENDA_SUBCOMMANDS: &[&str] = &["create", "list", "show", "delete"];
+
+/// Parse `/agenda` arguments into (subcommand, rest).
+pub fn parse_agenda_args(args: &str) -> (String, String) {
+    let args = args.trim();
+    if args.is_empty() {
+        return (String::new(), String::new());
+    }
+    let mut parts = args.splitn(2, char::is_whitespace);
+    let subcmd = parts.next().unwrap_or("").to_string();
+    let rest = parts.next().unwrap_or("").trim().to_string();
+    (subcmd, rest)
+}
+
+/// Build the agenda file path: `.journalist/agendas/YYYY-MM-DD-<slug>.md`
+pub fn agenda_file_path(topic: &str) -> std::path::PathBuf {
+    agenda_file_path_with_date(topic, &today_str())
+}
+
+/// Build the agenda file path with an explicit date string (for testing).
+pub fn agenda_file_path_with_date(topic: &str, date: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(topic, 50);
+    let filename = if slug.is_empty() {
+        format!("{date}-agenda.md")
+    } else {
+        format!("{date}-{slug}.md")
+    };
+    std::path::PathBuf::from(AGENDAS_DIR).join(filename)
+}
+
+/// Save agenda to file. Creates the agendas directory if needed.
+fn save_agenda(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
+/// Collect context from `.journalist/` relevant to a given agenda topic.
+/// Scans sources, notes, clips, research, and stories for keyword matches.
+pub fn collect_agenda_context(topic: &str) -> String {
+    collect_agenda_context_in(topic, std::path::Path::new(".journalist"))
+}
+
+/// Collect agenda context from a given base directory (for testing).
+pub fn collect_agenda_context_in(topic: &str, base: &std::path::Path) -> String {
+    let keywords: Vec<&str> = topic.split_whitespace().collect();
+    if keywords.is_empty() {
+        return String::new();
+    }
+
+    let mut sections = Vec::new();
+
+    // Scan sources.json for relevant people
+    let sources_path = base.join("sources.json");
+    if sources_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&sources_path) {
+            if let Ok(sources) = serde_json::from_str::<Vec<serde_json::Value>>(&content) {
+                let matching: Vec<_> = sources
+                    .iter()
+                    .filter(|s| {
+                        let text = format!(
+                            "{} {} {} {}",
+                            s.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+                            s.get("beat").and_then(|v| v.as_str()).unwrap_or(""),
+                            s.get("org").and_then(|v| v.as_str()).unwrap_or(""),
+                            s.get("note").and_then(|v| v.as_str()).unwrap_or(""),
+                        )
+                        .to_lowercase();
+                        keywords.iter().any(|k| text.contains(&k.to_lowercase()))
+                    })
+                    .take(10)
+                    .collect();
+                if !matching.is_empty() {
+                    let mut s = String::from("## 관련 취재원\n");
+                    for src in &matching {
+                        let name = src.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                        let org = src.get("org").and_then(|v| v.as_str()).unwrap_or("");
+                        let beat = src.get("beat").and_then(|v| v.as_str()).unwrap_or("");
+                        s.push_str(&format!("- {name} ({org}) [분야: {beat}]\n"));
+                    }
+                    sections.push(s);
+                }
+            }
+        }
+    }
+
+    // Scan research, notes, clips directories for keyword-matching files
+    let scan_dirs = [
+        ("research", "관련 리서치"),
+        ("notes", "관련 노트"),
+        ("clips", "관련 기사 스크랩"),
+        ("drafts", "관련 초안"),
+    ];
+    for (dir_name, label) in &scan_dirs {
+        let dir = base.join(dir_name);
+        if !dir.is_dir() {
+            continue;
+        }
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            let mut matched = Vec::new();
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if path.extension().map_or(true, |ext| ext != "md") {
+                    continue;
+                }
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    let lower = content.to_lowercase();
+                    let fname_lower = entry.file_name().to_string_lossy().to_lowercase();
+                    if keywords
+                        .iter()
+                        .any(|k| lower.contains(&k.to_lowercase()) || fname_lower.contains(&k.to_lowercase()))
+                    {
+                        let preview: String = content.chars().take(400).collect();
+                        matched.push((entry.file_name().to_string_lossy().to_string(), preview));
+                    }
+                }
+            }
+            matched.truncate(5);
+            if !matched.is_empty() {
+                let mut s = format!("## {label}\n");
+                for (fname, preview) in &matched {
+                    s.push_str(&format!("\n### {fname}\n{preview}\n"));
+                }
+                sections.push(s);
+            }
+        }
+    }
+
+    sections.join("\n")
+}
+
+/// Build the AI prompt for agenda creation.
+pub fn build_agenda_prompt(topic: &str, context: &str) -> Option<String> {
+    if topic.trim().is_empty() {
+        return None;
+    }
+    let ctx = profile_context();
+    let context_section = if context.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n**로컬 취재 데이터에서 수집한 관련 정보**:\n\n{context}\n")
+    };
+    Some(format!(
+        "당신은 숙련된 기자의 회의·기자회견 준비를 돕는 전문 어시스턴트입니다.{ctx}\n\n\
+         **회의/기자회견 주제**: {topic}{context_section}\n\n\
+         다음 구조로 종합 준비 자료를 작성해 주세요:\n\n\
+         ## 1. 배경 및 맥락\n\
+         - 이 회의/기자회견이 열리게 된 배경\n\
+         - 관련 법안, 정책, 사건 등 핵심 맥락\n\n\
+         ## 2. 주요 참석자/발언자\n\
+         - 예상되는 주요 인물과 그들의 입장/이해관계\n\n\
+         ## 3. 핵심 쟁점\n\
+         - 이 주제에서 논란이 되거나 주목해야 할 포인트\n\
+         - 각 쟁점에 대한 찬반 입장 요약\n\n\
+         ## 4. 관련 기사/보도 동향\n\
+         - 최근 이 주제에 대한 보도 흐름\n\n\
+         ## 5. 질문 목록\n\
+         - **팩트 확인 질문** (3-4개): 수치, 날짜, 구체적 사실 확인\n\
+         - **심층 질문** (3-5개): 발표 내용의 이면을 파고드는 날카로운 질문\n\
+         - **후속 취재 질문** (2-3개): 기자회견 이후 추가 취재 방향을 잡는 질문\n\n\
+         ## 6. 후속 취재 포인트\n\
+         - 기자회견 결과에 따라 추적할 사항\n\
+         - 추가로 확인할 취재원이나 자료\n\n\
+         모든 정보에 대해 확인 가능한 것과 추정인 것을 구분해서 표기해 주세요.\n\
+         확인되지 않은 사실에는 [확인 필요]를 표시하세요."
+    ))
+}
+
+/// List saved agenda files (newest first). Returns (filename, first-line title).
+pub fn list_agendas() -> Vec<(String, String)> {
+    list_agendas_in(std::path::Path::new(AGENDAS_DIR))
+}
+
+/// List agenda files in a given directory (for testing).
+pub fn list_agendas_in(dir: &std::path::Path) -> Vec<(String, String)> {
+    if !dir.is_dir() {
+        return Vec::new();
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<_> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+        .collect();
+    files.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+    files
+        .into_iter()
+        .map(|f| {
+            let fname = f.file_name().to_string_lossy().to_string();
+            let title = std::fs::read_to_string(f.path())
+                .ok()
+                .and_then(|c| c.lines().next().map(|l| l.trim_start_matches('#').trim().to_string()))
+                .unwrap_or_default();
+            (fname, title)
+        })
+        .collect()
+}
+
+/// Show a specific agenda by filename or date prefix.
+pub fn show_agenda_in(dir: &std::path::Path, query: &str) -> Option<(String, String)> {
+    if !dir.is_dir() {
+        return None;
+    }
+    // Try exact match first
+    let exact = dir.join(query);
+    if exact.exists() {
+        if let Ok(content) = std::fs::read_to_string(&exact) {
+            return Some((query.to_string(), content));
+        }
+    }
+    // Try with .md extension
+    let with_ext = dir.join(format!("{query}.md"));
+    if with_ext.exists() {
+        if let Ok(content) = std::fs::read_to_string(&with_ext) {
+            return Some((format!("{query}.md"), content));
+        }
+    }
+    // Try date prefix match
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return None;
+    };
+    let mut candidates: Vec<_> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with(query)
+        })
+        .collect();
+    candidates.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+    candidates.first().and_then(|entry| {
+        let fname = entry.file_name().to_string_lossy().to_string();
+        std::fs::read_to_string(entry.path())
+            .ok()
+            .map(|content| (fname, content))
+    })
+}
+
+/// Handle the `/agenda` command.
+pub async fn handle_agenda(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let raw_args = input.strip_prefix("/agenda").unwrap_or("").trim();
+    let (subcmd, rest) = parse_agenda_args(raw_args);
+
+    match subcmd.as_str() {
+        "create" => {
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /agenda create <주제>{RESET}");
+                println!("{DIM}  예시:   /agenda create 반도체 수출 규제 기자간담회{RESET}\n");
+                return;
+            }
+            // Stage 1: local data collection
+            println!("{DIM}  📋 로컬 취재 데이터 수집 중...{RESET}");
+            let context = collect_agenda_context(&rest);
+            if !context.is_empty() {
+                println!("{GREEN}  ✓ 관련 데이터 발견{RESET}");
+            } else {
+                println!("{DIM}  (관련 로컬 데이터 없음){RESET}");
+            }
+
+            // Stage 2: AI insight generation
+            println!("{DIM}  🤖 AI 종합 준비 자료 생성 중... (주제: {rest}){RESET}");
+            let prompt = match build_agenda_prompt(&rest, &context) {
+                Some(p) => p,
+                None => return,
+            };
+            let response = run_prompt(agent, &prompt, session_total, model).await;
+            auto_compact_if_needed(agent);
+
+            if !response.trim().is_empty() {
+                let path = agenda_file_path(&rest);
+                match save_agenda(&path, &response) {
+                    Ok(_) => {
+                        println!(
+                            "{GREEN}  ✓ 준비 자료 저장: {}{RESET}\n",
+                            path.display()
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("{RED}  준비 자료 저장 실패: {e}{RESET}\n");
+                    }
+                }
+            }
+        }
+        "list" => {
+            let agendas = list_agendas();
+            if agendas.is_empty() {
+                println!("{DIM}  준비 자료가 없습니다. /agenda create <주제>로 생성하세요.{RESET}\n");
+            } else {
+                println!("{DIM}  ── 회의 준비 자료 목록 ──{RESET}");
+                for (fname, title) in &agendas {
+                    println!("  {GREEN}{fname}{RESET}  {title}");
+                }
+                println!();
+            }
+        }
+        "show" => {
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /agenda show <파일명|날짜>{RESET}\n");
+                return;
+            }
+            let dir = std::path::Path::new(AGENDAS_DIR);
+            match show_agenda_in(dir, &rest) {
+                Some((fname, content)) => {
+                    println!("{DIM}  ── {fname} ──{RESET}\n");
+                    println!("{content}\n");
+                }
+                None => {
+                    println!("{YELLOW}  준비 자료를 찾을 수 없습니다: {rest}{RESET}");
+                    let agendas = list_agendas();
+                    if !agendas.is_empty() {
+                        println!("{DIM}  사용 가능한 파일:{RESET}");
+                        for (fname, _) in &agendas {
+                            println!("    {fname}");
+                        }
+                    }
+                    println!();
+                }
+            }
+        }
+        "delete" => {
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /agenda delete <파일명|날짜>{RESET}\n");
+                return;
+            }
+            let dir = std::path::Path::new(AGENDAS_DIR);
+            match show_agenda_in(dir, &rest) {
+                Some((fname, _)) => {
+                    let path = dir.join(&fname);
+                    match std::fs::remove_file(&path) {
+                        Ok(_) => println!("{GREEN}  ✓ 삭제됨: {fname}{RESET}\n"),
+                        Err(e) => eprintln!("{RED}  삭제 실패: {e}{RESET}\n"),
+                    }
+                }
+                None => {
+                    println!("{YELLOW}  준비 자료를 찾을 수 없습니다: {rest}{RESET}\n");
+                }
+            }
+        }
+        "help" | "--help" => {
+            agenda_print_help();
+        }
+        "" => {
+            agenda_print_help();
+        }
+        _ => {
+            println!("{YELLOW}  알 수 없는 서브커맨드: {subcmd}{RESET}");
+            agenda_print_help();
+        }
+    }
+}
+
+fn agenda_print_help() {
+    println!("{DIM}  /agenda — 회의·기자회견 준비 자료 생성·관리{RESET}");
+    println!("{DIM}  사용법:{RESET}");
+    println!("{DIM}    /agenda create <주제>    — 종합 준비 자료 생성{RESET}");
+    println!("{DIM}    /agenda list             — 저장된 준비 자료 목록{RESET}");
+    println!("{DIM}    /agenda show <파일명|날짜> — 특정 준비 자료 열람{RESET}");
+    println!("{DIM}    /agenda delete <파일명>   — 삭제{RESET}");
+    println!("{DIM}  예시:{RESET}");
+    println!("{DIM}    /agenda create 반도체 수출 규제 기자간담회{RESET}");
+    println!("{DIM}    /agenda show 2026-03-30{RESET}\n");
+}
 
 // ── /briefing ────────────────────────────────────────────────────────────
 
@@ -8384,6 +8760,175 @@ mod tests {
     fn list_handoffs_nonexistent_dir() {
         let files = list_handoffs_in(std::path::Path::new("/tmp/nonexistent_handoff_dir_12345"));
         assert!(files.is_empty());
+    }
+
+    // ── /agenda tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_agenda_args_empty() {
+        let (sub, rest) = parse_agenda_args("");
+        assert_eq!(sub, "");
+        assert_eq!(rest, "");
+    }
+
+    #[test]
+    fn parse_agenda_args_create() {
+        let (sub, rest) = parse_agenda_args("create 반도체 수출 규제");
+        assert_eq!(sub, "create");
+        assert_eq!(rest, "반도체 수출 규제");
+    }
+
+    #[test]
+    fn parse_agenda_args_list() {
+        let (sub, rest) = parse_agenda_args("list");
+        assert_eq!(sub, "list");
+        assert_eq!(rest, "");
+    }
+
+    #[test]
+    fn parse_agenda_args_show() {
+        let (sub, rest) = parse_agenda_args("show 2026-03-30");
+        assert_eq!(sub, "show");
+        assert_eq!(rest, "2026-03-30");
+    }
+
+    #[test]
+    fn agenda_file_path_basic() {
+        let path = agenda_file_path_with_date("반도체 간담회", "2026-03-30");
+        assert_eq!(
+            path,
+            std::path::PathBuf::from(".journalist/agendas/2026-03-30-반도체-간담회.md")
+        );
+    }
+
+    #[test]
+    fn agenda_file_path_empty_topic() {
+        let path = agenda_file_path_with_date("", "2026-03-30");
+        assert_eq!(
+            path,
+            std::path::PathBuf::from(".journalist/agendas/2026-03-30-agenda.md")
+        );
+    }
+
+    #[test]
+    fn build_agenda_prompt_empty() {
+        assert!(build_agenda_prompt("", "").is_none());
+        assert!(build_agenda_prompt("   ", "").is_none());
+    }
+
+    #[test]
+    fn build_agenda_prompt_basic() {
+        let prompt = build_agenda_prompt("반도체 기자간담회", "").unwrap();
+        assert!(prompt.contains("반도체 기자간담회"));
+        assert!(prompt.contains("핵심 쟁점"));
+        assert!(prompt.contains("질문 목록"));
+        assert!(prompt.contains("후속 취재 포인트"));
+    }
+
+    #[test]
+    fn build_agenda_prompt_with_context() {
+        let ctx = "## 관련 취재원\n- 김철수 (산업부)";
+        let prompt = build_agenda_prompt("규제 브리핑", ctx).unwrap();
+        assert!(prompt.contains("로컬 취재 데이터"));
+        assert!(prompt.contains("김철수"));
+    }
+
+    #[test]
+    fn collect_agenda_context_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = collect_agenda_context_in("반도체", tmp.path());
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn collect_agenda_context_matches_sources() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sources = r#"[{"name":"김철수","org":"산업부","beat":"반도체","note":""}]"#;
+        std::fs::write(tmp.path().join("sources.json"), sources).unwrap();
+        let result = collect_agenda_context_in("반도체", tmp.path());
+        assert!(result.contains("김철수"));
+        assert!(result.contains("관련 취재원"));
+    }
+
+    #[test]
+    fn collect_agenda_context_matches_research() {
+        let tmp = tempfile::tempdir().unwrap();
+        let research_dir = tmp.path().join("research");
+        std::fs::create_dir_all(&research_dir).unwrap();
+        std::fs::write(
+            research_dir.join("2026-03-30-chip.md"),
+            "반도체 수출 현황 분석 보고서",
+        )
+        .unwrap();
+        let result = collect_agenda_context_in("반도체", tmp.path());
+        assert!(result.contains("관련 리서치"));
+        assert!(result.contains("반도체 수출 현황"));
+    }
+
+    #[test]
+    fn collect_agenda_context_no_match() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sources = r#"[{"name":"박영희","org":"외교부","beat":"외교","note":""}]"#;
+        std::fs::write(tmp.path().join("sources.json"), sources).unwrap();
+        let result = collect_agenda_context_in("반도체", tmp.path());
+        assert!(!result.contains("박영희"));
+    }
+
+    #[test]
+    fn save_and_list_agendas() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("agendas");
+        let file1 = dir.join("2026-03-30-test.md");
+        save_agenda(&file1, "# 테스트 회의 준비").unwrap();
+        assert!(file1.exists());
+
+        let list = list_agendas_in(&dir);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].0, "2026-03-30-test.md");
+        assert_eq!(list[0].1, "테스트 회의 준비");
+    }
+
+    #[test]
+    fn list_agendas_nonexistent_dir() {
+        let result = list_agendas_in(std::path::Path::new("/tmp/nonexistent_agenda_dir_12345"));
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn show_agenda_exact_match() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("2026-03-30-test.md"), "# 내용").unwrap();
+        let result = show_agenda_in(tmp.path(), "2026-03-30-test.md");
+        assert!(result.is_some());
+        let (fname, content) = result.unwrap();
+        assert_eq!(fname, "2026-03-30-test.md");
+        assert_eq!(content, "# 내용");
+    }
+
+    #[test]
+    fn show_agenda_date_prefix() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("2026-03-30-반도체.md"), "# 반도체 준비").unwrap();
+        let result = show_agenda_in(tmp.path(), "2026-03-30");
+        assert!(result.is_some());
+        assert!(result.unwrap().1.contains("반도체"));
+    }
+
+    #[test]
+    fn show_agenda_no_match() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("2026-03-30-test.md"), "data").unwrap();
+        let result = show_agenda_in(tmp.path(), "2025-01-01");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn agenda_subcommands_constant() {
+        assert_eq!(AGENDA_SUBCOMMANDS.len(), 4);
+        assert!(AGENDA_SUBCOMMANDS.contains(&"create"));
+        assert!(AGENDA_SUBCOMMANDS.contains(&"list"));
+        assert!(AGENDA_SUBCOMMANDS.contains(&"show"));
+        assert!(AGENDA_SUBCOMMANDS.contains(&"delete"));
     }
 }
 
