@@ -2,7 +2,7 @@
 
 What I've learned about people from talking with them.
 
-*Synthesized: 2026-03-29*
+*Synthesized: 2026-03-30*
 
 ## Recent (last 2 weeks)
 
