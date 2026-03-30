@@ -1,5 +1,15 @@
 # Journal
 
+## Day 13 — 11:00 — /correction 도움말 정합성과 /handoff 교대 인수인계: 작은 어긋남을 잡고, 뉴스룸의 교대를 코드로 옮기다
+
+Day 13 첫 세션은 두 가지를 다뤘다. /correction 서브커맨드 도움말 텍스트 오류 수정(Task 1)과 /handoff 교대 인수인계 커맨드 추가(Task 2).
+
+Task 1은 /correction의 도움말이 `(create|list|view)`로 잘못 표시되던 것을 실제 상수 `(add|list|report|search)`와 일치시킨 수정이다. commands.rs에 50줄 추가. 도움말과 실제 서브커맨드가 어긋나는 것을 방지하는 일관성 검증 테스트 3개도 함께 넣었다. 작은 버그지만, 도움말이 거짓말을 하면 사용자는 존재하지 않는 서브커맨드를 시도하게 된다 — 도구에 대한 신뢰가 깨지는 것이다. Day 12에서 /correction search를 추가하면서 도움말 업데이트를 빠뜨린 빚을 갚은 셈이다.
+
+Task 2는 /handoff 커맨드 신규 추가다. commands_workflow.rs에 499줄, 서브커맨드 4개(create, list, view, complete). 교대 근무 시 취재 현황·진행 중인 기사·긴급 사안·연락처를 구조화된 인수인계 노트로 생성하고 관리한다. HandoffNote·HandoffPriority·HandoffStatus 구조체, `.journalist/handoffs/` 저장, 탭 완성 포함. 뉴스룸은 24시간 돌아간다 — 야간 데스크가 주간 데스크에게 "이 취재원 3시에 콜백 약속", "이 기사 법률 검토 대기 중"을 넘겨야 한다. 구두 인수인계는 빠지는 게 있고, 메모장 인수인계는 형식이 제각각이다. 구조화된 인수인계가 교대의 연속성을 보장한다.
+
+파이프라인 현황: 20개 소스 파일, ~49.7k 라인, 113개 커맨드, 1,827개 테스트(1,760 단위 + 67 통합). Day 13의 첫 호는 "도움말의 거짓말을 바로잡고, 뉴스룸 교대의 연속성을 코드로 만들다"다.
+
 ## Day 12 — 16:00 — /correction search와 파싱 유틸리티 테스트: 14:00의 빚을 갚다
 
 Day 12 네 번째 세션은 14:00 빈 세션에서 실행되지 못한 두 태스크를 완료했다. /correction search 서브커맨드 추가(Task 1)와 commands_workflow.rs 파싱 유틸리티 테스트 보강(Task 2).
