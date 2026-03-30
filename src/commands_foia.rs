@@ -18,26 +18,26 @@ const FOIA_STATUSES: &[&str] = &["접수", "처리중", "연장", "응답완료"
 
 /// A single FOIA (정보공개청구) request.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct FoiaRequest {
+pub(crate) struct FoiaRequest {
     /// 1-based sequential ID
-    id: u32,
+    pub(crate) id: u32,
     /// Target government agency / institution
-    agency: String,
+    pub(crate) agency: String,
     /// Description of the information requested
-    content: String,
+    pub(crate) content: String,
     /// Current status
-    status: String,
+    pub(crate) status: String,
     /// Date the request was filed (YYYY-MM-DD)
-    filed_date: String,
+    pub(crate) filed_date: String,
     /// Deadline date (10 business days from filing, YYYY-MM-DD)
-    deadline_date: String,
+    pub(crate) deadline_date: String,
 }
 
-fn foia_path() -> std::path::PathBuf {
+pub(crate) fn foia_path() -> std::path::PathBuf {
     std::path::PathBuf::from(FOIA_FILE)
 }
 
-fn load_foia_requests(path: &std::path::Path) -> Vec<FoiaRequest> {
+pub(crate) fn load_foia_requests(path: &std::path::Path) -> Vec<FoiaRequest> {
     match std::fs::read_to_string(path) {
         Ok(s) if !s.trim().is_empty() => match serde_json::from_str(&s) {
             Ok(v) => v,

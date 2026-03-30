@@ -130,6 +130,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/story",
     "/foia",
     "/series",
+    "/handoff",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -236,8 +237,9 @@ pub use crate::commands_research::{
     WIRE_SUBCOMMANDS,
 };
 pub use crate::commands_workflow::{
-    COVERAGE_SUBCOMMANDS, DIARY_SUBCOMMANDS, FOIA_SUBCOMMANDS, PITCH_SUBCOMMANDS,
-    RECAP_SUBCOMMANDS, RIVAL_SUBCOMMANDS, SERIES_SUBCOMMANDS, STORY_SUBCOMMANDS,
+    COVERAGE_SUBCOMMANDS, DIARY_SUBCOMMANDS, FOIA_SUBCOMMANDS, HANDOFF_SUBCOMMANDS,
+    PITCH_SUBCOMMANDS, RECAP_SUBCOMMANDS, RIVAL_SUBCOMMANDS, SERIES_SUBCOMMANDS,
+    STORY_SUBCOMMANDS,
 };
 pub use crate::commands_writing::{CORRECTION_SUBCOMMANDS, QUALITY_SUBCOMMANDS, TRANSCRIPT_SUBCOMMANDS};
 
@@ -294,6 +296,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/story" => filter_candidates(STORY_SUBCOMMANDS, &partial_lower),
         "/foia" => filter_candidates(FOIA_SUBCOMMANDS, &partial_lower),
         "/series" => filter_candidates(SERIES_SUBCOMMANDS, &partial_lower),
+        "/handoff" => filter_candidates(HANDOFF_SUBCOMMANDS, &partial_lower),
         "/multiformat" => {
             if partial_arg.starts_with("--format ") {
                 let fmt_part = &partial_arg[9..];
@@ -635,6 +638,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /series [cmd]      연재기사 관리 (new|list|add|status|recap|link)\n",
+    );
+    out.push_str(
+        "  /handoff [cmd]     교대 인수인계 문서 (list|show)\n",
     );
     out.push('\n');
 
@@ -987,9 +993,9 @@ pub use crate::commands_writing::{
 pub use crate::commands_workflow::{
     handle_autopitch, handle_breaking, handle_briefing, handle_calendar, handle_collaborate,
     handle_compare, handle_coverage, handle_dashboard, handle_data, handle_deadline,
-    handle_desk, handle_diary, handle_embargo, handle_foia, handle_interview, handle_morning,
-    handle_performance, handle_pipeline, handle_pitch, handle_recap, handle_rival,
-    handle_series, handle_story, handle_timeline,
+    handle_desk, handle_diary, handle_embargo, handle_foia, handle_handoff, handle_interview,
+    handle_morning, handle_performance, handle_pipeline, handle_pitch, handle_recap,
+    handle_rival, handle_series, handle_story, handle_timeline,
 };
 
 // Session-related handlers

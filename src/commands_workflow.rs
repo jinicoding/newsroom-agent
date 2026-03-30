@@ -5082,6 +5082,315 @@ pub use crate::commands_story::{
 #[cfg(test)]
 pub use crate::commands_story::{create_story, load_story_meta, story_meta_path_at};
 
+// ── /handoff ────────────────────────────────────────────────────────────
+
+const HANDOFF_DIR: &str = ".journalist/handoff";
+
+/// Subcommand names for `/handoff <Tab>` completion.
+pub const HANDOFF_SUBCOMMANDS: &[&str] = &["list", "show"];
+
+/// Collect handoff data from all relevant journalist subsystems.
+pub fn collect_handoff_data() -> String {
+    collect_handoff_data_with_paths(
+        &std::path::PathBuf::from(STORIES_DIR),
+        &deadlines_path(),
+        &embargoes_path(),
+        &crate::commands_research::followups_path(),
+        &crate::commands_foia::foia_path(),
+        &std::path::PathBuf::from(crate::commands_series::SERIES_DIR),
+    )
+}
+
+/// Testable version that accepts explicit paths.
+pub fn collect_handoff_data_with_paths(
+    stories_dir: &std::path::Path,
+    deadlines_path: &std::path::Path,
+    embargoes_path: &std::path::Path,
+    followups_path: &std::path::Path,
+    foia_path: &std::path::Path,
+    series_dir: &std::path::Path,
+) -> String {
+    let mut sections = Vec::new();
+
+    // 1. Story projects
+    let stories = crate::commands_story::list_stories(stories_dir);
+    if stories.is_empty() {
+        sections.push("## 진행 중인 스토리\n없음\n".to_string());
+    } else {
+        let mut s = format!("## 진행 중인 스토리 ({}건)\n", stories.len());
+        for st in &stories {
+            s.push_str(&format!(
+                "- [{}] {} (slug: {}, 생성: {})\n",
+                st.status, st.title, st.slug, st.created
+            ));
+        }
+        sections.push(s);
+    }
+
+    // 2. Deadlines
+    let deadlines = load_deadlines_from(deadlines_path);
+    if deadlines.is_empty() {
+        sections.push("## 마감 일정\n없음\n".to_string());
+    } else {
+        let mut sorted = deadlines.clone();
+        sorted.sort_by(|a, b| a.datetime.cmp(&b.datetime));
+        let mut s = format!("## 마감 일정 ({}건)\n", sorted.len());
+        for d in &sorted {
+            s.push_str(&format!("- {} — {}\n", d.datetime, d.title));
+        }
+        sections.push(s);
+    }
+
+    // 3. Embargoes
+    let embargoes = load_embargoes_from(embargoes_path);
+    if embargoes.is_empty() {
+        sections.push("## 활성 엠바고\n없음\n".to_string());
+    } else {
+        let mut sorted = embargoes.clone();
+        sorted.sort_by(|a, b| a.release_at.cmp(&b.release_at));
+        let mut s = format!("## 활성 엠바고 ({}건)\n", sorted.len());
+        for e in &sorted {
+            s.push_str(&format!("- {} — 해제: {}\n", e.title, e.release_at));
+        }
+        sections.push(s);
+    }
+
+    // 4. Pending follow-ups
+    let followups = crate::commands_research::load_followups_from(followups_path);
+    let pending: Vec<_> = followups.iter().filter(|f| !f.done).collect();
+    if pending.is_empty() {
+        sections.push("## 미완료 후속보도\n없음\n".to_string());
+    } else {
+        let mut s = format!("## 미완료 후속보도 ({}건)\n", pending.len());
+        for f in &pending {
+            let due = f
+                .due
+                .as_deref()
+                .map(|d| format!(" (기한: {d})"))
+                .unwrap_or_default();
+            s.push_str(&format!("- {}{due}\n", f.topic));
+        }
+        sections.push(s);
+    }
+
+    // 5. FOIA requests in progress
+    let foia_requests = crate::commands_foia::load_foia_requests(foia_path);
+    let active: Vec<_> = foia_requests
+        .iter()
+        .filter(|r| r.status != "응답완료")
+        .collect();
+    if active.is_empty() {
+        sections.push("## 정보공개청구\n없음\n".to_string());
+    } else {
+        let mut s = format!("## 정보공개청구 ({}건)\n", active.len());
+        for r in &active {
+            s.push_str(&format!(
+                "- #{} {} → {} [{}] (기한: {})\n",
+                r.id, r.agency, r.content, r.status, r.deadline_date
+            ));
+        }
+        sections.push(s);
+    }
+
+    // 6. Active series
+    let series_list = crate::commands_series::list_series(series_dir);
+    let active_series: Vec<_> = series_list
+        .iter()
+        .filter(|s| s.status != "완료")
+        .collect();
+    if active_series.is_empty() {
+        sections.push("## 진행 중인 연재\n없음\n".to_string());
+    } else {
+        let mut s = format!("## 진행 중인 연재 ({}건)\n", active_series.len());
+        for sr in &active_series {
+            let total = sr.installments.len();
+            s.push_str(&format!(
+                "- [{}] {} ({}회, slug: {})\n",
+                sr.status, sr.title, total, sr.slug
+            ));
+        }
+        sections.push(s);
+    }
+
+    sections.join("\n")
+}
+
+/// Build the AI prompt for handoff summary generation.
+pub fn build_handoff_prompt(data: &str) -> String {
+    format!(
+        "아래는 현재 기자의 활성 업무 현황입니다. 교대 근무 인수인계 문서를 작성해주세요.\n\n\
+         다음 항목을 포함해주세요:\n\
+         1. **긴급 주의사항**: 즉시 확인이 필요한 마감, 엠바고, 정보공개청구 기한\n\
+         2. **우선순위 요약**: 가장 중요한 업무 3-5개를 우선순위 순으로\n\
+         3. **진행 상황 요약**: 각 영역별 현재 상태 한줄 요약\n\
+         4. **후속 조치 필요**: 다음 근무자가 반드시 처리해야 할 사항\n\n\
+         간결하고 실용적으로 작성하세요. 뉴스룸 교대 인수인계에 적합한 형식으로.\n\n\
+         ---\n\n\
+         {data}"
+    )
+}
+
+/// Build the file path for a handoff document.
+pub fn handoff_file_path() -> std::path::PathBuf {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    handoff_file_path_from_epoch(now)
+}
+
+/// Build the file path for a handoff document from epoch seconds (testable).
+pub fn handoff_file_path_from_epoch(epoch_secs: u64) -> std::path::PathBuf {
+    let ts = crate::commands_writing::format_unix_timestamp(epoch_secs);
+    // ts is like "2026-03-30 11:00:00"
+    let sanitized = ts
+        .replace(' ', "_")
+        .replace(':', "-")
+        .chars()
+        .take(16)
+        .collect::<String>();
+    std::path::PathBuf::from(HANDOFF_DIR).join(format!("{sanitized}.md"))
+}
+
+/// Save handoff content to file and return the path.
+pub fn save_handoff(content: &str) -> std::path::PathBuf {
+    let path = handoff_file_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&path, content);
+    path
+}
+
+/// List previous handoff documents (newest first).
+pub fn list_handoffs() -> Vec<std::path::PathBuf> {
+    list_handoffs_in(std::path::Path::new(HANDOFF_DIR))
+}
+
+/// Testable version: list handoffs from a given directory.
+pub fn list_handoffs_in(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    if !dir.exists() {
+        return Vec::new();
+    }
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "md"))
+        .collect();
+    files.sort();
+    files.reverse();
+    files
+}
+
+/// Show a specific handoff by date prefix match.
+pub fn show_handoff(date_query: &str) -> Option<(std::path::PathBuf, String)> {
+    show_handoff_in(std::path::Path::new(HANDOFF_DIR), date_query)
+}
+
+/// Testable version: show handoff from a given directory.
+pub fn show_handoff_in(
+    dir: &std::path::Path,
+    date_query: &str,
+) -> Option<(std::path::PathBuf, String)> {
+    let files = list_handoffs_in(dir);
+    let query = date_query.trim();
+    for path in &files {
+        let name = path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy();
+        if name.contains(query) {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                return Some((path.clone(), content));
+            }
+        }
+    }
+    None
+}
+
+fn handoff_print_help() {
+    println!("{DIM}  /handoff — 교대 인수인계 문서 생성{RESET}");
+    println!("{DIM}  현재 기자의 활성 업무를 자동 집계하여 인수인계 문서를 만듭니다.{RESET}");
+    println!("{DIM}  집계 대상: 스토리, 마감, 엠바고, 후속보도, 정보공개청구, 연재{RESET}");
+    println!("{DIM}  사용법:{RESET}");
+    println!("{DIM}    /handoff               인수인계 문서 생성{RESET}");
+    println!("{DIM}    /handoff list           이전 인수인계 목록{RESET}");
+    println!("{DIM}    /handoff show <날짜>    특정 인수인계 조회{RESET}");
+    println!("{DIM}    /handoff help           도움말{RESET}\n");
+}
+
+/// Handle the `/handoff` command.
+pub async fn handle_handoff(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/handoff").unwrap_or("").trim();
+
+    if args == "help" || args == "--help" {
+        handoff_print_help();
+        return;
+    }
+
+    if args == "list" {
+        let files = list_handoffs();
+        if files.is_empty() {
+            println!("{DIM}  인수인계 문서가 없습니다.{RESET}\n");
+            return;
+        }
+        println!("{DIM}  🔄 이전 인수인계 문서 (최신순):{RESET}");
+        for (i, path) in files.iter().enumerate().take(20) {
+            let name = path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy();
+            println!("  {: >3}. {name}", i + 1);
+        }
+        println!();
+        return;
+    }
+
+    if let Some(date_query) = args.strip_prefix("show") {
+        let date_query = date_query.trim();
+        if date_query.is_empty() {
+            println!("{DIM}  사용법: /handoff show <날짜>{RESET}\n");
+            return;
+        }
+        match show_handoff(date_query) {
+            Some((path, content)) => {
+                println!(
+                    "{DIM}  📄 {}{RESET}\n\n{content}\n",
+                    path.display()
+                );
+            }
+            None => {
+                println!("{DIM}  '{date_query}'에 해당하는 인수인계 문서를 찾을 수 없습니다.{RESET}\n");
+            }
+        }
+        return;
+    }
+
+    println!("{DIM}  🔄 인수인계 데이터 수집 중...{RESET}");
+    let data = collect_handoff_data();
+    println!("{DIM}  📊 데이터 수집 완료. AI 인수인계 요약 생성 중...{RESET}");
+
+    let prompt = build_handoff_prompt(&data);
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    if !response.trim().is_empty() {
+        let full_content = format!("# 교대 인수인계\n\n{response}\n\n---\n\n{data}");
+        let path = save_handoff(&full_content);
+        println!(
+            "\n{DIM}  🔄 인수인계 문서가 {}에 저장되었습니다.{RESET}\n",
+            path.display()
+        );
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 
@@ -7885,6 +8194,196 @@ mod tests {
         let (title, time) = parse_embargo_args("\"정상회담 결과\" 2026-03-30 10:00");
         assert_eq!(title, "정상회담 결과");
         assert_eq!(time, "2026-03-30 10:00");
+    }
+
+    // -- /handoff tests --
+
+    #[test]
+    fn collect_handoff_data_all_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stories = tmp.path().join("stories");
+        std::fs::create_dir_all(&stories).unwrap();
+        let deadlines = tmp.path().join("deadlines.json");
+        let embargoes = tmp.path().join("embargoes.json");
+        let followups = tmp.path().join("followups.json");
+        let foia = tmp.path().join("foia.json");
+        let series = tmp.path().join("series");
+        std::fs::create_dir_all(&series).unwrap();
+
+        let data = collect_handoff_data_with_paths(
+            &stories, &deadlines, &embargoes, &followups, &foia, &series,
+        );
+        assert!(data.contains("진행 중인 스토리"));
+        assert!(data.contains("없음"));
+        assert!(data.contains("마감 일정"));
+        assert!(data.contains("활성 엠바고"));
+        assert!(data.contains("미완료 후속보도"));
+        assert!(data.contains("정보공개청구"));
+        assert!(data.contains("진행 중인 연재"));
+    }
+
+    #[test]
+    fn collect_handoff_data_with_deadlines_and_embargoes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stories = tmp.path().join("stories");
+        std::fs::create_dir_all(&stories).unwrap();
+
+        let deadlines_path = tmp.path().join("deadlines.json");
+        let deadlines = vec![Deadline {
+            title: "석간 마감".to_string(),
+            datetime: "2026-03-30T14:00:00".to_string(),
+        }];
+        std::fs::write(
+            &deadlines_path,
+            serde_json::to_string(&deadlines).unwrap(),
+        )
+        .unwrap();
+
+        let embargoes_path = tmp.path().join("embargoes.json");
+        let embargoes = vec![Embargo {
+            title: "인사 발표".to_string(),
+            release_at: "2026-03-31T06:00:00".to_string(),
+        }];
+        std::fs::write(
+            &embargoes_path,
+            serde_json::to_string(&embargoes).unwrap(),
+        )
+        .unwrap();
+
+        let followups = tmp.path().join("followups.json");
+        let foia = tmp.path().join("foia.json");
+        let series = tmp.path().join("series");
+        std::fs::create_dir_all(&series).unwrap();
+
+        let data = collect_handoff_data_with_paths(
+            &stories,
+            &deadlines_path,
+            &embargoes_path,
+            &followups,
+            &foia,
+            &series,
+        );
+        assert!(data.contains("석간 마감"));
+        assert!(data.contains("마감 일정 (1건)"));
+        assert!(data.contains("인사 발표"));
+        assert!(data.contains("활성 엠바고 (1건)"));
+    }
+
+    #[test]
+    fn collect_handoff_data_with_followups() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stories = tmp.path().join("stories");
+        std::fs::create_dir_all(&stories).unwrap();
+        let deadlines = tmp.path().join("deadlines.json");
+        let embargoes = tmp.path().join("embargoes.json");
+
+        let followups_path = tmp.path().join("followups.json");
+        let followups = vec![
+            crate::commands_research::Followup {
+                topic: "후속보도 A".to_string(),
+                due: Some("2026-04-01".to_string()),
+                done: false,
+                created_at: "2026-03-28T10:00:00".to_string(),
+            },
+            crate::commands_research::Followup {
+                topic: "후속보도 B".to_string(),
+                due: None,
+                done: true,
+                created_at: "2026-03-27T10:00:00".to_string(),
+            },
+        ];
+        std::fs::write(
+            &followups_path,
+            serde_json::to_string(&followups).unwrap(),
+        )
+        .unwrap();
+
+        let foia = tmp.path().join("foia.json");
+        let series = tmp.path().join("series");
+        std::fs::create_dir_all(&series).unwrap();
+
+        let data = collect_handoff_data_with_paths(
+            &stories,
+            &deadlines,
+            &embargoes,
+            &followups_path,
+            &foia,
+            &series,
+        );
+        assert!(data.contains("미완료 후속보도 (1건)"));
+        assert!(data.contains("후속보도 A"));
+        assert!(!data.contains("후속보도 B")); // done=true, filtered out
+    }
+
+    #[test]
+    fn build_handoff_prompt_contains_data() {
+        let data = "## 마감 일정\n- 석간 14시";
+        let prompt = build_handoff_prompt(data);
+        assert!(prompt.contains("교대 근무 인수인계"));
+        assert!(prompt.contains("석간 14시"));
+        assert!(prompt.contains("긴급 주의사항"));
+        assert!(prompt.contains("우선순위 요약"));
+    }
+
+    #[test]
+    fn handoff_file_path_from_epoch_format() {
+        let path = handoff_file_path_from_epoch(1774965600);
+        let name = path.file_stem().unwrap().to_string_lossy().to_string();
+        // Should be like "2026-03-30_11-00"
+        assert!(name.contains("2026"));
+        assert!(path.extension().unwrap() == "md");
+        assert!(path.starts_with(HANDOFF_DIR));
+    }
+
+    #[test]
+    fn list_handoffs_in_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let files = list_handoffs_in(tmp.path());
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn list_handoffs_in_with_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("2026-03-30_10-00.md"), "first").unwrap();
+        std::fs::write(tmp.path().join("2026-03-30_18-00.md"), "second").unwrap();
+        std::fs::write(tmp.path().join("notes.txt"), "not md").unwrap();
+        let files = list_handoffs_in(tmp.path());
+        assert_eq!(files.len(), 2);
+        // Newest first (reverse sorted)
+        assert!(
+            files[0]
+                .file_stem()
+                .unwrap()
+                .to_string_lossy()
+                .contains("18-00")
+        );
+    }
+
+    #[test]
+    fn show_handoff_in_finds_by_date() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("2026-03-30_10-00.md"), "내용A").unwrap();
+        std::fs::write(tmp.path().join("2026-03-29_18-00.md"), "내용B").unwrap();
+
+        let result = show_handoff_in(tmp.path(), "2026-03-29");
+        assert!(result.is_some());
+        let (_, content) = result.unwrap();
+        assert_eq!(content, "내용B");
+    }
+
+    #[test]
+    fn show_handoff_in_no_match() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("2026-03-30_10-00.md"), "data").unwrap();
+        let result = show_handoff_in(tmp.path(), "2025-01-01");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn list_handoffs_nonexistent_dir() {
+        let files = list_handoffs_in(std::path::Path::new("/tmp/nonexistent_handoff_dir_12345"));
+        assert!(files.is_empty());
     }
 }
 
