@@ -636,8 +636,82 @@ fn sources_beat_filter(beat: &str) {
 
 // ── /factcheck ──────────────────────────────────────────────────────────
 
-/// Directory for cached factcheck results.
+/// Directory for cached factcheck results (AI-generated markdown).
 const FACTCHECK_DIR: &str = ".journalist/factcheck";
+
+/// Directory for structured factcheck records (JSON).
+const FACTCHECK_RECORDS_DIR: &str = ".journalist/factcheck/records";
+
+/// Subcommand names for `/factcheck <Tab>` completion.
+pub const FACTCHECK_SUBCOMMANDS: &[&str] = &["check", "log", "list", "search"];
+
+/// Valid verdict values for factcheck records.
+pub const FACTCHECK_VERDICTS: &[&str] = &["사실", "거짓", "부분사실", "미확인"];
+
+/// A structured factcheck record stored as JSON.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+pub struct FactCheckEntry {
+    pub id: String,
+    pub claim: String,
+    pub verdict: String,
+    pub source: String,
+    pub checked_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+}
+
+fn factcheck_records_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(FACTCHECK_RECORDS_DIR)
+}
+
+/// Generate a short unique ID for a factcheck record (YYYYMMDD-HHMM-XXXX).
+fn generate_factcheck_id() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let date = format_unix_timestamp(now);
+    let date_part = date.replace(['-', ':', ' '], "");
+    let rand_part = now % 10000;
+    format!("{}-{:04}", &date_part[..12], rand_part)
+}
+
+/// Save a factcheck entry to its JSON file.
+pub fn save_factcheck_entry(
+    entry: &FactCheckEntry,
+    base_dir: &std::path::Path,
+) -> Result<(), std::io::Error> {
+    std::fs::create_dir_all(base_dir)?;
+    let path = base_dir.join(format!("{}.json", entry.id));
+    let json = serde_json::to_string_pretty(entry)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    std::fs::write(path, json)
+}
+
+/// Load a factcheck entry from a JSON file.
+pub fn load_factcheck_entry(path: &std::path::Path) -> Option<FactCheckEntry> {
+    let content = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+/// Load all factcheck entries from a directory, sorted by checked_at descending.
+pub fn load_all_factcheck_entries(dir: &std::path::Path) -> Vec<FactCheckEntry> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(_) => return Vec::new(),
+    };
+    let mut records: Vec<FactCheckEntry> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map_or(false, |ext| ext == "json")
+        })
+        .filter_map(|e| load_factcheck_entry(&e.path()))
+        .collect();
+    records.sort_by(|a, b| b.checked_at.cmp(&a.checked_at));
+    records
+}
 
 /// Build the factcheck file path: `.journalist/factcheck/YYYY-MM-DD_<slug>.md`
 pub fn factcheck_file_path(claim: &str) -> std::path::PathBuf {
@@ -661,44 +735,6 @@ fn save_factcheck(path: &std::path::Path, content: &str) -> Result<(), std::io::
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(path, content)
-}
-
-/// List existing factcheck files in the factcheck directory.
-fn factcheck_list() {
-    let dir = std::path::Path::new(FACTCHECK_DIR);
-    if !dir.exists() {
-        println!("{DIM}  저장된 팩트체크가 없습니다.{RESET}\n");
-        return;
-    }
-    let mut entries: Vec<_> = match std::fs::read_dir(dir) {
-        Ok(rd) => rd
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .map_or(false, |ext| ext == "md")
-            })
-            .collect(),
-        Err(_) => {
-            println!("{DIM}  팩트체크 디렉토리를 읽을 수 없습니다.{RESET}\n");
-            return;
-        }
-    };
-    if entries.is_empty() {
-        println!("{DIM}  저장된 팩트체크가 없습니다.{RESET}\n");
-        return;
-    }
-    entries.sort_by_key(|e| e.file_name());
-    println!("{DIM}  저장된 팩트체크 목록:{RESET}");
-    for (i, entry) in entries.iter().enumerate() {
-        let name = entry.file_name();
-        println!(
-            "{DIM}  {idx}. {name}{RESET}",
-            idx = i + 1,
-            name = name.to_string_lossy()
-        );
-    }
-    println!();
 }
 
 /// Build the factcheck prompt for a given claim.
@@ -737,7 +773,16 @@ pub fn build_factcheck_prompt(claim: &str) -> Option<String> {
     ))
 }
 
-/// Handle the /factcheck command: multi-source fact verification.
+fn print_factcheck_usage() {
+    println!("{DIM}  사용법:");
+    println!("    /factcheck check <주장>               AI 팩트체크 (다중 소스 검증)");
+    println!("    /factcheck log <주장> <판정> <출처>    수동 검증 기록 추가");
+    println!("    /factcheck list                       검증 기록 목록");
+    println!("    /factcheck search <키워드>             이전 검증 검색");
+    println!("  판정: {}{RESET}\n", FACTCHECK_VERDICTS.join(", "));
+}
+
+/// Handle the /factcheck command: multi-source fact verification with structured records.
 pub async fn handle_factcheck(
     agent: &mut Agent,
     input: &str,
@@ -749,20 +794,59 @@ pub async fn handle_factcheck(
         .unwrap_or("")
         .trim();
 
-    let (story_slug, claim_str) = extract_story_arg(raw_args);
-    let claim = claim_str.as_str();
-
-    if claim == "list" {
-        factcheck_list();
+    if raw_args.is_empty() || raw_args == "help" || raw_args == "--help" {
+        print_factcheck_usage();
         return;
     }
 
+    let (sub, rest) = match raw_args.split_once(char::is_whitespace) {
+        Some((s, r)) => (s, r.trim()),
+        None => (raw_args, ""),
+    };
+
+    let dir = factcheck_records_dir();
+    match sub {
+        "check" => handle_factcheck_check(agent, rest, session_total, model).await,
+        "log" => handle_factcheck_log(rest, &dir),
+        "list" => handle_factcheck_list(&dir),
+        "search" => handle_factcheck_search(rest, &dir),
+        _ => {
+            // Backward compat: treat bare text as "check"
+            let (story_slug, claim_str) = extract_story_arg(raw_args);
+            let claim = claim_str.as_str();
+            if claim == "list" {
+                // Legacy: /factcheck list (without "check" prefix) shows records
+                handle_factcheck_list(&dir);
+                return;
+            }
+            handle_factcheck_check_with_story(agent, claim, story_slug, session_total, model).await;
+        }
+    }
+}
+
+/// Handle `/factcheck check <claim>` — AI-powered fact verification.
+async fn handle_factcheck_check(
+    agent: &mut Agent,
+    rest: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let (story_slug, claim_str) = extract_story_arg(rest);
+    let claim = claim_str.as_str();
+    handle_factcheck_check_with_story(agent, claim, story_slug, session_total, model).await;
+}
+
+async fn handle_factcheck_check_with_story(
+    agent: &mut Agent,
+    claim: &str,
+    story_slug: Option<String>,
+    session_total: &mut Usage,
+    model: &str,
+) {
     let prompt = match build_factcheck_prompt(claim) {
         Some(p) => p,
         None => {
-            println!("{DIM}  사용법: /factcheck <주장 또는 사실>{RESET}");
-            println!("{DIM}  예시: /factcheck 한국 반도체 수출이 2025년 사상 최대를 기록했다{RESET}");
-            println!("{DIM}  /factcheck list — 저장된 팩트체크 목록{RESET}\n");
+            print_factcheck_usage();
             return;
         }
     };
@@ -770,7 +854,7 @@ pub async fn handle_factcheck(
     let response = run_prompt(agent, &prompt, session_total, model).await;
     auto_compact_if_needed(agent);
 
-    // Save factcheck result to file
+    // Save factcheck result to markdown file
     if !response.trim().is_empty() {
         let path = factcheck_file_path(claim);
         match save_factcheck(&path, &response) {
@@ -779,7 +863,6 @@ pub async fn handle_factcheck(
                     "{GREEN}  ✓ 팩트체크 저장: {}{RESET}\n",
                     path.display()
                 );
-                // Link to story if --story was given
                 if let Some(ref slug) = story_slug {
                     let stories_base = std::path::Path::new(STORIES_DIR);
                     match link_file_to_story(slug, &path, "팩트체크", stories_base) {
@@ -799,6 +882,175 @@ pub async fn handle_factcheck(
             }
         }
     }
+}
+
+/// Handle `/factcheck log <claim> <verdict> <source>` — manual record.
+fn handle_factcheck_log(args: &str, dir: &std::path::Path) {
+    // Parse: first quoted or unquoted segment = claim, then verdict, then source
+    let parts = parse_factcheck_log_args(args);
+    if parts.len() < 3 {
+        eprintln!("{RED}  사용법: /factcheck log <주장> <판정> <출처>{RESET}");
+        eprintln!(
+            "{DIM}  판정: {}{RESET}",
+            FACTCHECK_VERDICTS.join(", ")
+        );
+        eprintln!("{DIM}  예시: /factcheck log \"한국 GDP 5% 성장\" 사실 한국은행{RESET}\n");
+        return;
+    }
+
+    let claim = &parts[0];
+    let verdict = &parts[1];
+    let source = parts[2..].join(" ");
+
+    if !FACTCHECK_VERDICTS.contains(&verdict.as_str()) {
+        eprintln!("{RED}  유효하지 않은 판정: {verdict}{RESET}");
+        eprintln!(
+            "{DIM}  사용 가능한 판정: {}{RESET}\n",
+            FACTCHECK_VERDICTS.join(", ")
+        );
+        return;
+    }
+
+    let now = {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        format_unix_timestamp(secs).replace(' ', "T") + ":00"
+    };
+
+    let entry = FactCheckEntry {
+        id: generate_factcheck_id(),
+        claim: claim.clone(),
+        verdict: verdict.clone(),
+        source: source.clone(),
+        checked_at: now,
+        context: None,
+    };
+
+    match save_factcheck_entry(&entry, dir) {
+        Ok(()) => println!(
+            "{GREEN}  ✓ 검증 기록 추가: {id} [{verdict}] — {claim}{RESET}\n",
+            id = entry.id,
+            verdict = verdict,
+            claim = claim,
+        ),
+        Err(e) => eprintln!("{RED}  검증 기록 저장 실패: {e}{RESET}\n"),
+    }
+}
+
+/// Parse factcheck log arguments, respecting quoted strings.
+fn parse_factcheck_log_args(input: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut chars = input.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match c {
+            '"' | '\'' => {
+                if in_quotes {
+                    in_quotes = false;
+                    if !current.is_empty() {
+                        parts.push(current.clone());
+                        current.clear();
+                    }
+                } else {
+                    in_quotes = true;
+                }
+            }
+            c if c.is_whitespace() && !in_quotes => {
+                if !current.is_empty() {
+                    parts.push(current.clone());
+                    current.clear();
+                }
+            }
+            _ => current.push(c),
+        }
+    }
+    if !current.is_empty() {
+        parts.push(current);
+    }
+    parts
+}
+
+/// Handle `/factcheck list` — show all structured records.
+fn handle_factcheck_list(dir: &std::path::Path) {
+    let records = load_all_factcheck_entries(dir);
+    if records.is_empty() {
+        println!("{DIM}  등록된 검증 기록이 없습니다.{RESET}\n");
+        return;
+    }
+    println!(
+        "{DIM}  검증 기록 ({count}건):{RESET}",
+        count = records.len()
+    );
+    for entry in &records {
+        let preview: String = entry.claim.chars().take(40).collect();
+        let ellipsis = if entry.claim.chars().count() > 40 {
+            "…"
+        } else {
+            ""
+        };
+        println!(
+            "{DIM}  [{verdict}] {id}  {preview}{ellipsis}  ({src}){RESET}",
+            verdict = entry.verdict,
+            id = entry.id,
+            preview = preview,
+            ellipsis = ellipsis,
+            src = entry.source,
+        );
+    }
+    println!();
+}
+
+/// Handle `/factcheck search <keyword>` — search records by keyword.
+fn handle_factcheck_search(keyword: &str, dir: &std::path::Path) {
+    if keyword.is_empty() {
+        eprintln!("{RED}  사용법: /factcheck search <키워드>{RESET}\n");
+        return;
+    }
+
+    let records = load_all_factcheck_entries(dir);
+    let kw_lower = keyword.to_lowercase();
+    let matches: Vec<&FactCheckEntry> = records
+        .iter()
+        .filter(|e| {
+            e.claim.to_lowercase().contains(&kw_lower)
+                || e.source.to_lowercase().contains(&kw_lower)
+                || e.verdict.to_lowercase().contains(&kw_lower)
+                || e.context
+                    .as_deref()
+                    .map_or(false, |c| c.to_lowercase().contains(&kw_lower))
+        })
+        .collect();
+
+    if matches.is_empty() {
+        println!("{DIM}  '{keyword}'에 해당하는 검증 기록이 없습니다.{RESET}\n");
+        return;
+    }
+
+    println!(
+        "{DIM}  검색 결과: {count}건 (키워드: {keyword}){RESET}",
+        count = matches.len()
+    );
+    for entry in &matches {
+        let preview: String = entry.claim.chars().take(40).collect();
+        let ellipsis = if entry.claim.chars().count() > 40 {
+            "…"
+        } else {
+            ""
+        };
+        println!(
+            "{DIM}  [{verdict}] {id}  {preview}{ellipsis}  ({src}){RESET}",
+            verdict = entry.verdict,
+            id = entry.id,
+            preview = preview,
+            ellipsis = ellipsis,
+            src = entry.source,
+        );
+    }
+    println!();
 }
 
 // ── /clip ────────────────────────────────────────────────────────────────
@@ -5766,6 +6018,153 @@ mod tests {
         save_factcheck(&path, "# 팩트체크 결과\n내용").unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert_eq!(content, "# 팩트체크 결과\n내용");
+    }
+
+    #[test]
+    fn factcheck_entry_save_and_load() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let records_dir = dir.path().join("records");
+        let entry = FactCheckEntry {
+            id: "20260331-0930-0001".to_string(),
+            claim: "한국 GDP 5% 성장".to_string(),
+            verdict: "사실".to_string(),
+            source: "한국은행".to_string(),
+            checked_at: "2026-03-31T09:30:00".to_string(),
+            context: None,
+        };
+        save_factcheck_entry(&entry, &records_dir).unwrap();
+        let path = records_dir.join("20260331-0930-0001.json");
+        let loaded = load_factcheck_entry(&path).unwrap();
+        assert_eq!(loaded, entry);
+    }
+
+    #[test]
+    fn factcheck_entry_with_context() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let records_dir = dir.path().join("records");
+        let entry = FactCheckEntry {
+            id: "20260331-0930-0002".to_string(),
+            claim: "반도체 수출 증가".to_string(),
+            verdict: "부분사실".to_string(),
+            source: "산업부 보도자료".to_string(),
+            checked_at: "2026-03-31T09:30:00".to_string(),
+            context: Some("메모리 반도체만 증가, 비메모리는 감소".to_string()),
+        };
+        save_factcheck_entry(&entry, &records_dir).unwrap();
+        let loaded =
+            load_factcheck_entry(&records_dir.join("20260331-0930-0002.json")).unwrap();
+        assert_eq!(
+            loaded.context.as_deref(),
+            Some("메모리 반도체만 증가, 비메모리는 감소")
+        );
+    }
+
+    #[test]
+    fn factcheck_load_all_entries_sorted() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let records_dir = dir.path().join("records");
+        let e1 = FactCheckEntry {
+            id: "entry-a".to_string(),
+            claim: "주장 A".to_string(),
+            verdict: "사실".to_string(),
+            source: "출처 A".to_string(),
+            checked_at: "2026-03-30T10:00:00".to_string(),
+            context: None,
+        };
+        let e2 = FactCheckEntry {
+            id: "entry-b".to_string(),
+            claim: "주장 B".to_string(),
+            verdict: "거짓".to_string(),
+            source: "출처 B".to_string(),
+            checked_at: "2026-03-31T10:00:00".to_string(),
+            context: None,
+        };
+        save_factcheck_entry(&e1, &records_dir).unwrap();
+        save_factcheck_entry(&e2, &records_dir).unwrap();
+        let all = load_all_factcheck_entries(&records_dir);
+        assert_eq!(all.len(), 2);
+        // Newest first
+        assert_eq!(all[0].id, "entry-b");
+        assert_eq!(all[1].id, "entry-a");
+    }
+
+    #[test]
+    fn factcheck_load_all_empty_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let records = load_all_factcheck_entries(dir.path());
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn factcheck_load_nonexistent_dir() {
+        let records = load_all_factcheck_entries(std::path::Path::new("/tmp/no-such-dir-fc"));
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn factcheck_parse_log_args_quoted() {
+        let parts = parse_factcheck_log_args("\"한국 GDP 5% 성장\" 사실 한국은행");
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0], "한국 GDP 5% 성장");
+        assert_eq!(parts[1], "사실");
+        assert_eq!(parts[2], "한국은행");
+    }
+
+    #[test]
+    fn parse_factcheck_log_args_unquoted() {
+        let parts = parse_factcheck_log_args("GDP성장 거짓 통계청");
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0], "GDP성장");
+        assert_eq!(parts[1], "거짓");
+        assert_eq!(parts[2], "통계청");
+    }
+
+    #[test]
+    fn parse_factcheck_log_args_multi_word_source() {
+        let parts = parse_factcheck_log_args("\"수출 증가\" 부분사실 산업부 보도자료");
+        assert_eq!(parts.len(), 4);
+        assert_eq!(parts[0], "수출 증가");
+        assert_eq!(parts[1], "부분사실");
+        assert_eq!(parts[2], "산업부");
+        assert_eq!(parts[3], "보도자료");
+    }
+
+    #[test]
+    fn factcheck_verdicts_valid() {
+        assert!(FACTCHECK_VERDICTS.contains(&"사실"));
+        assert!(FACTCHECK_VERDICTS.contains(&"거짓"));
+        assert!(FACTCHECK_VERDICTS.contains(&"부분사실"));
+        assert!(FACTCHECK_VERDICTS.contains(&"미확인"));
+        assert!(!FACTCHECK_VERDICTS.contains(&"대체로사실"));
+    }
+
+    #[test]
+    fn factcheck_subcommands_complete() {
+        assert!(FACTCHECK_SUBCOMMANDS.contains(&"check"));
+        assert!(FACTCHECK_SUBCOMMANDS.contains(&"log"));
+        assert!(FACTCHECK_SUBCOMMANDS.contains(&"list"));
+        assert!(FACTCHECK_SUBCOMMANDS.contains(&"search"));
+    }
+
+    #[test]
+    fn factcheck_log_roundtrip() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let records_dir = dir.path().join("records");
+        let entry = FactCheckEntry {
+            id: "test-log-1".to_string(),
+            claim: "테스트 주장".to_string(),
+            verdict: "미확인".to_string(),
+            source: "자체 확인".to_string(),
+            checked_at: "2026-03-31T12:00:00".to_string(),
+            context: None,
+        };
+        save_factcheck_entry(&entry, &records_dir).unwrap();
+
+        // Search should find it
+        let all = load_all_factcheck_entries(&records_dir);
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].claim, "테스트 주장");
+        assert_eq!(all[0].verdict, "미확인");
     }
 
     #[test]

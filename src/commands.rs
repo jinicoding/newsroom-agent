@@ -235,8 +235,8 @@ pub use crate::commands_writing::TEMPLATE_SUBCOMMANDS;
 /// Re-export subcommand constants from domain modules.
 pub use crate::commands_research::{
     ASSEMBLY_SUBCOMMANDS, BIGKINDS_SUBCOMMANDS, CLIP_SUBCOMMANDS, CONTACT_SUBCOMMANDS,
-    DART_SUBCOMMANDS, MONITOR_SUBCOMMANDS, RESEARCH_SUBCOMMANDS, RSS_SUBCOMMANDS,
-    TIP_SUBCOMMANDS, WIRE_SUBCOMMANDS,
+    DART_SUBCOMMANDS, FACTCHECK_SUBCOMMANDS, MONITOR_SUBCOMMANDS, RESEARCH_SUBCOMMANDS,
+    RSS_SUBCOMMANDS, TIP_SUBCOMMANDS, WIRE_SUBCOMMANDS,
 };
 pub use crate::commands_workflow::{
     AGENDA_SUBCOMMANDS, COVERAGE_SUBCOMMANDS, DIARY_SUBCOMMANDS, FOIA_SUBCOMMANDS,
@@ -290,6 +290,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/rival" => filter_candidates(RIVAL_SUBCOMMANDS, &partial_lower),
         "/research" => filter_candidates(RESEARCH_SUBCOMMANDS, &partial_lower),
         "/tip" => filter_candidates(TIP_SUBCOMMANDS, &partial_lower),
+        "/factcheck" => filter_candidates(FACTCHECK_SUBCOMMANDS, &partial_lower),
         "/diary" => filter_candidates(DIARY_SUBCOMMANDS, &partial_lower),
         "/bigkinds" => filter_candidates(BIGKINDS_SUBCOMMANDS, &partial_lower),
         "/dart" => filter_candidates(DART_SUBCOMMANDS, &partial_lower),
@@ -468,7 +469,7 @@ pub fn help_text() -> String {
         "  /news <키워드>         네이버 뉴스 검색 (save로 클립 저장)\n",
     );
     out.push_str(
-        "  /factcheck <claim> 팩트체크 (다중 소스 검증)\n",
+        "  /factcheck [cmd]   팩트체크 (check|log|list|search)\n",
     );
     out.push_str(
         "  /verify <claim>    교차검증 (실제 데이터 소스 조회 기반)\n",
