@@ -240,8 +240,9 @@ pub use crate::commands_research::{
 };
 pub use crate::commands_workflow::{
     AGENDA_SUBCOMMANDS, COVERAGE_SUBCOMMANDS, DIARY_SUBCOMMANDS, FOIA_SUBCOMMANDS,
-    HANDOFF_SUBCOMMANDS, PITCH_SUBCOMMANDS, RECAP_SUBCOMMANDS, RIVAL_SUBCOMMANDS,
-    SERIES_SUBCOMMANDS, STORY_SUBCOMMANDS,
+    HANDOFF_SUBCOMMANDS, INTERVIEW_SUBCOMMANDS, INTERVIEW_TRANSCRIPT_SUBCOMMANDS,
+    PITCH_SUBCOMMANDS, RECAP_SUBCOMMANDS, RIVAL_SUBCOMMANDS, SERIES_SUBCOMMANDS,
+    STORY_SUBCOMMANDS,
 };
 pub use crate::commands_writing::{CORRECTION_SUBCOMMANDS, QUALITY_SUBCOMMANDS, TRANSCRIPT_SUBCOMMANDS};
 
@@ -296,6 +297,17 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/dart" => filter_candidates(DART_SUBCOMMANDS, &partial_lower),
         "/assembly" => filter_candidates(ASSEMBLY_SUBCOMMANDS, &partial_lower),
         "/transcript" => filter_candidates(TRANSCRIPT_SUBCOMMANDS, &partial_lower),
+        "/interview" => {
+            if partial_arg.starts_with("transcript ") {
+                let sub_part = &partial_arg[11..];
+                return INTERVIEW_TRANSCRIPT_SUBCOMMANDS
+                    .iter()
+                    .filter(|c| c.starts_with(sub_part))
+                    .map(|c| format!("transcript {c}"))
+                    .collect();
+            }
+            filter_candidates(INTERVIEW_SUBCOMMANDS, &partial_lower)
+        }
         "/pitch" => filter_candidates(PITCH_SUBCOMMANDS, &partial_lower),
         "/recap" => filter_candidates(RECAP_SUBCOMMANDS, &partial_lower),
         "/story" => filter_candidates(STORY_SUBCOMMANDS, &partial_lower),
@@ -484,7 +496,8 @@ pub fn help_text() -> String {
         "  /network [cmd]     취재원 네트워크 시각화·분석 (show|add|suggest)\n",
     );
     out.push_str(
-        "  /interview <주제> [--source 취재원]  인터뷰 질문지 생성\n",
+        "  /interview <주제> [--source 취재원]  인터뷰 질문지 생성\n\
+         /interview transcript <save|list|search|quote>  녹취록 관리\n",
     );
     out.push_str(
         "  /briefing [text|--file <path>]  보도자료 → 기사 초안 변환\n",

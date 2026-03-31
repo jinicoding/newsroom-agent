@@ -549,6 +549,183 @@ pub async fn handle_briefing(
 /// Directory for saved interview prep files.
 const INTERVIEW_DIR: &str = ".journalist/interview";
 
+/// Directory for saved interview transcripts.
+const INTERVIEW_TRANSCRIPT_DIR: &str = ".journalist/interview/transcripts";
+
+/// Subcommand names for `/interview transcript <Tab>` completion.
+pub const INTERVIEW_TRANSCRIPT_SUBCOMMANDS: &[&str] = &["save", "list", "search", "quote"];
+
+/// Subcommand names for `/interview <Tab>` completion.
+pub const INTERVIEW_SUBCOMMANDS: &[&str] = &["transcript"];
+
+/// A stored interview transcript entry.
+#[derive(Debug, Clone)]
+pub struct TranscriptEntry {
+    /// Unique ID (filename stem, e.g. "2026-03-31_001")
+    pub id: String,
+    /// Original source file name
+    pub source_file: String,
+    /// Saved path
+    pub path: std::path::PathBuf,
+    /// Number of lines
+    pub line_count: usize,
+    /// Saved timestamp (unix seconds)
+    pub saved_at: u64,
+}
+
+/// Save a transcript file to `.journalist/interview/transcripts/`.
+/// Returns the `TranscriptEntry` on success.
+pub fn save_interview_transcript(
+    source_path: &std::path::Path,
+) -> Result<TranscriptEntry, String> {
+    save_interview_transcript_to(source_path, std::path::Path::new(INTERVIEW_TRANSCRIPT_DIR))
+}
+
+/// Save a transcript to a given base directory (for testing).
+pub fn save_interview_transcript_to(
+    source_path: &std::path::Path,
+    base_dir: &std::path::Path,
+) -> Result<TranscriptEntry, String> {
+    let content = std::fs::read_to_string(source_path)
+        .map_err(|e| format!("파일 읽기 실패: {e}"))?;
+    if content.trim().is_empty() {
+        return Err("빈 파일입니다.".to_string());
+    }
+
+    std::fs::create_dir_all(base_dir)
+        .map_err(|e| format!("디렉토리 생성 실패: {e}"))?;
+
+    let date = today_str();
+    // Find next available sequence number
+    let mut seq = 1u32;
+    loop {
+        let candidate = base_dir.join(format!("{date}_{seq:03}.txt"));
+        if !candidate.exists() {
+            break;
+        }
+        seq += 1;
+    }
+
+    let id = format!("{date}_{seq:03}");
+    let dest = base_dir.join(format!("{id}.txt"));
+    let line_count = content.lines().count();
+    let source_file = source_path
+        .file_name()
+        .map_or_else(|| source_path.display().to_string(), |n| n.to_string_lossy().to_string());
+
+    std::fs::write(&dest, &content)
+        .map_err(|e| format!("저장 실패: {e}"))?;
+
+    let saved_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    Ok(TranscriptEntry {
+        id,
+        source_file,
+        path: dest,
+        line_count,
+        saved_at,
+    })
+}
+
+/// List all saved transcripts in the transcript directory.
+pub fn list_interview_transcripts() -> Vec<TranscriptEntry> {
+    list_interview_transcripts_in(std::path::Path::new(INTERVIEW_TRANSCRIPT_DIR))
+}
+
+/// List transcripts in a given directory (for testing).
+pub fn list_interview_transcripts_in(dir: &std::path::Path) -> Vec<TranscriptEntry> {
+    let mut entries = Vec::new();
+    let read_dir = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(_) => return entries,
+    };
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if path.extension().map_or(true, |e| e != "txt") {
+            continue;
+        }
+        let id = path
+            .file_stem()
+            .map_or_else(String::new, |s| s.to_string_lossy().to_string());
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        let line_count = content.lines().count();
+        let metadata = std::fs::metadata(&path);
+        let saved_at = metadata
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_secs());
+        entries.push(TranscriptEntry {
+            id,
+            source_file: path
+                .file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().to_string()),
+            path,
+            line_count,
+            saved_at,
+        });
+    }
+    entries.sort_by(|a, b| b.saved_at.cmp(&a.saved_at));
+    entries
+}
+
+/// Search transcripts for a keyword. Returns (id, matching_lines) pairs.
+pub fn search_interview_transcripts(keyword: &str) -> Vec<(String, Vec<(usize, String)>)> {
+    search_interview_transcripts_in(keyword, std::path::Path::new(INTERVIEW_TRANSCRIPT_DIR))
+}
+
+/// Search transcripts in a given directory (for testing).
+pub fn search_interview_transcripts_in(
+    keyword: &str,
+    dir: &std::path::Path,
+) -> Vec<(String, Vec<(usize, String)>)> {
+    let keyword_lower = keyword.to_lowercase();
+    let entries = list_interview_transcripts_in(dir);
+    let mut results = Vec::new();
+    for entry in entries {
+        let content = std::fs::read_to_string(&entry.path).unwrap_or_default();
+        let matches: Vec<(usize, String)> = content
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| line.to_lowercase().contains(&keyword_lower))
+            .map(|(i, line)| (i + 1, line.to_string()))
+            .collect();
+        if !matches.is_empty() {
+            results.push((entry.id, matches));
+        }
+    }
+    results
+}
+
+/// Extract a quote from a transcript by ID and line number.
+pub fn extract_interview_quote(id: &str, line_num: usize) -> Result<String, String> {
+    extract_interview_quote_in(id, line_num, std::path::Path::new(INTERVIEW_TRANSCRIPT_DIR))
+}
+
+/// Extract a quote from a transcript in a given directory (for testing).
+pub fn extract_interview_quote_in(
+    id: &str,
+    line_num: usize,
+    dir: &std::path::Path,
+) -> Result<String, String> {
+    let path = dir.join(format!("{id}.txt"));
+    let content = std::fs::read_to_string(&path)
+        .map_err(|_| format!("녹취록 '{id}'을(를) 찾을 수 없습니다."))?;
+    let lines: Vec<&str> = content.lines().collect();
+    if line_num == 0 || line_num > lines.len() {
+        return Err(format!(
+            "라인 번호 {line_num}이(가) 범위를 벗어났습니다 (1-{}).",
+            lines.len()
+        ));
+    }
+    let line = lines[line_num - 1].trim();
+    // Format as a citable quote
+    Ok(format!("「{}」 — 녹취록 {id}, {line_num}행", line))
+}
+
 /// Build the interview file path: `.journalist/interview/YYYY-MM-DD_<slug>.md`
 pub fn interview_file_path(topic: &str) -> std::path::PathBuf {
     interview_file_path_with_date(topic, &today_str())
@@ -676,13 +853,25 @@ pub async fn handle_interview(
     model: &str,
 ) {
     let raw_args = input.strip_prefix("/interview").unwrap_or("").trim();
+
+    // Check for transcript subcommand first
+    if raw_args == "transcript" || raw_args.starts_with("transcript ") {
+        handle_interview_transcript(raw_args.strip_prefix("transcript").unwrap_or("").trim());
+        return;
+    }
+
     let (story_slug, args_without_story) = extract_story_arg(raw_args);
     let (topic, source_name) = parse_interview_args(&args_without_story);
 
     if topic.is_empty() {
         println!("{DIM}  사용법: /interview <주제> [--source 취재원]{RESET}");
         println!("{DIM}  예시:   /interview 반도체 수출 규제 --source 김철수{RESET}");
-        println!("{DIM}  인터뷰 주제에 맞는 구조화된 질문지를 생성합니다.{RESET}\n");
+        println!("{DIM}  인터뷰 주제에 맞는 구조화된 질문지를 생성합니다.{RESET}");
+        println!();
+        println!("{DIM}  /interview transcript save <파일>    녹취록 저장{RESET}");
+        println!("{DIM}  /interview transcript list           저장된 녹취록 목록{RESET}");
+        println!("{DIM}  /interview transcript search <키워드> 녹취록 내 키워드 검색{RESET}");
+        println!("{DIM}  /interview transcript quote <ID> <라인> 발언 인용 추출{RESET}\n");
         return;
     }
 
@@ -752,6 +941,118 @@ pub async fn handle_interview(
             }
         }
     }
+}
+
+/// Handle `/interview transcript <subcmd>` subcommands.
+fn handle_interview_transcript(args: &str) {
+    let args = args.trim();
+    if args.is_empty() {
+        print_interview_transcript_usage();
+        return;
+    }
+
+    let mut parts = args.splitn(2, char::is_whitespace);
+    let subcmd = parts.next().unwrap_or("");
+    let rest = parts.next().unwrap_or("").trim();
+
+    match subcmd {
+        "save" => {
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /interview transcript save <파일경로>{RESET}\n");
+                return;
+            }
+            let path = std::path::Path::new(rest);
+            match save_interview_transcript(path) {
+                Ok(entry) => {
+                    println!("{GREEN}  ✓ 녹취록 저장 완료{RESET}");
+                    println!("    ID: {}", entry.id);
+                    println!("    원본: {}", entry.source_file);
+                    println!("    경로: {}", entry.path.display());
+                    println!("    라인 수: {}\n", entry.line_count);
+                }
+                Err(e) => {
+                    eprintln!("{RED}  녹취록 저장 실패: {e}{RESET}\n");
+                }
+            }
+        }
+        "list" => {
+            let entries = list_interview_transcripts();
+            if entries.is_empty() {
+                println!("{DIM}  저장된 녹취록이 없습니다.{RESET}\n");
+                return;
+            }
+            println!("{GREEN}  저장된 녹취록 ({}):{RESET}", entries.len());
+            for entry in &entries {
+                println!(
+                    "    [{id}] {file} ({lines}줄)",
+                    id = entry.id,
+                    file = entry.source_file,
+                    lines = entry.line_count,
+                );
+            }
+            println!();
+        }
+        "search" => {
+            if rest.is_empty() {
+                println!("{DIM}  사용법: /interview transcript search <키워드>{RESET}\n");
+                return;
+            }
+            let results = search_interview_transcripts(rest);
+            if results.is_empty() {
+                println!("{DIM}  '{rest}'에 대한 검색 결과가 없습니다.{RESET}\n");
+                return;
+            }
+            println!("{GREEN}  검색 결과 ('{rest}'):{RESET}");
+            for (id, matches) in &results {
+                println!("  [{id}]");
+                for (line_num, line) in matches.iter().take(5) {
+                    let preview: String = line.chars().take(80).collect();
+                    println!("    {line_num}행: {preview}");
+                }
+                if matches.len() > 5 {
+                    println!("    ... 외 {}건", matches.len() - 5);
+                }
+            }
+            println!();
+        }
+        "quote" => {
+            let quote_parts: Vec<&str> = rest.splitn(2, char::is_whitespace).collect();
+            if quote_parts.len() < 2 {
+                println!("{DIM}  사용법: /interview transcript quote <ID> <라인번호>{RESET}\n");
+                return;
+            }
+            let id = quote_parts[0];
+            let line_num: usize = match quote_parts[1].trim().parse() {
+                Ok(n) => n,
+                Err(_) => {
+                    println!("{RED}  라인 번호는 숫자여야 합니다.{RESET}\n");
+                    return;
+                }
+            };
+            match extract_interview_quote(id, line_num) {
+                Ok(quote) => {
+                    println!("{GREEN}  인용:{RESET}");
+                    println!("    {quote}\n");
+                }
+                Err(e) => {
+                    eprintln!("{RED}  {e}{RESET}\n");
+                }
+            }
+        }
+        _ => {
+            print_interview_transcript_usage();
+        }
+    }
+}
+
+/// Print usage for `/interview transcript`.
+fn print_interview_transcript_usage() {
+    println!("{DIM}  사용법:{RESET}");
+    println!("{DIM}    /interview transcript save <파일>       녹취록 저장{RESET}");
+    println!("{DIM}    /interview transcript list              저장된 녹취록 목록{RESET}");
+    println!("{DIM}    /interview transcript search <키워드>   녹취록 내 키워드 검색{RESET}");
+    println!("{DIM}    /interview transcript quote <ID> <라인> 발언 인용 추출{RESET}");
+    println!();
 }
 
 // ── /compare ────────────────────────────────────────────────────────────
@@ -6038,6 +6339,165 @@ mod tests {
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("인터뷰 질문지"));
+    }
+
+    // ── /interview transcript tests ─────────────────────────────────────
+
+    #[test]
+    fn interview_subcommands_constant() {
+        assert!(INTERVIEW_SUBCOMMANDS.contains(&"transcript"));
+        assert_eq!(INTERVIEW_SUBCOMMANDS.len(), 1);
+    }
+
+    #[test]
+    fn interview_transcript_subcommands_constant() {
+        assert!(INTERVIEW_TRANSCRIPT_SUBCOMMANDS.contains(&"save"));
+        assert!(INTERVIEW_TRANSCRIPT_SUBCOMMANDS.contains(&"list"));
+        assert!(INTERVIEW_TRANSCRIPT_SUBCOMMANDS.contains(&"search"));
+        assert!(INTERVIEW_TRANSCRIPT_SUBCOMMANDS.contains(&"quote"));
+        assert_eq!(INTERVIEW_TRANSCRIPT_SUBCOMMANDS.len(), 4);
+    }
+
+    #[test]
+    fn save_interview_transcript_creates_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let src = dir.path().join("input.txt");
+        std::fs::write(&src, "홍길동: 반도체 수출 규제에 대해 말씀해주세요.\n김기자: 네, 알겠습니다.").unwrap();
+        let transcript_dir = dir.path().join("transcripts");
+
+        let result = save_interview_transcript_to(&src, &transcript_dir);
+        assert!(result.is_ok());
+        let entry = result.unwrap();
+        assert_eq!(entry.source_file, "input.txt");
+        assert_eq!(entry.line_count, 2);
+        assert!(entry.path.exists());
+    }
+
+    #[test]
+    fn save_interview_transcript_empty_file_fails() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let src = dir.path().join("empty.txt");
+        std::fs::write(&src, "   \n  ").unwrap();
+        let transcript_dir = dir.path().join("transcripts");
+
+        let result = save_interview_transcript_to(&src, &transcript_dir);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("빈 파일"));
+    }
+
+    #[test]
+    fn save_interview_transcript_missing_file_fails() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let src = dir.path().join("nonexistent.txt");
+        let transcript_dir = dir.path().join("transcripts");
+
+        let result = save_interview_transcript_to(&src, &transcript_dir);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn list_interview_transcripts_empty() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let entries = list_interview_transcripts_in(dir.path());
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn list_interview_transcripts_finds_files() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("2026-03-31_001.txt"), "라인1\n라인2").unwrap();
+        std::fs::write(dir.path().join("2026-03-31_002.txt"), "라인1").unwrap();
+
+        let entries = list_interview_transcripts_in(dir.path());
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn search_interview_transcripts_finds_keyword() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("2026-03-31_001.txt"), "반도체 수출\n일반 내용\n반도체 규제").unwrap();
+        std::fs::write(dir.path().join("2026-03-31_002.txt"), "다른 주제").unwrap();
+
+        let results = search_interview_transcripts_in("반도체", dir.path());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "2026-03-31_001");
+        assert_eq!(results[0].1.len(), 2);
+        assert_eq!(results[0].1[0].0, 1); // line 1
+        assert_eq!(results[0].1[1].0, 3); // line 3
+    }
+
+    #[test]
+    fn search_interview_transcripts_case_insensitive() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("test_001.txt"), "Hello World\nhello again").unwrap();
+
+        let results = search_interview_transcripts_in("hello", dir.path());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1.len(), 2);
+    }
+
+    #[test]
+    fn search_interview_transcripts_no_match() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("test_001.txt"), "일반 내용").unwrap();
+
+        let results = search_interview_transcripts_in("없는키워드", dir.path());
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn extract_interview_quote_valid() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("2026-03-31_001.txt"), "홍길동: 반도체 수출이 중요합니다.\n김기자: 왜 그렇습니까?").unwrap();
+
+        let result = extract_interview_quote_in("2026-03-31_001", 1, dir.path());
+        assert!(result.is_ok());
+        let quote = result.unwrap();
+        assert!(quote.contains("홍길동: 반도체 수출이 중요합니다."));
+        assert!(quote.contains("2026-03-31_001"));
+        assert!(quote.contains("1행"));
+    }
+
+    #[test]
+    fn extract_interview_quote_line_out_of_range() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("test_001.txt"), "한 줄").unwrap();
+
+        let result = extract_interview_quote_in("test_001", 5, dir.path());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("범위를 벗어났습니다"));
+    }
+
+    #[test]
+    fn extract_interview_quote_zero_line() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("test_001.txt"), "한 줄").unwrap();
+
+        let result = extract_interview_quote_in("test_001", 0, dir.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn extract_interview_quote_missing_id() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let result = extract_interview_quote_in("nonexistent", 1, dir.path());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("찾을 수 없습니다"));
+    }
+
+    #[test]
+    fn transcript_entry_struct_fields() {
+        let entry = TranscriptEntry {
+            id: "2026-03-31_001".to_string(),
+            source_file: "test.txt".to_string(),
+            path: std::path::PathBuf::from("/tmp/test.txt"),
+            line_count: 10,
+            saved_at: 1234567890,
+        };
+        assert_eq!(entry.id, "2026-03-31_001");
+        assert_eq!(entry.source_file, "test.txt");
+        assert_eq!(entry.line_count, 10);
+        assert_eq!(entry.saved_at, 1234567890);
     }
 
     #[test]

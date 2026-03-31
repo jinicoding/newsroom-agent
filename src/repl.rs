@@ -48,8 +48,9 @@ impl Completer for YoyoHelper {
             if let Some(space_pos) = prefix.find(' ') {
                 let cmd = &prefix[..space_pos];
                 let arg_part = &prefix[space_pos + 1..];
-                // Only complete the first argument (no nested spaces)
-                if !arg_part.contains(' ') {
+                // Complete first argument, or 2-depth for commands like /interview transcript
+                let allow_nested = cmd == "/interview" || cmd == "/multiformat";
+                if !arg_part.contains(' ') || allow_nested {
                     let candidates = command_arg_completions(cmd, arg_part);
                     if !candidates.is_empty() {
                         return Ok((space_pos + 1, candidates));
