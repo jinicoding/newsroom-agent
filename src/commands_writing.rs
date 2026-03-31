@@ -6047,6 +6047,299 @@ pub async fn handle_transcript(
     }
 }
 
+// ── /ethics — 기사 윤리 검토 ─────────────────────────────────────────
+
+const ETHICS_DIR: &str = ".journalist/ethics";
+
+/// Parse `/ethics` subcommand and arguments.
+/// Returns `(subcommand, file_path, inline_text)`.
+pub fn parse_ethics_args(args: &str) -> (&str, Option<String>, String) {
+    let args = args.trim();
+    if args.is_empty() {
+        return ("", None, String::new());
+    }
+
+    // Split into subcommand and rest
+    let (subcmd, rest) = match args.find(char::is_whitespace) {
+        Some(pos) => (&args[..pos], args[pos..].trim_start()),
+        None => (args, ""),
+    };
+
+    match subcmd {
+        "check" => {
+            let (file_path, inline) = parse_ethics_check_args(rest);
+            ("check", file_path, inline)
+        }
+        "guide" => ("guide", None, String::new()),
+        // Default: treat entire input as check text
+        _ => {
+            let (file_path, inline) = parse_ethics_check_args(args);
+            ("check", file_path, inline)
+        }
+    }
+}
+
+/// Parse the arguments after `ethics check`.
+/// Handles `--file <path>` and inline text.
+pub fn parse_ethics_check_args(args: &str) -> (Option<String>, String) {
+    let args = args.trim();
+    if let Some(rest) = args.strip_prefix("--file") {
+        let rest = rest.trim_start();
+        if rest.is_empty() {
+            return (None, String::new());
+        }
+        let mut path_end = rest.len();
+        for (i, ch) in rest.char_indices() {
+            if ch.is_whitespace() {
+                path_end = i;
+                break;
+            }
+        }
+        let file_path = rest[..path_end].to_string();
+        let remaining = rest[path_end..].trim().to_string();
+        (Some(file_path), remaining)
+    } else {
+        (None, args.to_string())
+    }
+}
+
+/// Build the prompt for `/ethics check`.
+pub fn build_ethics_prompt(article: &str) -> Option<String> {
+    if article.trim().is_empty() {
+        return None;
+    }
+    Some(format!(
+        "아래 기사 텍스트에 대해 저널리즘 윤리 기준으로 점검해주세요.\n\n\
+         기사 텍스트:\n\"\"\"\n{article}\n\"\"\"\n\n\
+         한국기자협회 윤리강령과 신문윤리실천요강에 근거하여 다음 항목을 순서대로 점검하고,\n\
+         각 항목마다 판정 등급을 표시하세요:\n\n\
+         ## 1. 균형 보도\n\
+         - 양측(또는 다자) 의견이 공정하게 반영되어 있는가\n\
+         - 특정 입장에 편향된 서술이 없는가\n\
+         - 반대 의견·반론이 적절히 포함되어 있는가\n\n\
+         ## 2. 익명 취재원 사용의 정당성\n\
+         - 익명 취재원이 사용된 경우, 실명 공개가 불가능한 정당한 사유가 있는가\n\
+         - 익명 취재원의 발언이 기사의 핵심 주장을 뒷받침하는 유일한 근거인가\n\
+         - 독자가 취재원의 신뢰성을 판단할 수 있는 최소한의 맥락이 제공되는가\n\n\
+         ## 3. 사생활 침해 여부\n\
+         - 공익과 무관한 개인 사생활 정보가 노출되어 있는가\n\
+         - 공인이더라도 사적 영역에 대한 과도한 침해가 있는가\n\
+         - 본인 동의 없이 민감 정보(건강, 가족, 재산)가 기술되어 있는가\n\n\
+         ## 4. 선정적 표현·자극적 제목\n\
+         - 사실 이상의 감정적·선정적 표현이 사용되었는가\n\
+         - 제목이 기사 내용과 부합하는가 (낚시성 제목 여부)\n\
+         - 폭력·혐오·차별적 표현이 포함되어 있는가\n\n\
+         ## 5. 이해충돌 공시\n\
+         - 기자·매체와 취재 대상 사이의 이해관계가 있는 경우 이를 명시했는가\n\
+         - 광고주·협찬사 관련 보도에 해당 관계를 밝혔는가\n\n\
+         ## 6. 피해자 2차 가해 방지\n\
+         - 피해자의 신원이 불필요하게 노출되어 있는가\n\
+         - 피해 상황을 지나치게 상세하게 묘사하여 2차 피해를 유발하는가\n\
+         - 피해자에게 책임을 전가하는 서술이 있는가\n\n\
+         ## 7. 미성년자 보호\n\
+         - 미성년자의 신원(이름, 학교, 얼굴 등)이 노출되어 있는가\n\
+         - 미성년자 관련 사건에서 「아동·청소년의 성보호에 관한 법률」등 보호 규정이 준수되는가\n\n\
+         ## 종합 판정\n\
+         각 항목별로 다음 등급을 부여하세요:\n\
+         - ✅ 양호: 윤리 기준을 충족\n\
+         - ⚠️ 주의: 개선이 권고되는 부분 있음\n\
+         - 🚨 위반: 반드시 수정 필요\n\n\
+         **종합 윤리 등급**과 함께, ⚠️ 이상 항목에 대해 **구체적인 개선 제안**을 제시하세요.\n\
+         관련 윤리 강령 조항을 가능한 한 명시하세요."
+    ))
+}
+
+/// Print the Korean Press Ethics Guide summary (no AI call).
+pub fn ethics_guide() {
+    println!();
+    println!("{BOLD}  ═══ 한국기자협회 윤리강령 주요 조항 요약 ═══{RESET}");
+    println!();
+    println!("{BOLD}  제1조 언론의 자유{RESET}");
+    println!("    기자는 언론의 자유를 확보하고 이를 수호할 의무를 진다.");
+    println!();
+    println!("{BOLD}  제2조 공정 보도{RESET}");
+    println!("    기자는 사실의 전모를 정확하게 보도하며, 진실을 존중하고");
+    println!("    공정하게 취재·보도해야 한다.");
+    println!();
+    println!("{BOLD}  제3조 취재원의 명시와 보호{RESET}");
+    println!("    보도의 출처는 가능한 한 밝혀야 한다. 단, 취재원이 요구하거나");
+    println!("    공익을 위해 필요한 경우 취재원의 비밀을 보호해야 한다.");
+    println!();
+    println!("{BOLD}  제4조 인권 존중{RESET}");
+    println!("    기자는 인간의 존엄성과 개인의 명예를 존중해야 하며,");
+    println!("    사생활을 침해해서는 안 된다.");
+    println!();
+    println!("{BOLD}  제5조 이익 충돌의 회피{RESET}");
+    println!("    기자는 취재·보도 과정에서 개인의 이익을 추구해서는 안 되며,");
+    println!("    이해충돌 상황을 회피해야 한다.");
+    println!();
+    println!("{BOLD}  제6조 품위 유지{RESET}");
+    println!("    기자는 직업적 품위를 유지하며, 사회적 책임을 자각해야 한다.");
+    println!();
+    println!("{BOLD}  ─── 신문윤리실천요강 주요 항목 ───{RESET}");
+    println!();
+    println!("  {BOLD}1. 보도 준칙{RESET}  — 사실 확인, 출처 명시, 추측·의견 구분");
+    println!("  {BOLD}2. 인권 보호{RESET}  — 피의사실 공표 제한, 피해자 보호, 미성년자 보호");
+    println!("  {BOLD}3. 취재 윤리{RESET}  — 위장·잠입취재 최소화, 취재 대상 동의");
+    println!("  {BOLD}4. 편집 지침{RESET}  — 제목·사진의 정확성, 선정성 자제");
+    println!("  {BOLD}5. 광고 분리{RESET}  — 기사와 광고의 명확한 분리, 기사형 광고 금지");
+    println!();
+    println!(
+        "{DIM}  ※ 전문: https://journalist.or.kr (한국기자협회 윤리강령){RESET}"
+    );
+    println!();
+}
+
+/// Build ethics check file path with an explicit date string (for testing).
+pub fn ethics_file_path_with_date(slug_source: &str, date: &str) -> std::path::PathBuf {
+    let slug = topic_to_slug(slug_source, 50);
+    let filename = if slug.is_empty() {
+        format!("{date}_ethics.md")
+    } else {
+        format!("{date}_{slug}.md")
+    };
+    std::path::PathBuf::from(ETHICS_DIR).join(filename)
+}
+
+/// Build ethics check file path with today's date.
+pub fn ethics_file_path(slug_source: &str) -> std::path::PathBuf {
+    ethics_file_path_with_date(slug_source, &today_str())
+}
+
+/// Save ethics check result to file.
+fn save_ethics(path: &std::path::Path, content: &str) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)
+}
+
+/// List existing ethics check files.
+fn ethics_list() {
+    let dir = std::path::Path::new(ETHICS_DIR);
+    if !dir.exists() {
+        println!("{DIM}  저장된 윤리 점검 기록이 없습니다.{RESET}\n");
+        return;
+    }
+    let mut entries: Vec<_> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map_or(false, |ext| ext == "md"))
+            .collect(),
+        Err(_) => {
+            println!("{DIM}  윤리 점검 디렉토리를 읽을 수 없습니다.{RESET}\n");
+            return;
+        }
+    };
+    if entries.is_empty() {
+        println!("{DIM}  저장된 윤리 점검 기록이 없습니다.{RESET}\n");
+        return;
+    }
+    entries.sort_by_key(|e| e.file_name());
+    println!("{BOLD}  ═══ 윤리 점검 기록 ({} 건) ═══{RESET}\n", entries.len());
+    for (i, entry) in entries.iter().enumerate() {
+        let name = entry.file_name();
+        println!(
+            "{DIM}  {idx}. {name}{RESET}",
+            idx = i + 1,
+            name = name.to_string_lossy()
+        );
+    }
+    println!();
+}
+
+/// Handle the `/ethics` command: journalism ethics review.
+pub async fn handle_ethics(
+    agent: &mut Agent,
+    input: &str,
+    session_total: &mut Usage,
+    model: &str,
+) {
+    let args = input.strip_prefix("/ethics").unwrap_or("").trim();
+
+    if args == "list" {
+        ethics_list();
+        return;
+    }
+
+    let (subcmd, file_path, inline_text) = parse_ethics_args(args);
+
+    if subcmd == "guide" {
+        ethics_guide();
+        return;
+    }
+
+    // subcmd == "check" (or default)
+    let article = if let Some(ref path) = file_path {
+        match std::fs::read_to_string(path) {
+            Ok(content) => {
+                println!(
+                    "{DIM}  파일 읽기: {path} ({} bytes){RESET}",
+                    content.len()
+                );
+                if inline_text.is_empty() {
+                    content
+                } else {
+                    format!("{content}\n\n{inline_text}")
+                }
+            }
+            Err(e) => {
+                eprintln!("{RED}  파일 읽기 실패: {path} — {e}{RESET}\n");
+                return;
+            }
+        }
+    } else {
+        inline_text
+    };
+
+    let prompt = match build_ethics_prompt(&article) {
+        Some(p) => p,
+        None => {
+            println!("{DIM}  사용법: /ethics check <기사 텍스트>{RESET}");
+            println!("{DIM}  또는:   /ethics check --file <경로>{RESET}");
+            println!("{DIM}  또는:   /ethics guide — 윤리강령 요약{RESET}");
+            println!("{DIM}  또는:   /ethics list — 저장된 윤리 점검 목록{RESET}");
+            println!("{DIM}  예시:   /ethics check --file draft.md{RESET}");
+            println!(
+                "{DIM}  기사의 균형 보도, 취재원 보호, 선정성 등 저널리즘 윤리를 점검합니다.{RESET}\n"
+            );
+            return;
+        }
+    };
+
+    let response = run_prompt(agent, &prompt, session_total, model).await;
+    auto_compact_if_needed(agent);
+
+    // Save ethics check result
+    if !response.trim().is_empty() {
+        let slug_source = if let Some(ref path) = file_path {
+            std::path::Path::new(path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "ethics".to_string())
+        } else {
+            let preview: String = article.chars().take(30).collect();
+            if preview.is_empty() {
+                "ethics".to_string()
+            } else {
+                preview
+            }
+        };
+        let path = ethics_file_path(&slug_source);
+        match save_ethics(&path, &response) {
+            Ok(_) => {
+                println!(
+                    "{GREEN}  ✓ 윤리 점검 저장: {}{RESET}\n",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("{RED}  윤리 점검 저장 실패: {e}{RESET}\n");
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -9035,5 +9328,116 @@ mod tests {
         assert_eq!(loaded[0].article, "테스트 기사");
         assert_eq!(loaded[0].error, "오류 내용");
         assert_eq!(loaded[0].fix, "수정 내용");
+    }
+
+    // ── /ethics tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn parse_ethics_args_empty() {
+        let (subcmd, file, text) = parse_ethics_args("");
+        assert_eq!(subcmd, "");
+        assert!(file.is_none());
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn parse_ethics_args_guide() {
+        let (subcmd, file, text) = parse_ethics_args("guide");
+        assert_eq!(subcmd, "guide");
+        assert!(file.is_none());
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn parse_ethics_args_check_inline() {
+        let (subcmd, file, text) = parse_ethics_args("check 기사 본문 텍스트");
+        assert_eq!(subcmd, "check");
+        assert!(file.is_none());
+        assert_eq!(text, "기사 본문 텍스트");
+    }
+
+    #[test]
+    fn parse_ethics_args_check_file() {
+        let (subcmd, file, text) = parse_ethics_args("check --file draft.md");
+        assert_eq!(subcmd, "check");
+        assert_eq!(file.unwrap(), "draft.md");
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn parse_ethics_args_check_file_with_extra() {
+        let (subcmd, file, text) = parse_ethics_args("check --file draft.md 추가 맥락");
+        assert_eq!(subcmd, "check");
+        assert_eq!(file.unwrap(), "draft.md");
+        assert_eq!(text, "추가 맥락");
+    }
+
+    #[test]
+    fn parse_ethics_args_default_to_check() {
+        let (subcmd, file, text) = parse_ethics_args("기사 본문");
+        assert_eq!(subcmd, "check");
+        assert!(file.is_none());
+        assert_eq!(text, "기사 본문");
+    }
+
+    #[test]
+    fn parse_ethics_args_default_file() {
+        let (subcmd, file, text) = parse_ethics_args("--file article.md");
+        assert_eq!(subcmd, "check");
+        assert_eq!(file.unwrap(), "article.md");
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn build_ethics_prompt_empty_returns_none() {
+        assert!(build_ethics_prompt("").is_none());
+        assert!(build_ethics_prompt("   ").is_none());
+    }
+
+    #[test]
+    fn build_ethics_prompt_contains_key_sections() {
+        let prompt = build_ethics_prompt("테스트 기사 본문").unwrap();
+        assert!(prompt.contains("균형 보도"));
+        assert!(prompt.contains("익명 취재원"));
+        assert!(prompt.contains("사생활 침해"));
+        assert!(prompt.contains("선정적 표현"));
+        assert!(prompt.contains("이해충돌"));
+        assert!(prompt.contains("2차 가해"));
+        assert!(prompt.contains("미성년자 보호"));
+    }
+
+    #[test]
+    fn ethics_file_path_with_slug() {
+        let path = ethics_file_path_with_date("반도체 수출", "2026-03-31");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/ethics/2026-03-31_반도체-수출.md"
+        );
+    }
+
+    #[test]
+    fn ethics_file_path_empty_slug() {
+        let path = ethics_file_path_with_date("", "2026-03-31");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/ethics/2026-03-31_ethics.md"
+        );
+    }
+
+    #[test]
+    fn save_ethics_creates_dirs_and_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("ethics").join("test.md");
+        let result = save_ethics(&path, "# 윤리 점검 결과\n\n점검 내용");
+        assert!(result.is_ok());
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("윤리 점검 결과"));
+    }
+
+    #[test]
+    fn ethics_guide_does_not_panic() {
+        // Just verify that ethics_guide() runs without panic
+        ethics_guide();
     }
 }

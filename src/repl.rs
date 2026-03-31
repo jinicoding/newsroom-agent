@@ -724,6 +724,11 @@ pub async fn run_repl(
                     .await;
                 continue;
             }
+            s if s == "/ethics" || s.starts_with("/ethics ") => {
+                commands::handle_ethics(agent, input, &mut session_total, &agent_config.model)
+                    .await;
+                continue;
+            }
             s if s == "/correction" || s.starts_with("/correction ") => {
                 commands::handle_correction(agent, input, &mut session_total, &agent_config.model)
                     .await;

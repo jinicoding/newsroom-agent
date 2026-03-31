@@ -134,6 +134,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/handoff",
     "/tip",
     "/glossary",
+    "/ethics",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -633,6 +634,9 @@ pub fn help_text() -> String {
         "  /legal [text|--file <path>]  기사 법적 리스크 사전 점검 (명예훼손/초상권/반론권)\n",
     );
     out.push_str(
+        "  /ethics [check|guide]        기사 윤리 검토 (균형보도/취재원보호/선정성/이해충돌)\n",
+    );
+    out.push_str(
         "  /deadline <sub>        마감 카운트다운 (set|list|clear)\n",
     );
     out.push_str(
@@ -1012,7 +1016,7 @@ pub use crate::commands_research::{
 // Article writing & editing handlers
 pub use crate::commands_writing::{
     handle_anonymize, handle_archive, handle_article, handle_checklist, handle_correction,
-    handle_draft, handle_export, handle_headline, handle_improve, handle_legal,
+    handle_draft, handle_ethics, handle_export, handle_headline, handle_improve, handle_legal,
     handle_multiformat, handle_proofread, handle_publish, handle_quality, handle_quote,
     handle_readability, handle_rewrite, handle_spellcheck, handle_stats, handle_summary,
     handle_template, handle_template_use, handle_transcript, handle_translate,
