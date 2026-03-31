@@ -908,6 +908,10 @@ pub async fn run_repl(
                 }
                 continue;
             }
+            s if s == "/tip" || s.starts_with("/tip ") => {
+                commands::handle_tip(input);
+                continue;
+            }
             s if s == "/profile" || s.starts_with("/profile ") => {
                 commands::handle_profile(input);
                 continue;

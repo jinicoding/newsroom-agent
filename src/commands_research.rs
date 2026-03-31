@@ -28,6 +28,9 @@ pub const CLIP_SUBCOMMANDS: &[&str] = &["list", "search", "stats"];
 /// Subcommand names for `/contact <Tab>` completion.
 pub const CONTACT_SUBCOMMANDS: &[&str] = &["log", "history", "recent", "stale", "suggest"];
 
+/// Subcommand names for `/tip <Tab>` completion.
+pub const TIP_SUBCOMMANDS: &[&str] = &["add", "list", "show", "update", "search"];
+
 /// Subcommand names for `/research <Tab>` completion.
 pub const RESEARCH_SUBCOMMANDS: &[&str] = &["list", "search"];
 
@@ -4968,6 +4971,387 @@ pub async fn handle_verify(
     }
 }
 
+// ── /tip ─────────────────────────────────────────────────────────────────
+
+/// Directory for tip entries.
+pub const TIPS_DIR: &str = ".journalist/tips";
+
+/// Tip status values.
+pub const TIP_STATUSES: &[&str] = &["미확인", "취재중", "기사화", "보류", "폐기"];
+
+/// A single tip (제보) entry stored as JSON.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+pub struct TipEntry {
+    pub id: String,
+    pub source: String,
+    pub content: String,
+    pub anonymous: bool,
+    pub credibility: u8,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked_story: Option<String>,
+}
+
+fn tips_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(TIPS_DIR)
+}
+
+/// Generate a short unique ID for a tip (YYYYMMDD-HHMM-XXXX).
+fn generate_tip_id() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let date = format_unix_timestamp(now);
+    let date_part = date.replace(['-', ':', ' '], "");
+    let rand_part = now % 10000;
+    format!("{}-{:04}", &date_part[..12], rand_part)
+}
+
+/// Return the file path for a tip: `.journalist/tips/<id>.json`
+#[cfg(test)]
+pub fn tip_file_path(id: &str) -> std::path::PathBuf {
+    tips_dir().join(format!("{id}.json"))
+}
+
+/// Return the file path for a tip in a given directory (for testing).
+#[cfg(test)]
+pub fn tip_file_path_at(dir: &std::path::Path, id: &str) -> std::path::PathBuf {
+    dir.join(format!("{id}.json"))
+}
+
+/// Save a tip entry to its JSON file.
+pub fn save_tip(tip: &TipEntry, base_dir: &std::path::Path) -> Result<(), std::io::Error> {
+    std::fs::create_dir_all(base_dir)?;
+    let path = base_dir.join(format!("{}.json", tip.id));
+    let json = serde_json::to_string_pretty(tip).map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::Other, e)
+    })?;
+    std::fs::write(path, json)
+}
+
+/// Load a tip entry from a JSON file.
+pub fn load_tip(path: &std::path::Path) -> Option<TipEntry> {
+    let content = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+/// Load all tips from a directory, sorted by created_at descending (newest first).
+pub fn load_all_tips(dir: &std::path::Path) -> Vec<TipEntry> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+    let mut tips: Vec<TipEntry> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+        .filter_map(|e| load_tip(&e.path()))
+        .collect();
+    tips.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    tips
+}
+
+/// Handle `/tip` command with subcommands: add, list, show, update, search.
+pub fn handle_tip(input: &str) {
+    let args = input.strip_prefix("/tip").unwrap_or("").trim();
+
+    if args.is_empty() || args == "help" || args == "--help" {
+        print_tip_usage();
+        return;
+    }
+
+    let (sub, rest) = match args.split_once(char::is_whitespace) {
+        Some((s, r)) => (s, r.trim()),
+        None => (args, ""),
+    };
+
+    let dir = tips_dir();
+    match sub {
+        "add" => handle_tip_add(rest, &dir),
+        "list" => handle_tip_list(&dir),
+        "show" => handle_tip_show(rest, &dir),
+        "update" => handle_tip_update(rest, &dir),
+        "search" => handle_tip_search(rest, &dir),
+        _ => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {sub}{RESET}");
+            print_tip_usage();
+        }
+    }
+}
+
+fn print_tip_usage() {
+    println!("{DIM}  사용법:");
+    println!("    /tip add <내용> --source 출처 [--anon] [--cred 1-5] [--story 슬러그]   제보 등록");
+    println!("    /tip list                                        전체 제보 목록");
+    println!("    /tip show <ID>                                   제보 상세 보기");
+    println!("    /tip update <ID> <상태>                          상태 변경 (미확인/취재중/기사화/보류/폐기)");
+    println!("    /tip search <키워드>                             키워드 검색{RESET}\n");
+}
+
+/// Parse `/tip add` arguments.
+fn parse_tip_add_args(args: &str) -> (String, String, bool, u8, Option<String>) {
+    let mut source = String::new();
+    let mut anonymous = false;
+    let mut credibility: u8 = 3;
+    let mut story: Option<String> = None;
+    let mut remaining = args.to_string();
+
+    // Extract --source
+    if let Some(pos) = remaining.find("--source") {
+        let before = remaining[..pos].to_string();
+        let after = remaining[pos + 8..].trim_start().to_string();
+        let (val, rest) = extract_flag_value(&after);
+        source = val;
+        remaining = format!("{before} {rest}").trim().to_string();
+    }
+
+    // Extract --anon flag
+    if let Some(pos) = remaining.find("--anon") {
+        let before = remaining[..pos].to_string();
+        let after = remaining[pos + 6..].trim_start().to_string();
+        anonymous = true;
+        remaining = format!("{before} {after}").trim().to_string();
+    }
+
+    // Extract --cred
+    if let Some(pos) = remaining.find("--cred") {
+        let before = remaining[..pos].to_string();
+        let after = remaining[pos + 6..].trim_start().to_string();
+        let (val, rest) = extract_flag_value(&after);
+        if let Ok(c) = val.parse::<u8>() {
+            credibility = c.clamp(1, 5);
+        }
+        remaining = format!("{before} {rest}").trim().to_string();
+    }
+
+    // Extract --story
+    if let Some(pos) = remaining.find("--story") {
+        let before = remaining[..pos].to_string();
+        let after = remaining[pos + 7..].trim_start().to_string();
+        let (val, rest) = extract_flag_value(&after);
+        story = if val.is_empty() { None } else { Some(val) };
+        remaining = format!("{before} {rest}").trim().to_string();
+    }
+
+    let content = remaining
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string();
+
+    (content, source, anonymous, credibility, story)
+}
+
+fn handle_tip_add(args: &str, dir: &std::path::Path) {
+    if args.is_empty() {
+        eprintln!("{RED}  사용법: /tip add <내용> --source 출처 [--anon] [--cred 1-5]{RESET}\n");
+        return;
+    }
+
+    let (content, source, anonymous, credibility, linked_story) = parse_tip_add_args(args);
+
+    if content.is_empty() {
+        eprintln!("{RED}  제보 내용을 입력하세요.{RESET}\n");
+        return;
+    }
+    if source.is_empty() {
+        eprintln!("{RED}  출처를 지정하세요 (--source 이름).{RESET}\n");
+        return;
+    }
+
+    let now = {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        format_unix_timestamp(secs).replace(' ', "T") + ":00"
+    };
+
+    let tip = TipEntry {
+        id: generate_tip_id(),
+        source: source.clone(),
+        content: content.clone(),
+        anonymous,
+        credibility,
+        status: "미확인".to_string(),
+        created_at: now.clone(),
+        updated_at: now,
+        linked_story,
+    };
+
+    match save_tip(&tip, dir) {
+        Ok(()) => {
+            let anon_label = if anonymous { " [익명]" } else { "" };
+            println!(
+                "{GREEN}  📋 제보 등록: {id} — {src}{anon} (신뢰도 {cred}/5){RESET}\n",
+                id = tip.id,
+                src = source,
+                anon = anon_label,
+                cred = credibility,
+            );
+        }
+        Err(e) => eprintln!("{RED}  제보 저장 실패: {e}{RESET}\n"),
+    }
+}
+
+fn handle_tip_list(dir: &std::path::Path) {
+    let tips = load_all_tips(dir);
+    if tips.is_empty() {
+        println!("{DIM}  등록된 제보가 없습니다.{RESET}\n");
+        return;
+    }
+    println!("{DIM}  제보 목록 ({count}건):{RESET}", count = tips.len());
+    for tip in &tips {
+        let anon = if tip.anonymous { " [익명]" } else { "" };
+        let src_display = if tip.anonymous {
+            "익명".to_string()
+        } else {
+            tip.source.clone()
+        };
+        let preview: String = tip.content.chars().take(40).collect();
+        let ellipsis = if tip.content.chars().count() > 40 { "…" } else { "" };
+        println!(
+            "{DIM}  [{status}] {id}  {src}{anon}  {preview}{ellipsis}  (신뢰도 {cred}/5){RESET}",
+            status = tip.status,
+            id = tip.id,
+            src = src_display,
+            anon = anon,
+            preview = preview,
+            ellipsis = ellipsis,
+            cred = tip.credibility,
+        );
+    }
+    println!();
+}
+
+fn handle_tip_show(id: &str, dir: &std::path::Path) {
+    if id.is_empty() {
+        eprintln!("{RED}  사용법: /tip show <ID>{RESET}\n");
+        return;
+    }
+
+    let path = dir.join(format!("{id}.json"));
+    match load_tip(&path) {
+        Some(tip) => {
+            let anon_label = if tip.anonymous { " (익명 제보)" } else { "" };
+            let src_display = if tip.anonymous {
+                "익명".to_string()
+            } else {
+                tip.source.clone()
+            };
+            println!("{DIM}  ── 제보 상세 ──{RESET}");
+            println!("{DIM}  ID:       {}{RESET}", tip.id);
+            println!("{DIM}  출처:     {src_display}{anon_label}{RESET}");
+            println!("{DIM}  신뢰도:   {}/5{RESET}", tip.credibility);
+            println!("{DIM}  상태:     {}{RESET}", tip.status);
+            println!("{DIM}  등록일:   {}{RESET}", tip.created_at);
+            println!("{DIM}  수정일:   {}{RESET}", tip.updated_at);
+            if let Some(ref story) = tip.linked_story {
+                println!("{DIM}  연결 스토리: {story}{RESET}");
+            }
+            println!("{DIM}  ─────────────{RESET}");
+            println!("{DIM}  {}{RESET}", tip.content);
+            println!();
+        }
+        None => eprintln!("{RED}  제보를 찾을 수 없습니다: {id}{RESET}\n"),
+    }
+}
+
+fn handle_tip_update(args: &str, dir: &std::path::Path) {
+    let (id, new_status) = match args.split_once(char::is_whitespace) {
+        Some((i, s)) => (i.trim(), s.trim()),
+        None => {
+            eprintln!("{RED}  사용법: /tip update <ID> <상태>{RESET}");
+            eprintln!(
+                "{DIM}  상태: {}{RESET}\n",
+                TIP_STATUSES.join(", ")
+            );
+            return;
+        }
+    };
+
+    if !TIP_STATUSES.contains(&new_status) {
+        eprintln!("{RED}  유효하지 않은 상태: {new_status}{RESET}");
+        eprintln!(
+            "{DIM}  사용 가능한 상태: {}{RESET}\n",
+            TIP_STATUSES.join(", ")
+        );
+        return;
+    }
+
+    let path = dir.join(format!("{id}.json"));
+    let mut tip = match load_tip(&path) {
+        Some(t) => t,
+        None => {
+            eprintln!("{RED}  제보를 찾을 수 없습니다: {id}{RESET}\n");
+            return;
+        }
+    };
+
+    let old_status = tip.status.clone();
+    tip.status = new_status.to_string();
+    tip.updated_at = {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        format_unix_timestamp(secs).replace(' ', "T") + ":00"
+    };
+
+    match save_tip(&tip, dir) {
+        Ok(()) => println!(
+            "{GREEN}  ✅ 제보 {id} 상태 변경: {old} → {new}{RESET}\n",
+            old = old_status,
+            new = new_status,
+        ),
+        Err(e) => eprintln!("{RED}  상태 변경 실패: {e}{RESET}\n"),
+    }
+}
+
+fn handle_tip_search(keyword: &str, dir: &std::path::Path) {
+    if keyword.is_empty() {
+        eprintln!("{RED}  사용법: /tip search <키워드>{RESET}\n");
+        return;
+    }
+
+    let tips = load_all_tips(dir);
+    let kw_lower = keyword.to_lowercase();
+    let matches: Vec<&TipEntry> = tips
+        .iter()
+        .filter(|t| {
+            t.content.to_lowercase().contains(&kw_lower)
+                || t.source.to_lowercase().contains(&kw_lower)
+                || t.id.to_lowercase().contains(&kw_lower)
+        })
+        .collect();
+
+    if matches.is_empty() {
+        println!("{DIM}  '{keyword}'에 해당하는 제보가 없습니다.{RESET}\n");
+        return;
+    }
+
+    println!(
+        "{DIM}  검색 결과: {count}건 (키워드: {keyword}){RESET}",
+        count = matches.len()
+    );
+    for tip in &matches {
+        let preview: String = tip.content.chars().take(40).collect();
+        let ellipsis = if tip.content.chars().count() > 40 { "…" } else { "" };
+        println!(
+            "{DIM}  [{status}] {id}  {src}  {preview}{ellipsis}{RESET}",
+            status = tip.status,
+            id = tip.id,
+            src = if tip.anonymous { "익명" } else { &tip.source },
+            preview = preview,
+            ellipsis = ellipsis,
+        );
+    }
+    println!();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7880,6 +8264,239 @@ mod tests {
         let (slug, rest) = extract_story_arg("한국 GDP 성장률 3% --story economy");
         assert_eq!(slug.as_deref(), Some("economy"));
         assert_eq!(rest, "한국 GDP 성장률 3%");
+    }
+
+    // ── /tip tests ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn tip_entry_serialize_deserialize() {
+        let tip = TipEntry {
+            id: "20260331-0930-0001".to_string(),
+            source: "홍길동".to_string(),
+            content: "반도체 공장 화재 제보".to_string(),
+            anonymous: false,
+            credibility: 4,
+            status: "미확인".to_string(),
+            created_at: "2026-03-31T09:30:00".to_string(),
+            updated_at: "2026-03-31T09:30:00".to_string(),
+            linked_story: None,
+        };
+        let json = serde_json::to_string(&tip).unwrap();
+        let parsed: TipEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, tip);
+    }
+
+    #[test]
+    fn tip_entry_with_linked_story() {
+        let tip = TipEntry {
+            id: "20260331-0930-0002".to_string(),
+            source: "익명".to_string(),
+            content: "내부 고발".to_string(),
+            anonymous: true,
+            credibility: 2,
+            status: "취재중".to_string(),
+            created_at: "2026-03-31T09:30:00".to_string(),
+            updated_at: "2026-03-31T10:00:00".to_string(),
+            linked_story: Some("반도체취재".to_string()),
+        };
+        let json = serde_json::to_string_pretty(&tip).unwrap();
+        assert!(json.contains("반도체취재"));
+        let parsed: TipEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.linked_story, Some("반도체취재".to_string()));
+    }
+
+    #[test]
+    fn tip_save_and_load() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let tip = TipEntry {
+            id: "test-tip-001".to_string(),
+            source: "테스트 출처".to_string(),
+            content: "테스트 제보 내용".to_string(),
+            anonymous: false,
+            credibility: 3,
+            status: "미확인".to_string(),
+            created_at: "2026-03-31T09:30:00".to_string(),
+            updated_at: "2026-03-31T09:30:00".to_string(),
+            linked_story: None,
+        };
+        save_tip(&tip, dir.path()).unwrap();
+        let loaded = load_tip(&tip_file_path_at(dir.path(), "test-tip-001")).unwrap();
+        assert_eq!(loaded.id, "test-tip-001");
+        assert_eq!(loaded.content, "테스트 제보 내용");
+        assert_eq!(loaded.status, "미확인");
+    }
+
+    #[test]
+    fn tip_load_all_sorted() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let tip1 = TipEntry {
+            id: "tip-old".to_string(),
+            source: "A".to_string(),
+            content: "오래된 제보".to_string(),
+            anonymous: false,
+            credibility: 3,
+            status: "미확인".to_string(),
+            created_at: "2026-03-30T09:00:00".to_string(),
+            updated_at: "2026-03-30T09:00:00".to_string(),
+            linked_story: None,
+        };
+        let tip2 = TipEntry {
+            id: "tip-new".to_string(),
+            source: "B".to_string(),
+            content: "새로운 제보".to_string(),
+            anonymous: false,
+            credibility: 5,
+            status: "취재중".to_string(),
+            created_at: "2026-03-31T10:00:00".to_string(),
+            updated_at: "2026-03-31T10:00:00".to_string(),
+            linked_story: None,
+        };
+        save_tip(&tip1, dir.path()).unwrap();
+        save_tip(&tip2, dir.path()).unwrap();
+
+        let all = load_all_tips(dir.path());
+        assert_eq!(all.len(), 2);
+        // Newest first
+        assert_eq!(all[0].id, "tip-new");
+        assert_eq!(all[1].id, "tip-old");
+    }
+
+    #[test]
+    fn tip_update_status() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let tip = TipEntry {
+            id: "tip-update".to_string(),
+            source: "출처".to_string(),
+            content: "상태 변경 테스트".to_string(),
+            anonymous: false,
+            credibility: 3,
+            status: "미확인".to_string(),
+            created_at: "2026-03-31T09:30:00".to_string(),
+            updated_at: "2026-03-31T09:30:00".to_string(),
+            linked_story: None,
+        };
+        save_tip(&tip, dir.path()).unwrap();
+
+        // Load, update status, save again
+        let path = tip_file_path_at(dir.path(), "tip-update");
+        let mut loaded = load_tip(&path).unwrap();
+        loaded.status = "취재중".to_string();
+        loaded.updated_at = "2026-03-31T11:00:00".to_string();
+        save_tip(&loaded, dir.path()).unwrap();
+
+        let reloaded = load_tip(&path).unwrap();
+        assert_eq!(reloaded.status, "취재중");
+        assert_eq!(reloaded.updated_at, "2026-03-31T11:00:00");
+    }
+
+    #[test]
+    fn tip_search_by_content() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let tip1 = TipEntry {
+            id: "tip-s1".to_string(),
+            source: "기자A".to_string(),
+            content: "반도체 공장 화재 발생".to_string(),
+            anonymous: false,
+            credibility: 4,
+            status: "미확인".to_string(),
+            created_at: "2026-03-31T09:30:00".to_string(),
+            updated_at: "2026-03-31T09:30:00".to_string(),
+            linked_story: None,
+        };
+        let tip2 = TipEntry {
+            id: "tip-s2".to_string(),
+            source: "기자B".to_string(),
+            content: "국회 예산안 통과".to_string(),
+            anonymous: false,
+            credibility: 3,
+            status: "미확인".to_string(),
+            created_at: "2026-03-31T10:00:00".to_string(),
+            updated_at: "2026-03-31T10:00:00".to_string(),
+            linked_story: None,
+        };
+        save_tip(&tip1, dir.path()).unwrap();
+        save_tip(&tip2, dir.path()).unwrap();
+
+        let all = load_all_tips(dir.path());
+        let kw = "반도체";
+        let kw_lower = kw.to_lowercase();
+        let matches: Vec<&TipEntry> = all
+            .iter()
+            .filter(|t| {
+                t.content.to_lowercase().contains(&kw_lower)
+                    || t.source.to_lowercase().contains(&kw_lower)
+            })
+            .collect();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].id, "tip-s1");
+    }
+
+    #[test]
+    fn tip_parse_add_args() {
+        let (content, source, anonymous, credibility, story) =
+            parse_tip_add_args("--source 홍길동 --cred 4 반도체 공장 화재");
+        assert_eq!(source, "홍길동");
+        assert_eq!(credibility, 4);
+        assert!(!anonymous);
+        assert!(story.is_none());
+        assert_eq!(content, "반도체 공장 화재");
+    }
+
+    #[test]
+    fn tip_parse_add_args_anon() {
+        let (content, source, anonymous, credibility, story) =
+            parse_tip_add_args("--source 내부자 --anon --cred 2 --story 스캔들 비밀 제보 내용");
+        assert_eq!(source, "내부자");
+        assert!(anonymous);
+        assert_eq!(credibility, 2);
+        assert_eq!(story, Some("스캔들".to_string()));
+        assert_eq!(content, "비밀 제보 내용");
+    }
+
+    #[test]
+    fn tip_credibility_clamped() {
+        let (_, _, _, cred, _) = parse_tip_add_args("--source x --cred 9 test");
+        assert_eq!(cred, 5);
+        let (_, _, _, cred, _) = parse_tip_add_args("--source x --cred 0 test");
+        assert_eq!(cred, 1);
+    }
+
+    #[test]
+    fn tip_load_nonexistent() {
+        let path = std::path::Path::new("/tmp/nonexistent-tip-12345.json");
+        assert!(load_tip(path).is_none());
+    }
+
+    #[test]
+    fn tip_load_all_empty_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let tips = load_all_tips(dir.path());
+        assert!(tips.is_empty());
+    }
+
+    #[test]
+    fn tip_load_all_nonexistent_dir() {
+        let tips = load_all_tips(std::path::Path::new("/tmp/nonexistent-tips-dir-12345"));
+        assert!(tips.is_empty());
+    }
+
+    #[test]
+    fn tip_anonymous_field_serialization() {
+        let tip = TipEntry {
+            id: "anon-test".to_string(),
+            source: "비밀출처".to_string(),
+            content: "익명 제보".to_string(),
+            anonymous: true,
+            credibility: 1,
+            status: "보류".to_string(),
+            created_at: "2026-03-31T09:30:00".to_string(),
+            updated_at: "2026-03-31T09:30:00".to_string(),
+            linked_story: None,
+        };
+        let json = serde_json::to_string(&tip).unwrap();
+        assert!(json.contains("\"anonymous\":true"));
+        // linked_story should be absent (skip_serializing_if)
+        assert!(!json.contains("linked_story"));
     }
 
     #[test]

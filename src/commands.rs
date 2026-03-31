@@ -132,6 +132,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/foia",
     "/series",
     "/handoff",
+    "/tip",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -235,7 +236,7 @@ pub use crate::commands_writing::TEMPLATE_SUBCOMMANDS;
 pub use crate::commands_research::{
     ASSEMBLY_SUBCOMMANDS, BIGKINDS_SUBCOMMANDS, CLIP_SUBCOMMANDS, CONTACT_SUBCOMMANDS,
     DART_SUBCOMMANDS, MONITOR_SUBCOMMANDS, RESEARCH_SUBCOMMANDS, RSS_SUBCOMMANDS,
-    WIRE_SUBCOMMANDS,
+    TIP_SUBCOMMANDS, WIRE_SUBCOMMANDS,
 };
 pub use crate::commands_workflow::{
     AGENDA_SUBCOMMANDS, COVERAGE_SUBCOMMANDS, DIARY_SUBCOMMANDS, FOIA_SUBCOMMANDS,
@@ -288,6 +289,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/quality" => filter_candidates(QUALITY_SUBCOMMANDS, &partial_lower),
         "/rival" => filter_candidates(RIVAL_SUBCOMMANDS, &partial_lower),
         "/research" => filter_candidates(RESEARCH_SUBCOMMANDS, &partial_lower),
+        "/tip" => filter_candidates(TIP_SUBCOMMANDS, &partial_lower),
         "/diary" => filter_candidates(DIARY_SUBCOMMANDS, &partial_lower),
         "/bigkinds" => filter_candidates(BIGKINDS_SUBCOMMANDS, &partial_lower),
         "/dart" => filter_candidates(DART_SUBCOMMANDS, &partial_lower),
@@ -521,6 +523,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /note [cmd]        취재 노트 관리 (add|list|search|remove)\n",
+    );
+    out.push_str(
+        "  /tip [cmd]         제보 관리 (add|list|show|update|search)\n",
     );
     out.push_str(
         "  /diary [cmd]       취재 일지 (write|list|view)\n",
@@ -981,7 +986,7 @@ pub use crate::commands_research::{
     handle_factcheck,
     handle_follow, handle_jsearch, handle_law, handle_monitor, handle_network, handle_news,
     handle_note, handle_press, handle_research, handle_sns, handle_rss, handle_sources,
-    handle_trend, handle_verify, handle_wire,
+    handle_tip, handle_trend, handle_verify, handle_wire,
 };
 
 // Article writing & editing handlers
@@ -3098,6 +3103,19 @@ mod tests {
         assert!(all.contains(&"stale".to_string()));
         let filtered = command_arg_completions("/contact", "st");
         assert_eq!(filtered, vec!["stale"]);
+    }
+
+    #[test]
+    fn test_arg_completions_tip() {
+        let all = command_arg_completions("/tip", "");
+        assert_eq!(all.len(), 5);
+        assert!(all.contains(&"add".to_string()));
+        assert!(all.contains(&"list".to_string()));
+        assert!(all.contains(&"show".to_string()));
+        assert!(all.contains(&"update".to_string()));
+        assert!(all.contains(&"search".to_string()));
+        let filtered = command_arg_completions("/tip", "s");
+        assert_eq!(filtered.len(), 2); // show, search
     }
 
     #[test]
