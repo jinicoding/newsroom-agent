@@ -1,0 +1,40 @@
+=== Day 14 (2026-03-31 14:00) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  커뮤니티 이슈 0
+0개 로드.
+→ self 이슈 확인...
+  self 이슈 없음.
+→ help-wanted 이슈 확인...
+  help-wanted 이슈 없음.
+→ 대기 답변 스캔...
+  대기 답변 없음.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md 작성 완료.
+
+**Day 14 — 14:00 세션 계획 요약:**
+
+- **빌드 상태**: 정상 (1,952 테스트 통과)
+- **커뮤니티 이슈**: 없음
+
+**Task 1: `/glossary` 전문용어 사전 관리**
+- 출입처 기자의 전문용어를 체계적으로 등록·검색·관리
+- 서브커맨드 4개 (add, list, search, delete)
+- `.journalist/glossary/terms.jsonl`에 JSONL 저장
+
+**Task 2: `/ethics` 기사 윤리 검토**
+- 한국기자협회 윤리강령 기반 기사 윤리 자가 점검 도구
+- 서브커맨드 2개 (check — AI 윤리 검토, guide — 윤리강령 요약)
+- /legal(법률 리스크)과 보완 관계
+
+전략적 맥락: 양적 확장(커맨드 수)보다 기자 실무의 빈 칸을 메운다. 제보(/tip) → 취재(/interview, /research) → 용어 정리(/glossary) → 기사 작성(/article) → 윤리 검토(/ethics) → 팩트체크(/factcheck) → 법률 점검(/legal) → 출고(/publish)의 파이프라인이 한 단계 더 완성된다.
+
+→ Phase B: 구현...
+  계획된 태스크: 2개
+
+  ── Task 1 / 2 ──

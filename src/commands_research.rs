@@ -5604,6 +5604,375 @@ fn handle_tip_search(keyword: &str, dir: &std::path::Path) {
     println!();
 }
 
+// ── /glossary ──────────────────────────────────────────────────────────
+
+/// Glossary JSONL file path.
+pub const GLOSSARY_FILE: &str = ".journalist/glossary/terms.jsonl";
+
+/// Subcommand names for `/glossary <Tab>` completion.
+pub const GLOSSARY_SUBCOMMANDS: &[&str] = &["add", "list", "search", "delete"];
+
+/// A single glossary entry.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+pub struct GlossaryEntry {
+    pub term: String,
+    pub definition: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beat: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
+    pub created_at: String,
+}
+
+/// Handle `/glossary` command with subcommands: add, list, search, delete.
+pub fn handle_glossary(input: &str) {
+    let args = input.strip_prefix("/glossary").unwrap_or("").trim();
+
+    if args.is_empty() || args == "help" || args == "--help" {
+        print_glossary_usage();
+        return;
+    }
+
+    let (sub, rest) = match args.split_once(char::is_whitespace) {
+        Some((s, r)) => (s, r.trim()),
+        None => (args, ""),
+    };
+
+    match sub {
+        "add" => handle_glossary_add(rest),
+        "list" => handle_glossary_list(rest),
+        "search" => handle_glossary_search(rest),
+        "delete" => handle_glossary_delete(rest),
+        _ => {
+            eprintln!("{RED}  알 수 없는 하위 커맨드: {sub}{RESET}");
+            print_glossary_usage();
+        }
+    }
+}
+
+fn print_glossary_usage() {
+    println!("{DIM}  사용법:");
+    println!(
+        "    /glossary add <용어> <정의> [--beat <출입처>] [--alias <별칭1,별칭2>]   용어 등록"
+    );
+    println!("    /glossary list [--beat <출입처>]                                    용어 목록");
+    println!("    /glossary search <키워드>                                           키워드 검색");
+    println!("    /glossary delete <용어>                                             용어 삭제{RESET}\n");
+}
+
+/// Parse `/glossary add` arguments: extract term, definition, optional --beat and --alias flags.
+pub fn parse_glossary_add_args(args: &str) -> Option<GlossaryEntry> {
+    if args.is_empty() {
+        return None;
+    }
+
+    let mut beat: Option<String> = None;
+    let mut aliases: Vec<String> = Vec::new();
+    let mut remaining = args.to_string();
+
+    // Extract --beat
+    if let Some(pos) = remaining.find("--beat") {
+        let before = remaining[..pos].to_string();
+        let after = remaining[pos + 6..].trim_start().to_string();
+        let (val, rest) = extract_flag_value(&after);
+        if !val.is_empty() {
+            beat = Some(val);
+        }
+        remaining = format!("{before} {rest}").trim().to_string();
+    }
+
+    // Extract --alias
+    if let Some(pos) = remaining.find("--alias") {
+        let before = remaining[..pos].to_string();
+        let after = remaining[pos + 7..].trim_start().to_string();
+        let (val, rest) = extract_flag_value(&after);
+        if !val.is_empty() {
+            aliases = val.split(',').map(|s| s.trim().to_string()).collect();
+        }
+        remaining = format!("{before} {rest}").trim().to_string();
+    }
+
+    let remaining = remaining.trim();
+    if remaining.is_empty() {
+        return None;
+    }
+
+    // First token is the term, rest is the definition
+    let (term, definition) = match remaining.split_once(char::is_whitespace) {
+        Some((t, d)) => (t.trim().to_string(), d.trim().to_string()),
+        None => return None, // Need both term and definition
+    };
+
+    if definition.is_empty() {
+        return None;
+    }
+
+    let now = {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        format_unix_timestamp(secs).replace(' ', "T") + ":00"
+    };
+
+    Some(GlossaryEntry {
+        term,
+        definition,
+        beat,
+        aliases,
+        created_at: now,
+    })
+}
+
+/// Load all glossary entries from the JSONL file.
+pub fn load_glossary_entries(path: &std::path::Path) -> Vec<GlossaryEntry> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect()
+}
+
+/// Save all glossary entries back to the JSONL file.
+pub fn save_glossary_entries(
+    path: &std::path::Path,
+    entries: &[GlossaryEntry],
+) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let lines: Vec<String> = entries
+        .iter()
+        .filter_map(|e| serde_json::to_string(e).ok())
+        .collect();
+    std::fs::write(path, lines.join("\n") + "\n")
+}
+
+/// Append a single glossary entry to the JSONL file.
+pub fn append_glossary_entry(
+    path: &std::path::Path,
+    entry: &GlossaryEntry,
+) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let line =
+        serde_json::to_string(entry).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(file, "{line}")
+}
+
+fn handle_glossary_add(args: &str) {
+    if args.is_empty() {
+        eprintln!(
+            "{RED}  사용법: /glossary add <용어> <정의> [--beat <출입처>] [--alias <별칭1,별칭2>]{RESET}\n"
+        );
+        return;
+    }
+
+    let entry = match parse_glossary_add_args(args) {
+        Some(e) => e,
+        None => {
+            eprintln!("{RED}  용어와 정의를 모두 입력하세요.{RESET}\n");
+            return;
+        }
+    };
+
+    let path = std::path::PathBuf::from(GLOSSARY_FILE);
+
+    // Check for duplicate term
+    let existing = load_glossary_entries(&path);
+    if existing
+        .iter()
+        .any(|e| e.term.to_lowercase() == entry.term.to_lowercase())
+    {
+        eprintln!(
+            "{RED}  이미 등록된 용어입니다: {}{RESET}\n",
+            entry.term
+        );
+        return;
+    }
+
+    let beat_display = entry
+        .beat
+        .as_deref()
+        .map_or(String::new(), |b| format!(" [{b}]"));
+    let alias_display = if entry.aliases.is_empty() {
+        String::new()
+    } else {
+        format!(" (별칭: {})", entry.aliases.join(", "))
+    };
+
+    match append_glossary_entry(&path, &entry) {
+        Ok(()) => println!(
+            "{GREEN}  📖 용어 등록: {term}{beat}{alias}{RESET}\n",
+            term = entry.term,
+            beat = beat_display,
+            alias = alias_display,
+        ),
+        Err(e) => eprintln!("{RED}  용어 저장 실패: {e}{RESET}\n"),
+    }
+}
+
+fn handle_glossary_list(args: &str) {
+    let path = std::path::PathBuf::from(GLOSSARY_FILE);
+    let entries = load_glossary_entries(&path);
+
+    if entries.is_empty() {
+        println!("{DIM}  등록된 용어가 없습니다.{RESET}\n");
+        return;
+    }
+
+    // Parse optional --beat filter
+    let beat_filter = if let Some(rest) = args.strip_prefix("--beat") {
+        let val = rest.trim();
+        if val.is_empty() {
+            None
+        } else {
+            Some(val.to_lowercase())
+        }
+    } else {
+        None
+    };
+
+    let filtered: Vec<&GlossaryEntry> = entries
+        .iter()
+        .filter(|e| {
+            beat_filter
+                .as_ref()
+                .map_or(true, |bf| {
+                    e.beat
+                        .as_ref()
+                        .is_some_and(|b| b.to_lowercase().contains(bf))
+                })
+        })
+        .collect();
+
+    if filtered.is_empty() {
+        println!(
+            "{DIM}  해당 출입처의 용어가 없습니다.{RESET}\n"
+        );
+        return;
+    }
+
+    let label = beat_filter
+        .as_ref()
+        .map_or(String::new(), |bf| format!(" (출입처: {bf})"));
+    println!(
+        "{DIM}  용어 목록 ({count}건){label}:{RESET}",
+        count = filtered.len()
+    );
+    for entry in &filtered {
+        let beat_tag = entry
+            .beat
+            .as_deref()
+            .map_or(String::new(), |b| format!(" [{b}]"));
+        let def_preview: String = entry.definition.chars().take(50).collect();
+        let ellipsis = if entry.definition.chars().count() > 50 {
+            "…"
+        } else {
+            ""
+        };
+        println!(
+            "{DIM}  {term}{beat}  — {def}{ell}{RESET}",
+            term = entry.term,
+            beat = beat_tag,
+            def = def_preview,
+            ell = ellipsis,
+        );
+    }
+    println!();
+}
+
+fn handle_glossary_search(keyword: &str) {
+    if keyword.is_empty() {
+        eprintln!("{RED}  사용법: /glossary search <키워드>{RESET}\n");
+        return;
+    }
+
+    let path = std::path::PathBuf::from(GLOSSARY_FILE);
+    let entries = load_glossary_entries(&path);
+    let kw_lower = keyword.to_lowercase();
+
+    let matches: Vec<&GlossaryEntry> = entries
+        .iter()
+        .filter(|e| {
+            e.term.to_lowercase().contains(&kw_lower)
+                || e.definition.to_lowercase().contains(&kw_lower)
+                || e.aliases
+                    .iter()
+                    .any(|a| a.to_lowercase().contains(&kw_lower))
+                || e.beat
+                    .as_ref()
+                    .is_some_and(|b| b.to_lowercase().contains(&kw_lower))
+        })
+        .collect();
+
+    if matches.is_empty() {
+        println!(
+            "{DIM}  '{keyword}'에 해당하는 용어가 없습니다.{RESET}\n"
+        );
+        return;
+    }
+
+    println!(
+        "{DIM}  검색 결과: {count}건 (키워드: {keyword}){RESET}",
+        count = matches.len()
+    );
+    for entry in &matches {
+        let beat_tag = entry
+            .beat
+            .as_deref()
+            .map_or(String::new(), |b| format!(" [{b}]"));
+        println!(
+            "{DIM}  {term}{beat}  — {def}{RESET}",
+            term = entry.term,
+            beat = beat_tag,
+            def = entry.definition,
+        );
+    }
+    println!();
+}
+
+fn handle_glossary_delete(term: &str) {
+    if term.is_empty() {
+        eprintln!("{RED}  사용법: /glossary delete <용어>{RESET}\n");
+        return;
+    }
+
+    let path = std::path::PathBuf::from(GLOSSARY_FILE);
+    let entries = load_glossary_entries(&path);
+    let term_lower = term.to_lowercase();
+
+    let original_count = entries.len();
+    let filtered: Vec<GlossaryEntry> = entries
+        .into_iter()
+        .filter(|e| e.term.to_lowercase() != term_lower)
+        .collect();
+
+    if filtered.len() == original_count {
+        eprintln!(
+            "{RED}  용어를 찾을 수 없습니다: {term}{RESET}\n"
+        );
+        return;
+    }
+
+    match save_glossary_entries(&path, &filtered) {
+        Ok(()) => println!(
+            "{GREEN}  🗑️ 용어 삭제: {term}{RESET}\n"
+        ),
+        Err(e) => eprintln!("{RED}  삭제 실패: {e}{RESET}\n"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -9440,6 +9809,244 @@ mod tests {
             path.to_string_lossy(),
             ".journalist/factcheck/2026-03-31_한국-gdp-성장률.md"
         );
+    }
+
+    // ── glossary tests ──────────────────────────────────────────────────
+
+    fn make_glossary_entry(term: &str, definition: &str, beat: Option<&str>) -> GlossaryEntry {
+        GlossaryEntry {
+            term: term.to_string(),
+            definition: definition.to_string(),
+            beat: beat.map(|b| b.to_string()),
+            aliases: Vec::new(),
+            created_at: "2026-03-31T14:00:00".to_string(),
+        }
+    }
+
+    #[test]
+    fn glossary_entry_serialization_roundtrip() {
+        let entry = GlossaryEntry {
+            term: "EUV".to_string(),
+            definition: "극자외선 리소그래피".to_string(),
+            beat: Some("반도체".to_string()),
+            aliases: vec!["극자외선".to_string()],
+            created_at: "2026-03-31T14:00:00".to_string(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let parsed: GlossaryEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, parsed);
+    }
+
+    #[test]
+    fn glossary_entry_without_optional_fields() {
+        let entry = make_glossary_entry("GDP", "국내총생산", None);
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(!json.contains("beat"));
+        assert!(!json.contains("aliases"));
+        let parsed: GlossaryEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.beat, None);
+        assert!(parsed.aliases.is_empty());
+    }
+
+    #[test]
+    fn glossary_append_and_load() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("terms.jsonl");
+
+        let e1 = make_glossary_entry("EUV", "극자외선 리소그래피", Some("반도체"));
+        let e2 = make_glossary_entry("GDP", "국내총생산", Some("경제"));
+
+        append_glossary_entry(&path, &e1).unwrap();
+        append_glossary_entry(&path, &e2).unwrap();
+
+        let entries = load_glossary_entries(&path);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].term, "EUV");
+        assert_eq!(entries[1].term, "GDP");
+    }
+
+    #[test]
+    fn glossary_save_overwrites() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("terms.jsonl");
+
+        let e1 = make_glossary_entry("A", "def A", None);
+        let e2 = make_glossary_entry("B", "def B", None);
+        append_glossary_entry(&path, &e1).unwrap();
+        append_glossary_entry(&path, &e2).unwrap();
+
+        // Save only one entry — should overwrite
+        save_glossary_entries(&path, &[e2.clone()]).unwrap();
+        let entries = load_glossary_entries(&path);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].term, "B");
+    }
+
+    #[test]
+    fn glossary_load_empty_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("terms.jsonl");
+        std::fs::write(&path, "").unwrap();
+        let entries = load_glossary_entries(&path);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn glossary_load_nonexistent_file() {
+        let path = std::path::PathBuf::from("/tmp/nonexistent_glossary_test.jsonl");
+        let entries = load_glossary_entries(&path);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn glossary_search_by_term() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("terms.jsonl");
+        let e1 = make_glossary_entry("EUV", "극자외선 리소그래피", Some("반도체"));
+        let e2 = make_glossary_entry("GDP", "국내총생산", Some("경제"));
+        append_glossary_entry(&path, &e1).unwrap();
+        append_glossary_entry(&path, &e2).unwrap();
+
+        let entries = load_glossary_entries(&path);
+        let kw = "euv";
+        let matches: Vec<&GlossaryEntry> = entries
+            .iter()
+            .filter(|e| e.term.to_lowercase().contains(kw))
+            .collect();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].term, "EUV");
+    }
+
+    #[test]
+    fn glossary_search_by_definition() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("terms.jsonl");
+        let e1 = make_glossary_entry("EUV", "극자외선 리소그래피", None);
+        let e2 = make_glossary_entry("GDP", "국내총생산", None);
+        append_glossary_entry(&path, &e1).unwrap();
+        append_glossary_entry(&path, &e2).unwrap();
+
+        let entries = load_glossary_entries(&path);
+        let kw = "국내총생산";
+        let matches: Vec<&GlossaryEntry> = entries
+            .iter()
+            .filter(|e| e.definition.to_lowercase().contains(&kw.to_lowercase()))
+            .collect();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].term, "GDP");
+    }
+
+    #[test]
+    fn glossary_search_by_alias() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("terms.jsonl");
+        let mut entry = make_glossary_entry("EUV", "극자외선 리소그래피", None);
+        entry.aliases = vec!["극자외선".to_string()];
+        append_glossary_entry(&path, &entry).unwrap();
+
+        let entries = load_glossary_entries(&path);
+        let kw = "극자외선";
+        let matches: Vec<&GlossaryEntry> = entries
+            .iter()
+            .filter(|e| e.aliases.iter().any(|a| a.to_lowercase().contains(&kw.to_lowercase())))
+            .collect();
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn glossary_filter_by_beat() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("terms.jsonl");
+        let e1 = make_glossary_entry("EUV", "극자외선 리소그래피", Some("반도체"));
+        let e2 = make_glossary_entry("GDP", "국내총생산", Some("경제"));
+        let e3 = make_glossary_entry("DRAM", "동적 RAM", Some("반도체"));
+        append_glossary_entry(&path, &e1).unwrap();
+        append_glossary_entry(&path, &e2).unwrap();
+        append_glossary_entry(&path, &e3).unwrap();
+
+        let entries = load_glossary_entries(&path);
+        let beat = "반도체";
+        let filtered: Vec<&GlossaryEntry> = entries
+            .iter()
+            .filter(|e| e.beat.as_ref().is_some_and(|b| b.contains(beat)))
+            .collect();
+        assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn glossary_delete_removes_entry() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("terms.jsonl");
+        let e1 = make_glossary_entry("EUV", "극자외선", None);
+        let e2 = make_glossary_entry("GDP", "국내총생산", None);
+        append_glossary_entry(&path, &e1).unwrap();
+        append_glossary_entry(&path, &e2).unwrap();
+
+        let entries = load_glossary_entries(&path);
+        let filtered: Vec<GlossaryEntry> = entries
+            .into_iter()
+            .filter(|e| e.term.to_lowercase() != "euv")
+            .collect();
+        save_glossary_entries(&path, &filtered).unwrap();
+
+        let remaining = load_glossary_entries(&path);
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].term, "GDP");
+    }
+
+    #[test]
+    fn glossary_parse_add_args_basic() {
+        let entry = parse_glossary_add_args("EUV 극자외선 리소그래피").unwrap();
+        assert_eq!(entry.term, "EUV");
+        assert_eq!(entry.definition, "극자외선 리소그래피");
+        assert_eq!(entry.beat, None);
+        assert!(entry.aliases.is_empty());
+    }
+
+    #[test]
+    fn glossary_parse_add_args_with_beat() {
+        let entry = parse_glossary_add_args("EUV 극자외선 리소그래피 --beat 반도체").unwrap();
+        assert_eq!(entry.term, "EUV");
+        assert_eq!(entry.definition, "극자외선 리소그래피");
+        assert_eq!(entry.beat, Some("반도체".to_string()));
+    }
+
+    #[test]
+    fn glossary_parse_add_args_with_alias() {
+        let entry =
+            parse_glossary_add_args("EUV 극자외선 리소그래피 --alias 극자외선,ExtremeUV")
+                .unwrap();
+        assert_eq!(entry.term, "EUV");
+        assert_eq!(entry.aliases, vec!["극자외선", "ExtremeUV"]);
+    }
+
+    #[test]
+    fn glossary_parse_add_args_empty() {
+        assert!(parse_glossary_add_args("").is_none());
+    }
+
+    #[test]
+    fn glossary_parse_add_args_term_only() {
+        assert!(parse_glossary_add_args("EUV").is_none());
+    }
+
+    #[test]
+    fn glossary_search_no_match() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("terms.jsonl");
+        let e1 = make_glossary_entry("EUV", "극자외선", None);
+        append_glossary_entry(&path, &e1).unwrap();
+
+        let entries = load_glossary_entries(&path);
+        let kw = "외교";
+        let matches: Vec<&GlossaryEntry> = entries
+            .iter()
+            .filter(|e| {
+                e.term.to_lowercase().contains(kw)
+                    || e.definition.to_lowercase().contains(kw)
+            })
+            .collect();
+        assert!(matches.is_empty());
     }
 
 }

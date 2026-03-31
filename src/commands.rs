@@ -133,6 +133,7 @@ pub const KNOWN_COMMANDS: &[&str] = &[
     "/series",
     "/handoff",
     "/tip",
+    "/glossary",
 ];
 
 /// Well-known model names for `/model <Tab>` completion.
@@ -235,8 +236,8 @@ pub use crate::commands_writing::TEMPLATE_SUBCOMMANDS;
 /// Re-export subcommand constants from domain modules.
 pub use crate::commands_research::{
     ASSEMBLY_SUBCOMMANDS, BIGKINDS_SUBCOMMANDS, CLIP_SUBCOMMANDS, CONTACT_SUBCOMMANDS,
-    DART_SUBCOMMANDS, FACTCHECK_SUBCOMMANDS, MONITOR_SUBCOMMANDS, RESEARCH_SUBCOMMANDS,
-    RSS_SUBCOMMANDS, TIP_SUBCOMMANDS, WIRE_SUBCOMMANDS,
+    DART_SUBCOMMANDS, FACTCHECK_SUBCOMMANDS, GLOSSARY_SUBCOMMANDS, MONITOR_SUBCOMMANDS,
+    RESEARCH_SUBCOMMANDS, RSS_SUBCOMMANDS, TIP_SUBCOMMANDS, WIRE_SUBCOMMANDS,
 };
 pub use crate::commands_workflow::{
     AGENDA_SUBCOMMANDS, COVERAGE_SUBCOMMANDS, DIARY_SUBCOMMANDS, FOIA_SUBCOMMANDS,
@@ -291,6 +292,7 @@ pub fn command_arg_completions(cmd: &str, partial_arg: &str) -> Vec<String> {
         "/rival" => filter_candidates(RIVAL_SUBCOMMANDS, &partial_lower),
         "/research" => filter_candidates(RESEARCH_SUBCOMMANDS, &partial_lower),
         "/tip" => filter_candidates(TIP_SUBCOMMANDS, &partial_lower),
+        "/glossary" => filter_candidates(GLOSSARY_SUBCOMMANDS, &partial_lower),
         "/factcheck" => filter_candidates(FACTCHECK_SUBCOMMANDS, &partial_lower),
         "/diary" => filter_candidates(DIARY_SUBCOMMANDS, &partial_lower),
         "/bigkinds" => filter_candidates(BIGKINDS_SUBCOMMANDS, &partial_lower),
@@ -540,6 +542,9 @@ pub fn help_text() -> String {
     );
     out.push_str(
         "  /tip [cmd]         제보 관리 (add|list|show|update|search)\n",
+    );
+    out.push_str(
+        "  /glossary [cmd]    전문용어 사전 관리 (add|list|search|delete)\n",
     );
     out.push_str(
         "  /diary [cmd]       취재 일지 (write|list|view)\n",
@@ -1001,6 +1006,7 @@ pub use crate::commands_research::{
     handle_follow, handle_jsearch, handle_law, handle_monitor, handle_network, handle_news,
     handle_note, handle_press, handle_research, handle_sns, handle_rss, handle_sources,
     handle_tip, handle_trend, handle_verify, handle_wire,
+    handle_glossary,
 };
 
 // Article writing & editing handlers

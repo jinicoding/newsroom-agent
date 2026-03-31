@@ -913,6 +913,10 @@ pub async fn run_repl(
                 commands::handle_tip(input);
                 continue;
             }
+            s if s == "/glossary" || s.starts_with("/glossary ") => {
+                commands::handle_glossary(input);
+                continue;
+            }
             s if s == "/profile" || s.starts_with("/profile ") => {
                 commands::handle_profile(input);
                 continue;
