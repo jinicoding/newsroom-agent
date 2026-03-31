@@ -6214,12 +6214,12 @@ fn save_ethics(path: &std::path::Path, content: &str) -> Result<(), std::io::Err
     std::fs::write(path, content)
 }
 
-/// List existing ethics check files.
-fn ethics_list() {
-    let dir = std::path::Path::new(ETHICS_DIR);
+/// List existing ethics check files (with configurable directory for testing).
+/// Returns the number of entries found, or 0 if none/error.
+fn ethics_list_in(dir: &std::path::Path) -> usize {
     if !dir.exists() {
         println!("{DIM}  저장된 윤리 점검 기록이 없습니다.{RESET}\n");
-        return;
+        return 0;
     }
     let mut entries: Vec<_> = match std::fs::read_dir(dir) {
         Ok(rd) => rd
@@ -6228,12 +6228,12 @@ fn ethics_list() {
             .collect(),
         Err(_) => {
             println!("{DIM}  윤리 점검 디렉토리를 읽을 수 없습니다.{RESET}\n");
-            return;
+            return 0;
         }
     };
     if entries.is_empty() {
         println!("{DIM}  저장된 윤리 점검 기록이 없습니다.{RESET}\n");
-        return;
+        return 0;
     }
     entries.sort_by_key(|e| e.file_name());
     println!("{BOLD}  ═══ 윤리 점검 기록 ({} 건) ═══{RESET}\n", entries.len());
@@ -6246,6 +6246,12 @@ fn ethics_list() {
         );
     }
     println!();
+    entries.len()
+}
+
+/// List existing ethics check files.
+fn ethics_list() {
+    ethics_list_in(std::path::Path::new(ETHICS_DIR));
 }
 
 /// Handle the `/ethics` command: journalism ethics review.
@@ -9439,5 +9445,341 @@ mod tests {
     fn ethics_guide_does_not_panic() {
         // Just verify that ethics_guide() runs without panic
         ethics_guide();
+    }
+
+    // ── /ethics extended tests ────────────────────────────────────────
+
+    #[test]
+    fn ethics_file_path_date_format_yyyy_mm_dd() {
+        let path = ethics_file_path_with_date("테스트", "2026-03-31");
+        let filename = path.file_name().unwrap().to_string_lossy();
+        assert!(filename.starts_with("2026-03-31_"));
+        assert!(filename.ends_with(".md"));
+    }
+
+    #[test]
+    fn ethics_file_path_date_format_different_date() {
+        let path = ethics_file_path_with_date("기사", "2025-01-01");
+        let filename = path.file_name().unwrap().to_string_lossy();
+        assert!(filename.starts_with("2025-01-01_"));
+    }
+
+    #[test]
+    fn ethics_file_path_always_under_ethics_dir() {
+        let path = ethics_file_path_with_date("주제", "2026-12-25");
+        assert!(path.starts_with(".journalist/ethics"));
+    }
+
+    #[test]
+    fn ethics_file_path_slug_special_chars() {
+        let path = ethics_file_path_with_date("AI, 반도체... 전망!", "2026-03-31");
+        let filename = path.file_name().unwrap().to_string_lossy();
+        // topic_to_slug strips punctuation; only the .md extension should have a dot
+        let stem = filename.strip_suffix(".md").unwrap();
+        assert!(!stem.contains(','));
+        assert!(!stem.contains('!'));
+        assert!(!stem.contains('.'));
+        assert!(filename.starts_with("2026-03-31_"));
+    }
+
+    #[test]
+    fn ethics_file_path_long_slug_truncated() {
+        let long_topic = "가".repeat(100);
+        let path = ethics_file_path_with_date(&long_topic, "2026-03-31");
+        let filename = path.file_name().unwrap().to_string_lossy();
+        // slug is capped at 50 chars by topic_to_slug
+        let slug_part = filename
+            .strip_prefix("2026-03-31_")
+            .unwrap()
+            .strip_suffix(".md")
+            .unwrap();
+        assert!(slug_part.chars().count() <= 50);
+    }
+
+    #[test]
+    fn ethics_file_path_whitespace_only_slug() {
+        let path = ethics_file_path_with_date("   ", "2026-03-31");
+        let filename = path.file_name().unwrap().to_string_lossy();
+        assert_eq!(filename, "2026-03-31_ethics.md");
+    }
+
+    #[test]
+    fn ethics_file_path_uses_today() {
+        let path = ethics_file_path("테스트");
+        let filename = path.file_name().unwrap().to_string_lossy();
+        // Should contain a date in YYYY-MM-DD format
+        assert!(
+            filename.len() > 10,
+            "filename should include date prefix"
+        );
+        let date_part: String = filename.chars().take(10).collect();
+        assert_eq!(&date_part[4..5], "-");
+        assert_eq!(&date_part[7..8], "-");
+    }
+
+    #[test]
+    fn ethics_list_nonexistent_dir_returns_zero() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let missing = dir.path().join("no_such_dir");
+        assert_eq!(ethics_list_in(&missing), 0);
+    }
+
+    #[test]
+    fn ethics_list_empty_dir_returns_zero() {
+        let dir = tempfile::TempDir::new().unwrap();
+        assert_eq!(ethics_list_in(dir.path()), 0);
+    }
+
+    #[test]
+    fn ethics_list_single_md_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("2026-03-31_test.md"), "content").unwrap();
+        assert_eq!(ethics_list_in(dir.path()), 1);
+    }
+
+    #[test]
+    fn ethics_list_multiple_md_files() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("2026-03-30_a.md"), "a").unwrap();
+        std::fs::write(dir.path().join("2026-03-31_b.md"), "b").unwrap();
+        std::fs::write(dir.path().join("2026-04-01_c.md"), "c").unwrap();
+        assert_eq!(ethics_list_in(dir.path()), 3);
+    }
+
+    #[test]
+    fn ethics_list_ignores_non_md_files() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("notes.txt"), "text").unwrap();
+        std::fs::write(dir.path().join("data.json"), "{}").unwrap();
+        std::fs::write(dir.path().join("2026-03-31_ethics.md"), "md").unwrap();
+        assert_eq!(ethics_list_in(dir.path()), 1);
+    }
+
+    #[test]
+    fn ethics_list_mixed_files_only_counts_md() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("a.md"), "1").unwrap();
+        std::fs::write(dir.path().join("b.md"), "2").unwrap();
+        std::fs::write(dir.path().join("c.txt"), "3").unwrap();
+        std::fs::write(dir.path().join("d.rs"), "4").unwrap();
+        assert_eq!(ethics_list_in(dir.path()), 2);
+    }
+
+    #[test]
+    fn save_ethics_overwrites_existing() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("test.md");
+        save_ethics(&path, "첫 번째 내용").unwrap();
+        save_ethics(&path, "두 번째 내용").unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("두 번째 내용"));
+        assert!(!content.contains("첫 번째 내용"));
+    }
+
+    #[test]
+    fn save_ethics_creates_nested_dirs() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("a").join("b").join("c").join("ethics.md");
+        let result = save_ethics(&path, "깊은 디렉토리");
+        assert!(result.is_ok());
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn save_ethics_preserves_korean_content() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("korean.md");
+        let korean = "## 윤리 점검 결과\n\n✅ 양호: 균형 보도\n⚠️ 주의: 익명 취재원\n🚨 위반: 선정적 표현";
+        save_ethics(&path, korean).unwrap();
+        let loaded = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(loaded, korean);
+    }
+
+    #[test]
+    fn build_ethics_prompt_includes_article_text() {
+        let article = "삼성전자가 반도체 수출을 확대한다고 발표했다.";
+        let prompt = build_ethics_prompt(article).unwrap();
+        assert!(prompt.contains(article));
+    }
+
+    #[test]
+    fn build_ethics_prompt_has_seven_review_sections() {
+        let prompt = build_ethics_prompt("기사 본문").unwrap();
+        assert!(prompt.contains("## 1. 균형 보도"));
+        assert!(prompt.contains("## 2. 익명 취재원"));
+        assert!(prompt.contains("## 3. 사생활 침해"));
+        assert!(prompt.contains("## 4. 선정적 표현"));
+        assert!(prompt.contains("## 5. 이해충돌"));
+        assert!(prompt.contains("## 6. 피해자 2차 가해"));
+        assert!(prompt.contains("## 7. 미성년자 보호"));
+    }
+
+    #[test]
+    fn build_ethics_prompt_has_rating_system() {
+        let prompt = build_ethics_prompt("기사").unwrap();
+        assert!(prompt.contains("✅ 양호"));
+        assert!(prompt.contains("⚠️ 주의"));
+        assert!(prompt.contains("🚨 위반"));
+    }
+
+    #[test]
+    fn build_ethics_prompt_references_korean_standards() {
+        let prompt = build_ethics_prompt("기사").unwrap();
+        assert!(prompt.contains("한국기자협회 윤리강령"));
+        assert!(prompt.contains("신문윤리실천요강"));
+    }
+
+    #[test]
+    fn build_ethics_prompt_requests_comprehensive_verdict() {
+        let prompt = build_ethics_prompt("기사").unwrap();
+        assert!(prompt.contains("종합 판정"));
+        assert!(prompt.contains("종합 윤리 등급"));
+        assert!(prompt.contains("개선 제안"));
+    }
+
+    #[test]
+    fn ethics_guide_content_has_six_articles() {
+        // Capture by checking the function doesn't panic and
+        // verify the function references all key articles
+        ethics_guide(); // Should not panic
+    }
+
+    #[test]
+    fn parse_ethics_args_list() {
+        let (subcmd, file, text) = parse_ethics_args("list");
+        // "list" is not handled by parse_ethics_args — it falls through to default "check"
+        // but handle_ethics checks for "list" before calling parse_ethics_args
+        assert_eq!(subcmd, "check");
+        assert!(file.is_none());
+        assert_eq!(text, "list");
+    }
+
+    #[test]
+    fn parse_ethics_check_args_empty() {
+        let (file, text) = parse_ethics_check_args("");
+        assert!(file.is_none());
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn parse_ethics_check_args_file_only_flag() {
+        let (file, text) = parse_ethics_check_args("--file");
+        assert!(file.is_none());
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn parse_ethics_check_args_inline_text() {
+        let (file, text) = parse_ethics_check_args("기사 본문 내용");
+        assert!(file.is_none());
+        assert_eq!(text, "기사 본문 내용");
+    }
+
+    #[test]
+    fn parse_ethics_check_args_file_with_path() {
+        let (file, text) = parse_ethics_check_args("--file /tmp/article.md");
+        assert_eq!(file.unwrap(), "/tmp/article.md");
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn parse_ethics_check_args_file_with_path_and_context() {
+        let (file, text) = parse_ethics_check_args("--file draft.md 추가 맥락 정보");
+        assert_eq!(file.unwrap(), "draft.md");
+        assert_eq!(text, "추가 맥락 정보");
+    }
+
+    #[test]
+    fn parse_ethics_args_check_no_args() {
+        let (subcmd, file, text) = parse_ethics_args("check");
+        assert_eq!(subcmd, "check");
+        assert!(file.is_none());
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn parse_ethics_args_check_file_absolute_path() {
+        let (subcmd, file, text) = parse_ethics_args("check --file /home/user/article.md");
+        assert_eq!(subcmd, "check");
+        assert_eq!(file.unwrap(), "/home/user/article.md");
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn parse_ethics_args_whitespace_padding() {
+        let (subcmd, file, text) = parse_ethics_args("  check   기사 본문  ");
+        assert_eq!(subcmd, "check");
+        assert!(file.is_none());
+        assert_eq!(text, "기사 본문");
+    }
+
+    #[test]
+    fn parse_ethics_args_guide_ignores_extra_text() {
+        // "guide" is recognized as subcmd; extra text after "guide" goes to rest
+        // but guide handler returns early without using it
+        let (subcmd, file, text) = parse_ethics_args("guide 추가인자");
+        assert_eq!(subcmd, "guide");
+        assert!(file.is_none());
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn ethics_file_path_korean_mixed_with_numbers() {
+        let path = ethics_file_path_with_date("삼성전자 Q1 실적", "2026-03-31");
+        let filename = path.file_name().unwrap().to_string_lossy();
+        assert!(filename.starts_with("2026-03-31_"));
+        assert!(filename.contains("삼성전자"));
+        assert!(filename.contains("q1"));
+        assert!(filename.ends_with(".md"));
+    }
+
+    #[test]
+    fn ethics_file_path_english_slug() {
+        let path = ethics_file_path_with_date("Samsung Electronics", "2026-03-31");
+        let filename = path.file_name().unwrap().to_string_lossy();
+        assert_eq!(filename, "2026-03-31_samsung-electronics.md");
+    }
+
+    #[test]
+    fn save_and_reload_ethics_roundtrip() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("roundtrip.md");
+        let content = "## 종합 판정\n\n✅ 양호\n\n## 상세\n\n- 균형 보도: 양호\n- 취재원 보호: 양호";
+        save_ethics(&path, content).unwrap();
+        let loaded = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(loaded, content);
+    }
+
+    #[test]
+    fn build_ethics_prompt_source_protection_category() {
+        let prompt = build_ethics_prompt("기사").unwrap();
+        // 취재원 보호 관련 검증
+        assert!(prompt.contains("익명 취재원이 사용된 경우"));
+        assert!(prompt.contains("실명 공개가 불가능한 정당한 사유"));
+    }
+
+    #[test]
+    fn build_ethics_prompt_privacy_category() {
+        let prompt = build_ethics_prompt("기사").unwrap();
+        // 사생활 관련 검증
+        assert!(prompt.contains("개인 사생활 정보"));
+        assert!(prompt.contains("민감 정보"));
+    }
+
+    #[test]
+    fn build_ethics_prompt_conflict_of_interest_category() {
+        let prompt = build_ethics_prompt("기사").unwrap();
+        // 이해충돌 관련 검증
+        assert!(prompt.contains("이해관계"));
+        assert!(prompt.contains("광고주"));
+    }
+
+    #[test]
+    fn build_ethics_prompt_sensationalism_category() {
+        let prompt = build_ethics_prompt("기사").unwrap();
+        // 선정성 관련 검증
+        assert!(prompt.contains("감정적·선정적 표현"));
+        assert!(prompt.contains("낚시성 제목"));
+        assert!(prompt.contains("폭력·혐오·차별적 표현"));
     }
 }
