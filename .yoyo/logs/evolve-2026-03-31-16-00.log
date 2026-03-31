@@ -1,0 +1,36 @@
+=== Day 14 (2026-03-31 16:00) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  커뮤니티 이슈 0
+0개 로드.
+→ self 이슈 확인...
+  self 이슈 없음.
+→ help-wanted 이슈 확인...
+  help-wanted 이슈 없음.
+→ 대기 답변 스캔...
+  대기 답변 없음.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md 작성 완료.
+
+**요약:**
+
+**자기 평가 결과:**
+- 빌드/테스트 전부 통과 (1,982개)
+- commands_research.rs가 10,052줄로 최대 파일 — 분리 대상
+- /ethics 테스트 3개뿐 — 테스트 부채
+
+**계획:**
+- **Task 1**: commands_research.rs에서 취재원·모니터링 9개 커맨드(/tip, /contact, /note, /alert, /follow, /monitor, /verify, /wire, /rss)를 commands_sourcing.rs로 분리. Day 12의 commands_editorial.rs 분리와 같은 패턴.
+- **Task 2**: /ethics 테스트 보강 — 현재 3개를 /tip·/glossary 수준으로 끌어올림.
+
+커뮤니티 이슈 없음.
+
+→ Phase B: 구현...
+  계획된 태스크: 2개
+
+  ── Task 1 / 2 ──

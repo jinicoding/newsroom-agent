@@ -42,6 +42,7 @@ mod commands_git;
 mod commands_series;
 mod commands_project;
 mod commands_research;
+mod commands_sourcing;
 mod commands_session;
 mod commands_story;
 mod commands_workflow;
