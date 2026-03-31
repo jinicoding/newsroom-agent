@@ -8921,4 +8921,525 @@ mod tests {
         assert_eq!(loaded.notes.len(), 1);
         assert!(loaded.notes[0].contains("[팩트체크]"));
     }
+
+    // ── TipEntry 구조체 & 직렬화 테스트 ─────────────────────────────────
+
+    fn make_tip(id: &str, source: &str, content: &str) -> TipEntry {
+        TipEntry {
+            id: id.to_string(),
+            source: source.to_string(),
+            content: content.to_string(),
+            anonymous: false,
+            credibility: 3,
+            status: "미확인".to_string(),
+            created_at: "2026-03-31T11:00:00".to_string(),
+            updated_at: "2026-03-31T11:00:00".to_string(),
+            linked_story: None,
+        }
+    }
+
+    #[test]
+    fn tip_entry_serialize_roundtrip() {
+        let tip = make_tip("tip-001", "김기자", "내부 문서 유출 정보");
+        let json = serde_json::to_string_pretty(&tip).unwrap();
+        let loaded: TipEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(tip, loaded);
+    }
+
+    #[test]
+    fn tip_entry_optional_linked_story_none() {
+        let tip = make_tip("tip-002", "출처", "내용");
+        let json = serde_json::to_string(&tip).unwrap();
+        assert!(!json.contains("linked_story"));
+    }
+
+    #[test]
+    fn tip_entry_optional_linked_story_some() {
+        let mut tip = make_tip("tip-003", "출처", "내용");
+        tip.linked_story = Some("반도체-이슈".to_string());
+        let json = serde_json::to_string(&tip).unwrap();
+        assert!(json.contains("linked_story"));
+        let loaded: TipEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.linked_story, Some("반도체-이슈".to_string()));
+    }
+
+    #[test]
+    fn tip_entry_anonymous_flag() {
+        let mut tip = make_tip("tip-004", "비공개", "익명 제보");
+        tip.anonymous = true;
+        let json = serde_json::to_string(&tip).unwrap();
+        let loaded: TipEntry = serde_json::from_str(&json).unwrap();
+        assert!(loaded.anonymous);
+    }
+
+    #[test]
+    fn tip_entry_credibility_range() {
+        let mut tip = make_tip("tip-005", "출처", "내용");
+        tip.credibility = 1;
+        assert_eq!(tip.credibility, 1);
+        tip.credibility = 5;
+        assert_eq!(tip.credibility, 5);
+    }
+
+    #[test]
+    fn tip_statuses_valid() {
+        assert!(TIP_STATUSES.contains(&"미확인"));
+        assert!(TIP_STATUSES.contains(&"취재중"));
+        assert!(TIP_STATUSES.contains(&"기사화"));
+        assert!(TIP_STATUSES.contains(&"보류"));
+        assert!(TIP_STATUSES.contains(&"폐기"));
+        assert!(!TIP_STATUSES.contains(&"완료"));
+    }
+
+    #[test]
+    fn tip_subcommands_complete() {
+        assert!(TIP_SUBCOMMANDS.contains(&"add"));
+        assert!(TIP_SUBCOMMANDS.contains(&"list"));
+        assert!(TIP_SUBCOMMANDS.contains(&"show"));
+        assert!(TIP_SUBCOMMANDS.contains(&"update"));
+        assert!(TIP_SUBCOMMANDS.contains(&"search"));
+    }
+
+    // ── tips_dir / factcheck_records_dir 경로 테스트 ────────────────────
+
+    #[test]
+    fn tips_dir_returns_correct_path() {
+        let dir = tips_dir();
+        assert_eq!(dir.to_string_lossy(), ".journalist/tips");
+    }
+
+    #[test]
+    fn factcheck_records_dir_returns_correct_path() {
+        let dir = factcheck_records_dir();
+        assert_eq!(dir.to_string_lossy(), ".journalist/factcheck/records");
+    }
+
+    #[test]
+    fn tip_file_path_format() {
+        let path = tip_file_path("tip-20260331-1100-1234");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/tips/tip-20260331-1100-1234.json"
+        );
+    }
+
+    #[test]
+    fn tip_file_path_at_custom_dir() {
+        let dir = std::path::Path::new("/tmp/custom-tips");
+        let path = tip_file_path_at(dir, "tip-001");
+        assert_eq!(path.to_string_lossy(), "/tmp/custom-tips/tip-001.json");
+    }
+
+    // ── TipEntry 파일 CRUD 테스트 ───────────────────────────────────────
+
+    #[test]
+    fn tip_save_and_load_roundtrip() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let tip = make_tip("tip-rt-001", "내부자", "기밀 정보 제보");
+        save_tip(&tip, dir.path()).unwrap();
+
+        let path = dir.path().join("tip-rt-001.json");
+        assert!(path.exists());
+
+        let loaded = load_tip(&path).unwrap();
+        assert_eq!(tip, loaded);
+    }
+
+    #[test]
+    fn tip_save_creates_directory() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let nested = dir.path().join("nested").join("tips");
+        let tip = make_tip("tip-dir-001", "출처", "내용");
+        save_tip(&tip, &nested).unwrap();
+
+        let path = nested.join("tip-dir-001.json");
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn tip_load_nonexistent_returns_none() {
+        let result = load_tip(std::path::Path::new("/tmp/no-such-tip-file.json"));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn tip_load_invalid_json_returns_none() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("bad.json");
+        std::fs::write(&path, "not valid json").unwrap();
+        assert!(load_tip(&path).is_none());
+    }
+
+    #[test]
+    fn tip_load_all_sorted_newest_first() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut t1 = make_tip("tip-sort-a", "출처A", "내용A");
+        t1.created_at = "2026-03-30T10:00:00".to_string();
+        let mut t2 = make_tip("tip-sort-b", "출처B", "내용B");
+        t2.created_at = "2026-03-31T10:00:00".to_string();
+        let mut t3 = make_tip("tip-sort-c", "출처C", "내용C");
+        t3.created_at = "2026-03-29T10:00:00".to_string();
+
+        save_tip(&t1, dir.path()).unwrap();
+        save_tip(&t2, dir.path()).unwrap();
+        save_tip(&t3, dir.path()).unwrap();
+
+        let all = load_all_tips(dir.path());
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0].id, "tip-sort-b"); // newest
+        assert_eq!(all[1].id, "tip-sort-a");
+        assert_eq!(all[2].id, "tip-sort-c"); // oldest
+    }
+
+    #[test]
+    fn tip_load_all_skips_non_json_files() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let tip = make_tip("tip-json-only", "출처", "내용");
+        save_tip(&tip, dir.path()).unwrap();
+        std::fs::write(dir.path().join("readme.txt"), "not a tip").unwrap();
+        std::fs::write(dir.path().join("notes.md"), "# notes").unwrap();
+
+        let all = load_all_tips(dir.path());
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, "tip-json-only");
+    }
+
+    #[test]
+    fn tip_update_status_persists() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let tip = make_tip("tip-upd-001", "출처", "내용");
+        save_tip(&tip, dir.path()).unwrap();
+
+        // Load, modify, save
+        let path = dir.path().join("tip-upd-001.json");
+        let mut loaded = load_tip(&path).unwrap();
+        loaded.status = "취재중".to_string();
+        loaded.updated_at = "2026-03-31T12:00:00".to_string();
+        save_tip(&loaded, dir.path()).unwrap();
+
+        let reloaded = load_tip(&path).unwrap();
+        assert_eq!(reloaded.status, "취재중");
+        assert_eq!(reloaded.updated_at, "2026-03-31T12:00:00");
+    }
+
+    #[test]
+    fn tip_search_by_source() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let t1 = make_tip("tip-ss1", "산업부관계자", "내용1");
+        let t2 = make_tip("tip-ss2", "국토부관계자", "내용2");
+        save_tip(&t1, dir.path()).unwrap();
+        save_tip(&t2, dir.path()).unwrap();
+
+        let all = load_all_tips(dir.path());
+        let kw_lower = "산업부".to_lowercase();
+        let matches: Vec<&TipEntry> = all
+            .iter()
+            .filter(|t| t.source.to_lowercase().contains(&kw_lower))
+            .collect();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].id, "tip-ss1");
+    }
+
+    #[test]
+    fn tip_search_no_match() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let t1 = make_tip("tip-nm1", "출처", "전혀 관련 없는 내용");
+        save_tip(&t1, dir.path()).unwrap();
+
+        let all = load_all_tips(dir.path());
+        let kw_lower = "반도체".to_lowercase();
+        let matches: Vec<&TipEntry> = all
+            .iter()
+            .filter(|t| {
+                t.content.to_lowercase().contains(&kw_lower)
+                    || t.source.to_lowercase().contains(&kw_lower)
+            })
+            .collect();
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn tip_search_case_insensitive() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let t1 = make_tip("tip-ci1", "출처", "Samsung Electronics Report");
+        save_tip(&t1, dir.path()).unwrap();
+
+        let all = load_all_tips(dir.path());
+        let kw_lower = "samsung".to_lowercase();
+        let matches: Vec<&TipEntry> = all
+            .iter()
+            .filter(|t| t.content.to_lowercase().contains(&kw_lower))
+            .collect();
+        assert_eq!(matches.len(), 1);
+    }
+
+    // ── parse_tip_add_args 테스트 ───────────────────────────────────────
+
+    #[test]
+    fn parse_tip_add_args_basic() {
+        let (content, source, anon, cred, story) =
+            parse_tip_add_args("비밀 문서 입수 --source 내부자");
+        assert_eq!(content, "비밀 문서 입수");
+        assert_eq!(source, "내부자");
+        assert!(!anon);
+        assert_eq!(cred, 3); // default
+        assert!(story.is_none());
+    }
+
+    #[test]
+    fn parse_tip_add_args_all_flags() {
+        let (content, source, anon, cred, story) =
+            parse_tip_add_args("제보 내용 --source 김기자 --anon --cred 5 --story 반도체");
+        assert_eq!(content, "제보 내용");
+        assert_eq!(source, "김기자");
+        assert!(anon);
+        assert_eq!(cred, 5);
+        assert_eq!(story, Some("반도체".to_string()));
+    }
+
+    #[test]
+    fn parse_tip_add_args_anon_flag_only() {
+        let (_, _, anon, _, _) = parse_tip_add_args("내용 --source 출처 --anon");
+        assert!(anon);
+    }
+
+    #[test]
+    fn parse_tip_add_args_cred_clamped_high() {
+        let (_, _, _, cred, _) = parse_tip_add_args("내용 --source 출처 --cred 10");
+        assert_eq!(cred, 5); // clamped to max 5
+    }
+
+    #[test]
+    fn parse_tip_add_args_cred_clamped_low() {
+        let (_, _, _, cred, _) = parse_tip_add_args("내용 --source 출처 --cred 0");
+        assert_eq!(cred, 1); // clamped to min 1
+    }
+
+    #[test]
+    fn parse_tip_add_args_no_source() {
+        let (content, source, _, _, _) = parse_tip_add_args("그냥 내용만");
+        assert_eq!(content, "그냥 내용만");
+        assert!(source.is_empty());
+    }
+
+    #[test]
+    fn parse_tip_add_args_empty_input() {
+        let (content, source, anon, cred, story) = parse_tip_add_args("");
+        assert!(content.is_empty());
+        assert!(source.is_empty());
+        assert!(!anon);
+        assert_eq!(cred, 3);
+        assert!(story.is_none());
+    }
+
+    // ── parse_factcheck_log_args 추가 테스트 ────────────────────────────
+
+    #[test]
+    fn parse_factcheck_log_args_empty_input() {
+        let parts = parse_factcheck_log_args("");
+        assert!(parts.is_empty());
+    }
+
+    #[test]
+    fn parse_factcheck_log_args_single_word() {
+        let parts = parse_factcheck_log_args("단어");
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0], "단어");
+    }
+
+    #[test]
+    fn parse_factcheck_log_args_single_quoted() {
+        let parts = parse_factcheck_log_args("'작은따옴표 값' 사실 출처");
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0], "작은따옴표 값");
+        assert_eq!(parts[1], "사실");
+        assert_eq!(parts[2], "출처");
+    }
+
+    #[test]
+    fn parse_factcheck_log_args_whitespace_only() {
+        let parts = parse_factcheck_log_args("   ");
+        assert!(parts.is_empty());
+    }
+
+    #[test]
+    fn parse_factcheck_log_args_mixed_quotes() {
+        let parts = parse_factcheck_log_args("\"큰따옴표\" '작은따옴표' 일반");
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0], "큰따옴표");
+        assert_eq!(parts[1], "작은따옴표");
+        assert_eq!(parts[2], "일반");
+    }
+
+    // ── FactCheckEntry 구조체 & 직렬화 테스트 ───────────────────────────
+
+    fn make_factcheck(id: &str, claim: &str, verdict: &str, source: &str) -> FactCheckEntry {
+        FactCheckEntry {
+            id: id.to_string(),
+            claim: claim.to_string(),
+            verdict: verdict.to_string(),
+            source: source.to_string(),
+            checked_at: "2026-03-31T11:00:00".to_string(),
+            context: None,
+        }
+    }
+
+    #[test]
+    fn factcheck_entry_serialize_roundtrip() {
+        let entry = make_factcheck("fc-001", "GDP 5% 성장", "사실", "한국은행");
+        let json = serde_json::to_string_pretty(&entry).unwrap();
+        let loaded: FactCheckEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry, loaded);
+    }
+
+    #[test]
+    fn factcheck_entry_optional_context_none() {
+        let entry = make_factcheck("fc-002", "주장", "미확인", "출처");
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(!json.contains("context"));
+    }
+
+    #[test]
+    fn factcheck_entry_optional_context_some() {
+        let mut entry = make_factcheck("fc-003", "주장", "부분사실", "출처");
+        entry.context = Some("추가 맥락 정보".to_string());
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("context"));
+        let loaded: FactCheckEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.context, Some("추가 맥락 정보".to_string()));
+    }
+
+    #[test]
+    fn factcheck_save_creates_directory() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let nested = dir.path().join("nested").join("records");
+        let entry = make_factcheck("fc-dir-001", "주장", "사실", "출처");
+        save_factcheck_entry(&entry, &nested).unwrap();
+        assert!(nested.join("fc-dir-001.json").exists());
+    }
+
+    #[test]
+    fn factcheck_load_invalid_json_returns_none() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("bad.json");
+        std::fs::write(&path, "{{invalid}}").unwrap();
+        assert!(load_factcheck_entry(&path).is_none());
+    }
+
+    #[test]
+    fn factcheck_load_all_skips_non_json() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let entry = make_factcheck("fc-skip-001", "주장", "사실", "출처");
+        save_factcheck_entry(&entry, dir.path()).unwrap();
+        std::fs::write(dir.path().join("readme.txt"), "not json").unwrap();
+        std::fs::write(dir.path().join("notes.md"), "# notes").unwrap();
+
+        let all = load_all_factcheck_entries(dir.path());
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, "fc-skip-001");
+    }
+
+    #[test]
+    fn factcheck_search_by_claim() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let e1 = make_factcheck("fc-sc1", "삼성전자 매출 증가", "사실", "공시");
+        let e2 = make_factcheck("fc-sc2", "현대차 리콜", "미확인", "제보");
+        save_factcheck_entry(&e1, dir.path()).unwrap();
+        save_factcheck_entry(&e2, dir.path()).unwrap();
+
+        let all = load_all_factcheck_entries(dir.path());
+        let kw_lower = "삼성".to_lowercase();
+        let matches: Vec<&FactCheckEntry> = all
+            .iter()
+            .filter(|e| e.claim.to_lowercase().contains(&kw_lower))
+            .collect();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].id, "fc-sc1");
+    }
+
+    #[test]
+    fn factcheck_search_by_source() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let e1 = make_factcheck("fc-ss1", "주장1", "사실", "한국은행");
+        let e2 = make_factcheck("fc-ss2", "주장2", "거짓", "통계청");
+        save_factcheck_entry(&e1, dir.path()).unwrap();
+        save_factcheck_entry(&e2, dir.path()).unwrap();
+
+        let all = load_all_factcheck_entries(dir.path());
+        let kw_lower = "통계청".to_lowercase();
+        let matches: Vec<&FactCheckEntry> = all
+            .iter()
+            .filter(|e| e.source.to_lowercase().contains(&kw_lower))
+            .collect();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].id, "fc-ss2");
+    }
+
+    #[test]
+    fn factcheck_search_by_verdict() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let e1 = make_factcheck("fc-sv1", "주장1", "사실", "출처1");
+        let e2 = make_factcheck("fc-sv2", "주장2", "거짓", "출처2");
+        let e3 = make_factcheck("fc-sv3", "주장3", "사실", "출처3");
+        save_factcheck_entry(&e1, dir.path()).unwrap();
+        save_factcheck_entry(&e2, dir.path()).unwrap();
+        save_factcheck_entry(&e3, dir.path()).unwrap();
+
+        let all = load_all_factcheck_entries(dir.path());
+        let matches: Vec<&FactCheckEntry> = all
+            .iter()
+            .filter(|e| e.verdict == "거짓")
+            .collect();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].id, "fc-sv2");
+    }
+
+    #[test]
+    fn factcheck_search_by_context() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut e1 = make_factcheck("fc-ctx1", "주장", "사실", "출처");
+        e1.context = Some("반도체 수출 관련 맥락".to_string());
+        save_factcheck_entry(&e1, dir.path()).unwrap();
+
+        let all = load_all_factcheck_entries(dir.path());
+        let kw_lower = "반도체".to_lowercase();
+        let matches: Vec<&FactCheckEntry> = all
+            .iter()
+            .filter(|e| {
+                e.context
+                    .as_deref()
+                    .map_or(false, |c| c.to_lowercase().contains(&kw_lower))
+            })
+            .collect();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].id, "fc-ctx1");
+    }
+
+    #[test]
+    fn factcheck_search_no_match() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let e1 = make_factcheck("fc-nm1", "국내 경제 성장", "사실", "한은");
+        save_factcheck_entry(&e1, dir.path()).unwrap();
+
+        let all = load_all_factcheck_entries(dir.path());
+        let kw_lower = "외교".to_lowercase();
+        let matches: Vec<&FactCheckEntry> = all
+            .iter()
+            .filter(|e| {
+                e.claim.to_lowercase().contains(&kw_lower)
+                    || e.source.to_lowercase().contains(&kw_lower)
+            })
+            .collect();
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn factcheck_file_path_slug() {
+        let path = factcheck_file_path_with_date("한국 GDP 성장률", "2026-03-31");
+        assert_eq!(
+            path.to_string_lossy(),
+            ".journalist/factcheck/2026-03-31_한국-gdp-성장률.md"
+        );
+    }
+
 }
