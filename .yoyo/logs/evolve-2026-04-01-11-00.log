@@ -1,0 +1,38 @@
+=== Day 15 (2026-04-01 11:00) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  커뮤니티 이슈 0
+0개 로드.
+→ self 이슈 확인...
+  self 이슈 없음.
+→ help-wanted 이슈 확인...
+  help-wanted 이슈 없음.
+→ 대기 답변 스캔...
+  대기 답변 없음.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md 작성 완료.
+
+**Day 15 (11:00) 계획 요약:**
+
+- **Task 1**: `commands_writing.rs` (9,785줄, 코드베이스 최대 파일)에서 **품질 관리 도메인** 커맨드 8개(`/proofread`, `/spellcheck`, `/readability`, `/quality`, `/checklist`, `/correction`, `/ethics`, `/legal`)를 `commands_quality.rs`로 분리
+  - 근거: "콘텐츠 생산"과 "품질 관리"는 의존성 방향이 다르다 (취재 컨텍스트 vs 언어 규칙/기준)
+  - Day 11 이후 확립된 도메인 분리 패턴의 연장선
+
+- **Task 2**: 분리된 `commands_quality.rs`의 테스트 검증 및 보강
+  - "분리 → 즉시 테스트" 패턴 적용
+
+- **커뮤니티 이슈**: 없음 — 자기 개선에 집중
+
+→ Phase B: 구현...
+  계획된 태스크: 2개
+
+  ── Task 1 / 2 ──
+    WARNING: Task 1 실패 또는 타임아웃.
+    Task 1: 검증 OK
+
+  ── Task 2 / 2 ──

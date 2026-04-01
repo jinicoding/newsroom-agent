@@ -8071,6 +8071,234 @@ mod tests {
         assert!(prompt.contains("초안 없음"));
     }
 
+    // ── /correction additional tests ──────────────────────────────────
+
+    #[test]
+    fn parse_correction_add_args_reordered() {
+        let (article, error, fix) =
+            parse_correction_add_args("--fix 정정내용 --article 기사제목 --error 오류내용");
+        assert_eq!(article, "기사제목");
+        assert_eq!(error, "오류내용");
+        assert_eq!(fix, "정정내용");
+    }
+
+    #[test]
+    fn parse_correction_add_args_trailing_flag_no_value() {
+        let (article, error, fix) = parse_correction_add_args("--article 테스트 --error");
+        assert_eq!(article, "테스트");
+        assert!(error.is_empty());
+        assert!(fix.is_empty());
+    }
+
+    #[test]
+    fn search_corrections_empty_keyword_matches_all() {
+        let records = vec![
+            CorrectionRecord {
+                date: "2026-04-01".to_string(),
+                article: "기사A".to_string(),
+                error: "오류A".to_string(),
+                fix: "정정A".to_string(),
+                status: "pending".to_string(),
+            },
+            CorrectionRecord {
+                date: "2026-04-01".to_string(),
+                article: "기사B".to_string(),
+                error: "오류B".to_string(),
+                fix: "정정B".to_string(),
+                status: "done".to_string(),
+            },
+        ];
+        let results = search_corrections(&records, "");
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn build_correction_report_prompt_empty_title() {
+        let records = vec![CorrectionRecord {
+            date: "2026-04-01".to_string(),
+            article: "기사".to_string(),
+            error: "오류".to_string(),
+            fix: "정정".to_string(),
+            status: "pending".to_string(),
+        }];
+        let prompt = build_correction_report_prompt("", &records);
+        assert!(prompt.contains("정정 기록"));
+        assert!(prompt.contains("언론중재법"));
+        // Empty title should not produce "대상 기사 제목" line
+        assert!(!prompt.contains("대상 기사 제목"));
+    }
+
+    #[test]
+    fn build_correction_report_prompt_multiple_records() {
+        let records = vec![
+            CorrectionRecord {
+                date: "2026-04-01".to_string(),
+                article: "기사A".to_string(),
+                error: "오류1".to_string(),
+                fix: "정정1".to_string(),
+                status: "pending".to_string(),
+            },
+            CorrectionRecord {
+                date: "2026-04-02".to_string(),
+                article: "기사B".to_string(),
+                error: "오류2".to_string(),
+                fix: "정정2".to_string(),
+                status: "done".to_string(),
+            },
+        ];
+        let prompt = build_correction_report_prompt("종합", &records);
+        assert!(prompt.contains("1. 기사: 기사A"));
+        assert!(prompt.contains("2. 기사: 기사B"));
+        assert!(prompt.contains("대상 기사 제목: \"종합\""));
+    }
+
+    #[test]
+    fn correction_subcommands_match_handler() {
+        for sub in CORRECTION_SUBCOMMANDS {
+            assert!(
+                ["add", "list", "report", "search"].contains(sub),
+                "CORRECTION_SUBCOMMANDS contains unhandled '{sub}'"
+            );
+        }
+        assert_eq!(CORRECTION_SUBCOMMANDS.len(), 4);
+    }
+
+    // ── /checklist additional tests ─────────────────────────────────────
+
+    #[test]
+    fn parse_checklist_args_empty() {
+        let (file, text) = parse_checklist_args("");
+        assert!(file.is_none());
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn parse_checklist_args_file_flag_no_path() {
+        let (file, text) = parse_checklist_args("--file");
+        assert!(file.is_none());
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn parse_checklist_args_file_with_spaces_in_text() {
+        let (file, text) = parse_checklist_args("--file doc.md 인라인 텍스트 여러 단어");
+        assert_eq!(file.as_deref(), Some("doc.md"));
+        assert_eq!(text, "인라인 텍스트 여러 단어");
+    }
+
+    #[test]
+    fn checklist_file_path_unicode_slug() {
+        let path = checklist_file_path_with_date("삼성전자 1분기 실적", "2026-04-01");
+        let s = path.to_string_lossy();
+        assert!(s.starts_with(".journalist/checklist/2026-04-01_"));
+        assert!(s.ends_with(".md"));
+        assert!(!s.contains(' '));
+    }
+
+    // ── /quality additional tests ───────────────────────────────────────
+
+    #[test]
+    fn quality_subcommands_match_handler() {
+        for sub in QUALITY_SUBCOMMANDS {
+            assert!(
+                ["check", "report"].contains(sub),
+                "QUALITY_SUBCOMMANDS contains unhandled '{sub}'"
+            );
+        }
+        assert_eq!(QUALITY_SUBCOMMANDS.len(), 2);
+    }
+
+    #[test]
+    fn quality_check_path_special_chars_in_slug() {
+        let path = quality_check_path_with_date("기사/제목?특수문자", "2026-04-01");
+        let s = path.to_string_lossy();
+        assert!(s.starts_with(".journalist/quality/2026-04-01_"));
+        assert!(s.ends_with(".md"));
+    }
+
+    #[test]
+    fn build_quality_local_summary_empty_text() {
+        let summary = build_quality_local_summary("");
+        assert!(summary.contains("텍스트 통계"));
+        assert!(summary.contains("글자 수"));
+        assert!(summary.contains("가독성 분석"));
+    }
+
+    #[test]
+    fn build_quality_local_summary_single_sentence() {
+        let summary = build_quality_local_summary("한 문장 기사.");
+        assert!(summary.contains("문장 수"));
+        assert!(summary.contains("단어 수"));
+        assert!(summary.contains("종합 등급"));
+    }
+
+    #[test]
+    fn build_quality_check_prompt_all_dimensions() {
+        let prompt = build_quality_check_prompt("기사 내용", "요약 데이터");
+        assert!(prompt.contains("정확성"));
+        assert!(prompt.contains("구조"));
+        assert!(prompt.contains("가독성"));
+        assert!(prompt.contains("뉴스 가치"));
+        assert!(prompt.contains("취재 깊이") || prompt.contains("Depth"));
+        assert!(prompt.contains("윤리"));
+    }
+
+    #[test]
+    fn correction_record_serde_roundtrip() {
+        let record = CorrectionRecord {
+            date: "2026-04-01".to_string(),
+            article: "제목 with \"quotes\"".to_string(),
+            error: "오류\n줄바꿈".to_string(),
+            fix: "정정".to_string(),
+            status: "pending".to_string(),
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        let parsed: CorrectionRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.article, record.article);
+        assert_eq!(parsed.error, record.error);
+    }
+
+    #[test]
+    fn append_and_load_multiple_corrections() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let file_path = dir.path().join("corrections.jsonl");
+
+        let records = vec![
+            CorrectionRecord {
+                date: "2026-04-01".to_string(),
+                article: "기사1".to_string(),
+                error: "오류1".to_string(),
+                fix: "정정1".to_string(),
+                status: "pending".to_string(),
+            },
+            CorrectionRecord {
+                date: "2026-04-02".to_string(),
+                article: "기사2".to_string(),
+                error: "오류2".to_string(),
+                fix: "정정2".to_string(),
+                status: "done".to_string(),
+            },
+        ];
+
+        let mut content = String::new();
+        for r in &records {
+            let json = serde_json::to_string(r).unwrap();
+            content.push_str(&json);
+            content.push('\n');
+        }
+        std::fs::write(&file_path, &content).unwrap();
+
+        let loaded: Vec<CorrectionRecord> = std::fs::read_to_string(&file_path)
+            .unwrap()
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].article, "기사1");
+        assert_eq!(loaded[1].article, "기사2");
+    }
+
     // ── /template tests ──────────────────────────────────────────────────
 
     #[test]
