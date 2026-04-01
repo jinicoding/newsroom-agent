@@ -2910,3 +2910,565 @@ fn handle_tip_search(keyword: &str, dir: &std::path::Path) {
     println!();
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Constants ──────────────────────────────────────────────────────
+
+    #[test]
+    fn wire_subcommands_contains_save() {
+        assert_eq!(WIRE_SUBCOMMANDS, &["save"]);
+    }
+
+    #[test]
+    fn rss_subcommands_complete() {
+        assert_eq!(RSS_SUBCOMMANDS, &["add", "list", "check", "search", "remove"]);
+    }
+
+    #[test]
+    fn contact_subcommands_complete() {
+        assert_eq!(CONTACT_SUBCOMMANDS, &["log", "history", "recent", "stale", "suggest"]);
+    }
+
+    #[test]
+    fn tip_subcommands_complete() {
+        assert_eq!(TIP_SUBCOMMANDS, &["add", "list", "show", "update", "search"]);
+    }
+
+    #[test]
+    fn tip_statuses_complete() {
+        assert_eq!(TIP_STATUSES, &["미확인", "취재중", "기사화", "보류", "폐기"]);
+        assert_eq!(TIP_STATUSES.len(), 5);
+    }
+
+    // ── xml_extract_tag ───────────────────────────────────────────────
+
+    #[test]
+    fn xml_extract_tag_normal() {
+        let xml = "<title>테스트 제목</title>";
+        assert_eq!(xml_extract_tag(xml, "title"), Some("테스트 제목".to_string()));
+    }
+
+    #[test]
+    fn xml_extract_tag_missing() {
+        let xml = "<description>내용</description>";
+        assert_eq!(xml_extract_tag(xml, "title"), None);
+    }
+
+    #[test]
+    fn xml_extract_tag_cdata() {
+        let xml = "<title><![CDATA[CDATA 제목]]></title>";
+        assert_eq!(xml_extract_tag(xml, "title"), Some("CDATA 제목".to_string()));
+    }
+
+    #[test]
+    fn xml_extract_tag_with_attributes() {
+        let xml = r#"<link rel="alternate" href="x">링크텍스트</link>"#;
+        assert_eq!(xml_extract_tag(xml, "link"), Some("링크텍스트".to_string()));
+    }
+
+    #[test]
+    fn xml_extract_tag_nested() {
+        let xml = "<desc><inner>중첩</inner></desc>";
+        let result = xml_extract_tag(xml, "desc").unwrap();
+        assert!(result.contains("중첩"));
+    }
+
+    #[test]
+    fn xml_extract_tag_empty_content() {
+        let xml = "<title></title>";
+        assert_eq!(xml_extract_tag(xml, "title"), Some("".to_string()));
+    }
+
+    #[test]
+    fn xml_extract_tag_whitespace() {
+        let xml = "<title>  공백 있는 제목  </title>";
+        assert_eq!(xml_extract_tag(xml, "title"), Some("공백 있는 제목".to_string()));
+    }
+
+    // ── parse_rss_items ───────────────────────────────────────────────
+
+    #[test]
+    fn parse_rss_items_normal() {
+        let xml = r#"<?xml version="1.0"?>
+<rss><channel>
+<item>
+  <title>제목1</title>
+  <link>https://example.com/1</link>
+  <description>설명1</description>
+  <pubDate>Mon, 01 Apr 2026 09:00:00 +0900</pubDate>
+</item>
+<item>
+  <title>제목2</title>
+  <link>https://example.com/2</link>
+  <description>설명2</description>
+  <pubDate>Mon, 01 Apr 2026 10:00:00 +0900</pubDate>
+</item>
+</channel></rss>"#;
+        let items = parse_rss_items(xml);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].title, "제목1");
+        assert_eq!(items[0].link, "https://example.com/1");
+        assert_eq!(items[0].description, "설명1");
+        assert!(!items[0].pub_date.is_empty());
+        assert_eq!(items[1].title, "제목2");
+    }
+
+    #[test]
+    fn parse_rss_items_empty_xml() {
+        let items = parse_rss_items("");
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn parse_rss_items_no_items() {
+        let xml = r#"<?xml version="1.0"?><rss><channel><title>Feed</title></channel></rss>"#;
+        let items = parse_rss_items(xml);
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn parse_rss_items_cdata() {
+        let xml = r#"<item>
+  <title><![CDATA[CDATA 제목]]></title>
+  <link>https://example.com/cdata</link>
+  <description><![CDATA[<b>HTML</b> 내용]]></description>
+  <pubDate>Tue, 02 Apr 2026 09:00:00 +0900</pubDate>
+</item>"#;
+        let items = parse_rss_items(xml);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "CDATA 제목");
+        assert_eq!(items[0].link, "https://example.com/cdata");
+    }
+
+    #[test]
+    fn parse_rss_items_incomplete_item() {
+        let xml = "<item><title>미완성";
+        let items = parse_rss_items(xml);
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn parse_rss_items_missing_fields() {
+        let xml = r#"<item><title>제목만</title></item>"#;
+        let items = parse_rss_items(xml);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "제목만");
+        assert!(items[0].link.is_empty());
+        assert!(items[0].description.is_empty());
+    }
+
+    #[test]
+    fn parse_rss_items_with_attributes_on_item_tag() {
+        let xml = r#"<item rdf:about="foo"><title>속성태그</title><link>http://x</link></item>"#;
+        let items = parse_rss_items(xml);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "속성태그");
+    }
+
+    #[test]
+    fn parse_rss_items_html_in_description() {
+        // Entity-encoded HTML: strip_html_tags strips real tags first, then decodes entities.
+        // So &lt;b&gt; → passes tag stripping unchanged → decoded to <b>.
+        let xml = r#"<item>
+  <title>HTML 테스트</title>
+  <link>http://test</link>
+  <description><![CDATA[<b>굵게</b> 일반]]></description>
+</item>"#;
+        let items = parse_rss_items(xml);
+        assert_eq!(items.len(), 1);
+        // CDATA with real HTML tags: strip_html_tags removes <b></b>
+        assert!(!items[0].description.contains("<b>"));
+        assert!(items[0].description.contains("굵게"));
+    }
+
+    #[test]
+    fn parse_rss_items_multiple_with_empty_title_and_link() {
+        let xml = r#"<item><title></title><link></link></item>"#;
+        let items = parse_rss_items(xml);
+        assert!(items.is_empty());
+    }
+
+    // ── days_until ────────────────────────────────────────────────────
+
+    #[test]
+    fn days_until_future() {
+        assert_eq!(days_until("2026-04-10", "2026-04-01"), Some(9));
+    }
+
+    #[test]
+    fn days_until_past() {
+        assert_eq!(days_until("2026-03-25", "2026-04-01"), Some(-7));
+    }
+
+    #[test]
+    fn days_until_same_day() {
+        assert_eq!(days_until("2026-04-01", "2026-04-01"), Some(0));
+    }
+
+    #[test]
+    fn days_until_invalid_format() {
+        assert_eq!(days_until("not-a-date", "2026-04-01"), None);
+        assert_eq!(days_until("2026-04-01", "invalid"), None);
+    }
+
+    #[test]
+    fn days_until_month_boundary() {
+        assert_eq!(days_until("2026-04-01", "2026-03-31"), Some(1));
+    }
+
+    #[test]
+    fn days_until_leap_year() {
+        assert_eq!(days_until("2024-03-01", "2024-02-28"), Some(2));
+    }
+
+    #[test]
+    fn days_until_year_boundary() {
+        assert_eq!(days_until("2027-01-01", "2026-12-31"), Some(1));
+    }
+
+    #[test]
+    fn days_until_invalid_month() {
+        assert_eq!(days_until("2026-13-01", "2026-04-01"), None);
+    }
+
+    #[test]
+    fn days_until_invalid_day() {
+        assert_eq!(days_until("2026-04-32", "2026-04-01"), None);
+    }
+
+    // ── verify_file_path_with_date ────────────────────────────────────
+
+    #[test]
+    fn verify_file_path_with_date_normal() {
+        let path = verify_file_path_with_date("삼성전자 주가 조작 의혹", "2026-04-01");
+        let name = path.file_name().unwrap().to_str().unwrap();
+        assert!(name.starts_with("2026-04-01_"));
+        assert!(name.ends_with(".md"));
+        assert_eq!(path.parent().unwrap().to_str().unwrap(), VERIFY_DIR);
+    }
+
+    #[test]
+    fn verify_file_path_with_date_empty_claim() {
+        let path = verify_file_path_with_date("", "2026-04-01");
+        let name = path.file_name().unwrap().to_str().unwrap();
+        assert_eq!(name, "2026-04-01_verify.md");
+    }
+
+    #[test]
+    fn verify_file_path_with_date_different_dates() {
+        let p1 = verify_file_path_with_date("test", "2026-01-01");
+        let p2 = verify_file_path_with_date("test", "2026-12-31");
+        assert_ne!(p1, p2);
+        assert!(p1.to_str().unwrap().contains("2026-01-01"));
+        assert!(p2.to_str().unwrap().contains("2026-12-31"));
+    }
+
+    // ── notes_file_for_date ───────────────────────────────────────────
+
+    #[test]
+    fn notes_file_for_date_normal() {
+        let path = notes_file_for_date("2026-04-01");
+        assert_eq!(path.to_str().unwrap(), ".journalist/notes/2026-04-01.jsonl");
+    }
+
+    #[test]
+    fn notes_file_for_date_different_dates() {
+        let p1 = notes_file_for_date("2026-01-15");
+        let p2 = notes_file_for_date("2026-12-31");
+        assert_ne!(p1, p2);
+        assert!(p1.to_str().unwrap().ends_with("2026-01-15.jsonl"));
+        assert!(p2.to_str().unwrap().ends_with("2026-12-31.jsonl"));
+    }
+
+    // ── tip_file_path_at ──────────────────────────────────────────────
+
+    #[test]
+    fn tip_file_path_at_normal() {
+        let dir = std::path::Path::new("/tmp/tips");
+        let path = tip_file_path_at(dir, "20260401-0930-1234");
+        assert_eq!(path.to_str().unwrap(), "/tmp/tips/20260401-0930-1234.json");
+    }
+
+    #[test]
+    fn tip_file_path_at_different_dir() {
+        let dir = std::path::Path::new(".journalist/tips");
+        let path = tip_file_path_at(dir, "test-id");
+        assert_eq!(path.to_str().unwrap(), ".journalist/tips/test-id.json");
+    }
+
+    // ── detect_new_headlines ──────────────────────────────────────────
+
+    #[test]
+    fn detect_new_headlines_all_new() {
+        let current = vec!["A".to_string(), "B".to_string()];
+        let previous: Vec<String> = vec![];
+        let result = detect_new_headlines(&current, &previous);
+        assert_eq!(result, current);
+    }
+
+    #[test]
+    fn detect_new_headlines_none_new() {
+        let current = vec!["A".to_string(), "B".to_string()];
+        let previous = vec!["A".to_string(), "B".to_string()];
+        let result = detect_new_headlines(&current, &previous);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn detect_new_headlines_some_new() {
+        let current = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        let previous = vec!["A".to_string()];
+        let result = detect_new_headlines(&current, &previous);
+        assert_eq!(result, vec!["B".to_string(), "C".to_string()]);
+    }
+
+    #[test]
+    fn detect_new_headlines_empty_current() {
+        let current: Vec<String> = vec![];
+        let previous = vec!["A".to_string()];
+        let result = detect_new_headlines(&current, &previous);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn detect_new_headlines_both_empty() {
+        let current: Vec<String> = vec![];
+        let previous: Vec<String> = vec![];
+        let result = detect_new_headlines(&current, &previous);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn detect_new_headlines_preserves_order() {
+        let current = vec!["C".to_string(), "A".to_string(), "B".to_string()];
+        let previous = vec!["A".to_string()];
+        let result = detect_new_headlines(&current, &previous);
+        assert_eq!(result, vec!["C".to_string(), "B".to_string()]);
+    }
+
+    // ── extract_naver_news_headlines (파싱만) ─────────────────────────
+
+    #[test]
+    fn extract_naver_headlines_normal() {
+        let html = r#"<div class="news_tit" title="첫번째 뉴스">text</div>
+<div class="news_tit" title="두번째 뉴스">text</div>"#;
+        let result = extract_naver_news_headlines(html, 10);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], "첫번째 뉴스");
+        assert_eq!(result[1], "두번째 뉴스");
+    }
+
+    #[test]
+    fn extract_naver_headlines_empty_html() {
+        let result = extract_naver_news_headlines("", 10);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn extract_naver_headlines_no_news() {
+        let html = "<html><body>No news here</body></html>";
+        let result = extract_naver_news_headlines(html, 10);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn extract_naver_headlines_respects_max() {
+        let html = r#"<a class="news_tit" title="뉴스1">x</a>
+<a class="news_tit" title="뉴스2">x</a>
+<a class="news_tit" title="뉴스3">x</a>"#;
+        let result = extract_naver_news_headlines(html, 2);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn extract_naver_headlines_html_entities() {
+        let html = r#"<a class="news_tit" title="A &amp; B &lt;C&gt;">x</a>"#;
+        let result = extract_naver_news_headlines(html, 10);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], "A & B <C>");
+    }
+
+    #[test]
+    fn extract_naver_headlines_empty_title_skipped() {
+        let html = r#"<a class="news_tit" title="">x</a>
+<a class="news_tit" title="실제뉴스">x</a>"#;
+        let result = extract_naver_news_headlines(html, 10);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], "실제뉴스");
+    }
+
+    // ── is_valid_date ─────────────────────────────────────────────────
+
+    #[test]
+    fn is_valid_date_normal() {
+        assert!(is_valid_date("2026-04-01"));
+        assert!(is_valid_date("2024-02-29"));
+    }
+
+    #[test]
+    fn is_valid_date_invalid() {
+        assert!(!is_valid_date(""));
+        assert!(!is_valid_date("not-date"));
+        assert!(!is_valid_date("2026-13-01"));
+        assert!(!is_valid_date("2026-00-01"));
+        assert!(!is_valid_date("2026-04-32"));
+        assert!(!is_valid_date("2026-04-00"));
+        assert!(!is_valid_date("20260401"));
+    }
+
+    // ── RSS feed save/load roundtrip ──────────────────────────────────
+
+    #[test]
+    fn rss_feeds_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feeds.json");
+        let feeds = vec![
+            RssFeed {
+                url: "https://example.com/rss".to_string(),
+                name: "테스트피드".to_string(),
+                added: "2026-04-01 09:00:00".to_string(),
+            },
+        ];
+        save_rss_feeds_to(&feeds, &path);
+        let loaded = load_rss_feeds_from(&path);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].url, "https://example.com/rss");
+        assert_eq!(loaded[0].name, "테스트피드");
+    }
+
+    #[test]
+    fn rss_feeds_load_nonexistent() {
+        let loaded = load_rss_feeds_from(std::path::Path::new("/nonexistent/feeds.json"));
+        assert!(loaded.is_empty());
+    }
+
+    // ── RSS cache save/load roundtrip ─────────────────────────────────
+
+    #[test]
+    fn rss_cache_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache.json");
+        let items = vec![NewsItem {
+            title: "캐시 테스트".to_string(),
+            link: "https://example.com/1".to_string(),
+            description: "설명".to_string(),
+            pub_date: "2026-04-01".to_string(),
+        }];
+        save_rss_cache_to(&items, &path);
+        let loaded = load_rss_cache_from(&path);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].title, "캐시 테스트");
+        assert_eq!(loaded[0].link, "https://example.com/1");
+    }
+
+    #[test]
+    fn rss_cache_load_nonexistent() {
+        let loaded = load_rss_cache_from(std::path::Path::new("/nonexistent/cache.json"));
+        assert!(loaded.is_empty());
+    }
+
+    // ── rss_cache_filename ────────────────────────────────────────────
+
+    #[test]
+    fn rss_cache_filename_strips_scheme() {
+        let name = rss_cache_filename("https://www.yna.co.kr/rss/news.xml");
+        assert!(!name.contains("https"));
+        assert!(!name.is_empty());
+    }
+
+    #[test]
+    fn rss_cache_filename_empty_url_fallback() {
+        let name = rss_cache_filename("https://");
+        assert!(!name.is_empty());
+    }
+
+    // ── Note roundtrip ────────────────────────────────────────────────
+
+    #[test]
+    fn note_append_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("2026-04-01.jsonl");
+        let note = Note {
+            content: "테스트 메모".to_string(),
+            source: Some("테스트".to_string()),
+            topic: None,
+            timestamp: "2026-04-01 09:00:00".to_string(),
+        };
+        append_note_to(&note, &path);
+        let loaded = load_notes_from(&path);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].content, "테스트 메모");
+    }
+
+    #[test]
+    fn load_all_notes_from_multiple_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let note1 = Note {
+            content: "Day1".to_string(),
+            source: None,
+            topic: None,
+            timestamp: "2026-04-01".to_string(),
+        };
+        let note2 = Note {
+            content: "Day2".to_string(),
+            source: None,
+            topic: None,
+            timestamp: "2026-04-02".to_string(),
+        };
+        append_note_to(&note1, &dir.path().join("2026-04-01.jsonl"));
+        append_note_to(&note2, &dir.path().join("2026-04-02.jsonl"));
+        let all = load_all_notes_from(dir.path());
+        assert_eq!(all.len(), 2);
+    }
+
+    // ── TipEntry save/load roundtrip ──────────────────────────────────
+
+    #[test]
+    fn tip_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let tip = TipEntry {
+            id: "20260401-0930-0001".to_string(),
+            source: "기자A".to_string(),
+            content: "제보 내용".to_string(),
+            anonymous: false,
+            credibility: 3,
+            status: "미확인".to_string(),
+            created_at: "2026-04-01 09:30:00".to_string(),
+            updated_at: "2026-04-01 09:30:00".to_string(),
+            linked_story: None,
+        };
+        save_tip(&tip, dir.path()).unwrap();
+        let loaded = load_tip(&dir.path().join("20260401-0930-0001.json")).unwrap();
+        assert_eq!(loaded, tip);
+    }
+
+    #[test]
+    fn load_all_tips_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let tips = load_all_tips(dir.path());
+        assert!(tips.is_empty());
+    }
+
+    #[test]
+    fn load_all_tips_multiple() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 1..=3 {
+            let tip = TipEntry {
+                id: format!("tip-{i}"),
+                source: "src".to_string(),
+                content: format!("content {i}"),
+                anonymous: false,
+                credibility: 3,
+                status: "미확인".to_string(),
+                created_at: format!("2026-04-0{i} 09:00:00"),
+                updated_at: format!("2026-04-0{i} 09:00:00"),
+                linked_story: None,
+            };
+            save_tip(&tip, dir.path()).unwrap();
+        }
+        let tips = load_all_tips(dir.path());
+        assert_eq!(tips.len(), 3);
+    }
+}

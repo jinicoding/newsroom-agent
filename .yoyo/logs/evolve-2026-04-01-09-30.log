@@ -1,0 +1,37 @@
+=== Day 15 (2026-04-01 09:30) ===
+Mode: 로컬 (Claude Max)
+
+→ 빌드 확인...
+  빌드 OK.
+
+→ GitHub 이슈 확인...
+  커뮤니티 이슈 0
+0개 로드.
+→ self 이슈 확인...
+  self 이슈 없음.
+→ help-wanted 이슈 확인...
+  help-wanted 이슈 없음.
+→ 대기 답변 스캔...
+  대기 답변 없음.
+
+→ Phase A: 계획 수립...
+SESSION_PLAN.md 작성 완료.
+
+**Day 15 계획 요약:**
+
+- **빌드/테스트 상태**: 정상 (2024개 통과)
+- **커뮤니티 이슈**: 없음
+
+**2개 태스크, 모두 commands_sourcing.rs 테스트 보강:**
+
+| Task | 대상 | 예상 테스트 |
+|------|------|------------|
+| Task 1 | 파싱·유틸리티 (parse_rss_items, xml_extract_tag, days_until, 경로 생성, detect_new_headlines 등) | 40~50개 |
+| Task 2 | 데이터 I/O·CRUD (RSS feed, Note, ContactLog, TipEntry, Followup, Monitor 저장/로딩 라운드트립) | 30~40개 |
+
+**근거**: commands_sourcing.rs는 2912줄에 테스트 0개로, 21개 소스 파일 중 유일한 테스트 공백. Day 14에서 분리한 직후이므로 "분리 → 즉시 테스트" 패턴 적용. Day 10 교훈("테스트 부채는 큰 파일부터")의 연장선.
+
+→ Phase B: 구현...
+  계획된 태스크: 2개
+
+  ── Task 1 / 2 ──
