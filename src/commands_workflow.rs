@@ -1,5 +1,6 @@
 //! Workflow & management command handlers (워크플로우·관리 도메인)
-//! Commands: /agenda, /autopitch, /breaking, /briefing, /calendar, /collaborate, /compare, /coverage, /dashboard, /data, /deadline, /desk, /diary, /embargo, /foia, /interview, /morning, /performance, /pitch, /recap, /rival, /timeline
+//! Commands: /agenda, /autopitch, /breaking, /briefing, /calendar, /compare, /dashboard, /data, /deadline, /diary, /embargo, /handoff, /interview, /morning, /performance, /pipeline, /pitch, /recap, /rival, /timeline
+//! Re-exports: /collaborate, /coverage, /desk (commands_editorial.rs), /foia (commands_foia.rs), /series (commands_series.rs)
 //! Note: /story commands extracted to commands_story.rs
 
 use crate::commands::auto_compact_if_needed;
