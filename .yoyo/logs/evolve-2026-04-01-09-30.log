@@ -35,3 +35,7 @@ SESSION_PLAN.md 작성 완료.
   계획된 태스크: 2개
 
   ── Task 1 / 2 ──
+완료. `commands_sourcing.rs`에 62개 단위 테스트를 추가하고 커밋했다. 전체 테스트 스위트 (67개 + integration) 모두 통과.
+    Task 1: 검증 OK
+
+  ── Task 2 / 2 ──

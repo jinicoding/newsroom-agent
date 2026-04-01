@@ -3471,4 +3471,711 @@ mod tests {
         let tips = load_all_tips(dir.path());
         assert_eq!(tips.len(), 3);
     }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Task 2: 데이터 I/O · CRUD 단위 테스트 (tempdir 기반)
+    // ══════════════════════════════════════════════════════════════════════
+
+    // ── RSS feed save/load edge cases ────────────────────────────────────
+
+    #[test]
+    fn rss_feeds_load_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feeds.json");
+        std::fs::write(&path, "").unwrap();
+        let loaded = load_rss_feeds_from(&path);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn rss_feeds_load_invalid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feeds.json");
+        std::fs::write(&path, "NOT JSON AT ALL {{{").unwrap();
+        let loaded = load_rss_feeds_from(&path);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn rss_feeds_save_and_load_multiple() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feeds.json");
+        let feeds = vec![
+            RssFeed {
+                url: "https://a.com/rss".to_string(),
+                name: "피드A".to_string(),
+                added: "2026-04-01".to_string(),
+            },
+            RssFeed {
+                url: "https://b.com/rss".to_string(),
+                name: "피드B".to_string(),
+                added: "2026-04-02".to_string(),
+            },
+            RssFeed {
+                url: "https://c.com/rss".to_string(),
+                name: "".to_string(),
+                added: "".to_string(),
+            },
+        ];
+        save_rss_feeds_to(&feeds, &path);
+        let loaded = load_rss_feeds_from(&path);
+        assert_eq!(loaded.len(), 3);
+        assert_eq!(loaded[0].name, "피드A");
+        assert_eq!(loaded[1].url, "https://b.com/rss");
+        assert_eq!(loaded[2].name, "");
+        assert_eq!(loaded[2].added, "");
+    }
+
+    #[test]
+    fn rss_feeds_save_empty_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feeds.json");
+        save_rss_feeds_to(&[], &path);
+        let loaded = load_rss_feeds_from(&path);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn rss_feeds_load_array_with_missing_url_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feeds.json");
+        // url is missing → filter_map returns None → entry skipped
+        std::fs::write(&path, r#"[{"name":"no-url","added":"2026-04-01"}]"#).unwrap();
+        let loaded = load_rss_feeds_from(&path);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn rss_feeds_overwrite_preserves_latest() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feeds.json");
+        let v1 = vec![RssFeed {
+            url: "https://old.com".to_string(),
+            name: "Old".to_string(),
+            added: "".to_string(),
+        }];
+        save_rss_feeds_to(&v1, &path);
+        let v2 = vec![RssFeed {
+            url: "https://new.com".to_string(),
+            name: "New".to_string(),
+            added: "".to_string(),
+        }];
+        save_rss_feeds_to(&v2, &path);
+        let loaded = load_rss_feeds_from(&path);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].url, "https://new.com");
+    }
+
+    // ── RSS cache edge cases ─────────────────────────────────────────────
+
+    #[test]
+    fn rss_cache_load_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache.json");
+        std::fs::write(&path, "").unwrap();
+        let loaded = load_rss_cache_from(&path);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn rss_cache_load_invalid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache.json");
+        std::fs::write(&path, "broken json!").unwrap();
+        let loaded = load_rss_cache_from(&path);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn rss_cache_save_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache.json");
+        save_rss_cache_to(&[], &path);
+        let loaded = load_rss_cache_from(&path);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn rss_cache_multiple_items_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache.json");
+        let items: Vec<NewsItem> = (1..=5)
+            .map(|i| NewsItem {
+                title: format!("뉴스{i}"),
+                link: format!("https://example.com/{i}"),
+                description: format!("설명{i}"),
+                pub_date: format!("2026-04-0{i}"),
+            })
+            .collect();
+        save_rss_cache_to(&items, &path);
+        let loaded = load_rss_cache_from(&path);
+        assert_eq!(loaded.len(), 5);
+        assert_eq!(loaded[2].title, "뉴스3");
+        assert_eq!(loaded[4].link, "https://example.com/5");
+    }
+
+    // ── load_notes_from edge cases ───────────────────────────────────────
+
+    #[test]
+    fn load_notes_from_nonexistent() {
+        let loaded = load_notes_from(std::path::Path::new("/nonexistent/notes.jsonl"));
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn load_notes_from_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.jsonl");
+        std::fs::write(&path, "").unwrap();
+        let loaded = load_notes_from(&path);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn load_notes_from_invalid_json_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.jsonl");
+        std::fs::write(&path, "NOT JSON\nALSO NOT JSON\n").unwrap();
+        let loaded = load_notes_from(&path);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn load_notes_from_mixed_valid_invalid() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mixed.jsonl");
+        let valid = r#"{"content":"유효","timestamp":"2026-04-01"}"#;
+        std::fs::write(&path, format!("INVALID LINE\n{valid}\nANOTHER BAD\n")).unwrap();
+        let loaded = load_notes_from(&path);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].content, "유효");
+    }
+
+    #[test]
+    fn notes_append_multiple_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("multi.jsonl");
+        for i in 1..=4 {
+            let note = Note {
+                content: format!("메모{i}"),
+                source: None,
+                topic: Some(format!("주제{i}")),
+                timestamp: format!("2026-04-01 0{i}:00:00"),
+            };
+            append_note_to(&note, &path);
+        }
+        let loaded = load_notes_from(&path);
+        assert_eq!(loaded.len(), 4);
+        assert_eq!(loaded[0].content, "메모1");
+        assert_eq!(loaded[3].topic, Some("주제4".to_string()));
+    }
+
+    #[test]
+    fn load_all_notes_from_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let notes = load_all_notes_from(dir.path());
+        assert!(notes.is_empty());
+    }
+
+    #[test]
+    fn load_all_notes_from_nonexistent_dir() {
+        let notes = load_all_notes_from(std::path::Path::new("/nonexistent/notes/"));
+        assert!(notes.is_empty());
+    }
+
+    #[test]
+    fn load_all_notes_ignores_non_jsonl() {
+        let dir = tempfile::tempdir().unwrap();
+        // Write a .txt file — should be ignored
+        std::fs::write(dir.path().join("stray.txt"), "not a note").unwrap();
+        let note = Note {
+            content: "진짜메모".to_string(),
+            source: None,
+            topic: None,
+            timestamp: "2026-04-01".to_string(),
+        };
+        append_note_to(&note, &dir.path().join("2026-04-01.jsonl"));
+        let all = load_all_notes_from(dir.path());
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].content, "진짜메모");
+    }
+
+    // ── append_contact_log / load_contact_logs_from ──────────────────────
+
+    #[test]
+    fn contact_log_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("source_a.jsonl");
+        let log = ContactLog {
+            name: "김기자".to_string(),
+            summary: "경제 브리핑 관련 전화".to_string(),
+            timestamp: "2026-04-01T09:30:00".to_string(),
+        };
+        append_contact_log(&log, &path);
+        let loaded = load_contact_logs_from(&path);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "김기자");
+        assert_eq!(loaded[0].summary, "경제 브리핑 관련 전화");
+    }
+
+    #[test]
+    fn contact_log_append_multiple() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("contact.jsonl");
+        for i in 1..=3 {
+            let log = ContactLog {
+                name: format!("취재원{i}"),
+                summary: format!("대화{i}"),
+                timestamp: format!("2026-04-0{i}T10:00:00"),
+            };
+            append_contact_log(&log, &path);
+        }
+        let loaded = load_contact_logs_from(&path);
+        assert_eq!(loaded.len(), 3);
+        assert_eq!(loaded[2].name, "취재원3");
+    }
+
+    #[test]
+    fn contact_log_load_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.jsonl");
+        std::fs::write(&path, "").unwrap();
+        let loaded = load_contact_logs_from(&path);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn contact_log_load_nonexistent() {
+        let loaded = load_contact_logs_from(std::path::Path::new("/no/such/file.jsonl"));
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn contact_log_load_invalid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.jsonl");
+        std::fs::write(&path, "NOT JSON\n").unwrap();
+        let loaded = load_contact_logs_from(&path);
+        assert!(loaded.is_empty());
+    }
+
+    // ── load_all_contact_logs path structure ─────────────────────────────
+    // load_all_contact_logs() reads from the hardcoded contacts_dir(),
+    // but we can verify the helper functions it delegates to.
+
+    #[test]
+    fn contact_file_for_sanitizes_name() {
+        let path = contact_file_for("김 기자/특수문자!");
+        let name = path.file_name().unwrap().to_str().unwrap();
+        // Spaces and special chars replaced with _
+        assert!(!name.contains(' '));
+        assert!(!name.contains('/'));
+        assert!(!name.contains('!'));
+        assert!(name.ends_with(".jsonl"));
+    }
+
+    #[test]
+    fn contact_file_for_preserves_alphanumeric() {
+        let path = contact_file_for("abc_123-test");
+        let name = path.file_name().unwrap().to_str().unwrap();
+        assert_eq!(name, "abc_123-test.jsonl");
+    }
+
+    // ── TipEntry CRUD: save/load/status change/search ────────────────────
+
+    fn make_tip(id: &str, status: &str, content: &str) -> TipEntry {
+        TipEntry {
+            id: id.to_string(),
+            source: "테스트출처".to_string(),
+            content: content.to_string(),
+            anonymous: false,
+            credibility: 3,
+            status: status.to_string(),
+            created_at: "2026-04-01 09:00:00".to_string(),
+            updated_at: "2026-04-01 09:00:00".to_string(),
+            linked_story: None,
+        }
+    }
+
+    #[test]
+    fn tip_save_load_roundtrip_with_linked_story() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut tip = make_tip("tip-linked", "미확인", "연결된 제보");
+        tip.linked_story = Some("삼성전자 기사".to_string());
+        tip.anonymous = true;
+        tip.credibility = 5;
+        save_tip(&tip, dir.path()).unwrap();
+        let loaded = load_tip(&dir.path().join("tip-linked.json")).unwrap();
+        assert_eq!(loaded.linked_story, Some("삼성전자 기사".to_string()));
+        assert!(loaded.anonymous);
+        assert_eq!(loaded.credibility, 5);
+    }
+
+    #[test]
+    fn tip_load_nonexistent_returns_none() {
+        let result = load_tip(std::path::Path::new("/nonexistent/tip.json"));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn tip_load_invalid_json_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.json");
+        std::fs::write(&path, "not valid json").unwrap();
+        assert!(load_tip(&path).is_none());
+    }
+
+    #[test]
+    fn tip_status_change_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut tip = make_tip("tip-status", "미확인", "상태변경 테스트");
+        save_tip(&tip, dir.path()).unwrap();
+
+        // Update status
+        tip.status = "취재중".to_string();
+        tip.updated_at = "2026-04-01 12:00:00".to_string();
+        save_tip(&tip, dir.path()).unwrap();
+
+        let loaded = load_tip(&dir.path().join("tip-status.json")).unwrap();
+        assert_eq!(loaded.status, "취재중");
+        assert_eq!(loaded.updated_at, "2026-04-01 12:00:00");
+    }
+
+    #[test]
+    fn tip_all_statuses_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        for (i, status) in TIP_STATUSES.iter().enumerate() {
+            let tip = make_tip(&format!("tip-s{i}"), status, &format!("상태 {status}"));
+            save_tip(&tip, dir.path()).unwrap();
+        }
+        let tips = load_all_tips(dir.path());
+        assert_eq!(tips.len(), TIP_STATUSES.len());
+        let statuses: Vec<&str> = tips.iter().map(|t| t.status.as_str()).collect();
+        for s in TIP_STATUSES {
+            assert!(statuses.contains(s), "missing status: {s}");
+        }
+    }
+
+    #[test]
+    fn load_all_tips_sorted_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let tip_old = TipEntry {
+            created_at: "2026-03-01 09:00:00".to_string(),
+            ..make_tip("tip-old", "미확인", "오래된")
+        };
+        let tip_new = TipEntry {
+            created_at: "2026-04-01 09:00:00".to_string(),
+            ..make_tip("tip-new", "미확인", "최신")
+        };
+        save_tip(&tip_old, dir.path()).unwrap();
+        save_tip(&tip_new, dir.path()).unwrap();
+        let tips = load_all_tips(dir.path());
+        assert_eq!(tips[0].id, "tip-new");
+        assert_eq!(tips[1].id, "tip-old");
+    }
+
+    #[test]
+    fn load_all_tips_ignores_non_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("readme.txt"), "not a tip").unwrap();
+        save_tip(&make_tip("real-tip", "미확인", "진짜"), dir.path()).unwrap();
+        let tips = load_all_tips(dir.path());
+        assert_eq!(tips.len(), 1);
+        assert_eq!(tips[0].id, "real-tip");
+    }
+
+    #[test]
+    fn tip_search_by_content_keyword() {
+        let dir = tempfile::tempdir().unwrap();
+        save_tip(&make_tip("t1", "미확인", "반도체 수출 규제"), dir.path()).unwrap();
+        save_tip(&make_tip("t2", "미확인", "자동차 리콜 소식"), dir.path()).unwrap();
+        save_tip(&make_tip("t3", "취재중", "반도체 시장 전망"), dir.path()).unwrap();
+
+        let all = load_all_tips(dir.path());
+        let filtered: Vec<&TipEntry> = all
+            .iter()
+            .filter(|t| t.content.contains("반도체"))
+            .collect();
+        assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn tip_search_by_status() {
+        let dir = tempfile::tempdir().unwrap();
+        save_tip(&make_tip("t1", "미확인", "제보1"), dir.path()).unwrap();
+        save_tip(&make_tip("t2", "취재중", "제보2"), dir.path()).unwrap();
+        save_tip(&make_tip("t3", "기사화", "제보3"), dir.path()).unwrap();
+        save_tip(&make_tip("t4", "취재중", "제보4"), dir.path()).unwrap();
+
+        let all = load_all_tips(dir.path());
+        let investigating: Vec<&TipEntry> = all
+            .iter()
+            .filter(|t| t.status == "취재중")
+            .collect();
+        assert_eq!(investigating.len(), 2);
+    }
+
+    // ── Followup roundtrip ───────────────────────────────────────────────
+
+    #[test]
+    fn followup_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("followups.json");
+        let followups = vec![
+            Followup {
+                topic: "국정감사 후속보도".to_string(),
+                due: Some("2026-04-10".to_string()),
+                done: false,
+                created_at: "2026-04-01T09:00:00".to_string(),
+            },
+            Followup {
+                topic: "재판 결과 확인".to_string(),
+                due: None,
+                done: true,
+                created_at: "2026-03-25T14:00:00".to_string(),
+            },
+        ];
+        save_followups_to(&followups, &path);
+        let loaded = load_followups_from(&path);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].topic, "국정감사 후속보도");
+        assert_eq!(loaded[0].due, Some("2026-04-10".to_string()));
+        assert!(!loaded[0].done);
+        assert_eq!(loaded[1].topic, "재판 결과 확인");
+        assert!(loaded[1].due.is_none());
+        assert!(loaded[1].done);
+    }
+
+    #[test]
+    fn followup_load_nonexistent() {
+        let loaded = load_followups_from(std::path::Path::new("/nonexistent/followups.json"));
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn followup_load_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("followups.json");
+        std::fs::write(&path, "").unwrap();
+        let loaded = load_followups_from(&path);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn followup_load_invalid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("followups.json");
+        std::fs::write(&path, "NOT JSON").unwrap();
+        let loaded = load_followups_from(&path);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn followup_save_empty_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("followups.json");
+        save_followups_to(&[], &path);
+        let loaded = load_followups_from(&path);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn followup_overwrite_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("followups.json");
+        let v1 = vec![Followup {
+            topic: "원본".to_string(),
+            due: None,
+            done: false,
+            created_at: "2026-04-01T09:00:00".to_string(),
+        }];
+        save_followups_to(&v1, &path);
+        // Overwrite with different data
+        let v2 = vec![Followup {
+            topic: "수정됨".to_string(),
+            due: Some("2026-05-01".to_string()),
+            done: true,
+            created_at: "2026-04-01T10:00:00".to_string(),
+        }];
+        save_followups_to(&v2, &path);
+        let loaded = load_followups_from(&path);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].topic, "수정됨");
+        assert!(loaded[0].done);
+    }
+
+    // ── monitor history roundtrip ────────────────────────────────────────
+
+    #[test]
+    fn monitor_history_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let keyword = "반도체";
+        let history = vec![
+            serde_json::json!({
+                "date": "2026-04-01",
+                "headlines": ["뉴스A", "뉴스B"]
+            }),
+            serde_json::json!({
+                "date": "2026-03-31",
+                "headlines": ["뉴스C"]
+            }),
+        ];
+        save_monitor_history_to(keyword, &history, dir.path());
+        let loaded = load_monitor_history_from(keyword, dir.path());
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0]["date"], "2026-04-01");
+        let headlines = loaded[0]["headlines"].as_array().unwrap();
+        assert_eq!(headlines.len(), 2);
+    }
+
+    #[test]
+    fn monitor_history_load_nonexistent() {
+        let dir = tempfile::tempdir().unwrap();
+        let loaded = load_monitor_history_from("없는키워드", dir.path());
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn monitor_history_save_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        save_monitor_history_to("빈히스토리", &[], dir.path());
+        let loaded = load_monitor_history_from("빈히스토리", dir.path());
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn monitor_history_different_keywords_independent() {
+        let dir = tempfile::tempdir().unwrap();
+        let h1 = vec![serde_json::json!({"k": "반도체"})];
+        let h2 = vec![serde_json::json!({"k": "자동차"})];
+        save_monitor_history_to("반도체", &h1, dir.path());
+        save_monitor_history_to("자동차", &h2, dir.path());
+        let l1 = load_monitor_history_from("반도체", dir.path());
+        let l2 = load_monitor_history_from("자동차", dir.path());
+        assert_eq!(l1.len(), 1);
+        assert_eq!(l2.len(), 1);
+        assert_eq!(l1[0]["k"], "반도체");
+        assert_eq!(l2[0]["k"], "자동차");
+    }
+
+    #[test]
+    fn monitor_history_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let v1 = vec![serde_json::json!({"ver": 1})];
+        save_monitor_history_to("kw", &v1, dir.path());
+        let v2 = vec![serde_json::json!({"ver": 2}), serde_json::json!({"ver": 3})];
+        save_monitor_history_to("kw", &v2, dir.path());
+        let loaded = load_monitor_history_from("kw", dir.path());
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0]["ver"], 2);
+    }
+
+    // ── build_verify_prompt ──────────────────────────────────────────────
+
+    #[test]
+    fn build_verify_prompt_empty_claim_returns_none() {
+        assert!(build_verify_prompt("").is_none());
+    }
+
+    #[test]
+    fn build_verify_prompt_normal_claim() {
+        let prompt = build_verify_prompt("삼성전자 주가 상승").unwrap();
+        assert!(prompt.contains("삼성전자 주가 상승"));
+        assert!(prompt.contains("교차검증"));
+        assert!(prompt.contains("BIG Kinds"));
+        assert!(prompt.contains("DART"));
+    }
+
+    #[test]
+    fn build_verify_prompt_contains_data_sources() {
+        let prompt = build_verify_prompt("테스트 주장").unwrap();
+        assert!(prompt.contains("뉴스 검색"));
+        assert!(prompt.contains("BIG Kinds"));
+        assert!(prompt.contains("DART"));
+        assert!(prompt.contains("공공데이터"));
+    }
+
+    #[test]
+    fn build_verify_prompt_contains_report_format() {
+        let prompt = build_verify_prompt("테스트").unwrap();
+        assert!(prompt.contains("교차검증 보고서"));
+        assert!(prompt.contains("검증 대상"));
+        assert!(prompt.contains("소스별 검증 결과"));
+        assert!(prompt.contains("종합 판정"));
+        assert!(prompt.contains("✅ 확인됨"));
+    }
+
+    #[test]
+    fn build_verify_prompt_special_chars_in_claim() {
+        let prompt = build_verify_prompt("100조원 & <특수문자> \"인용\"").unwrap();
+        assert!(prompt.contains("100조원 & <특수문자> \"인용\""));
+    }
+
+    // ── parse_timestamp_secs ─────────────────────────────────────────────
+
+    #[test]
+    fn parse_timestamp_secs_iso_format() {
+        let secs = parse_timestamp_secs("2026-04-01T09:30:00");
+        assert!(secs.is_some());
+        let val = secs.unwrap();
+        assert!(val > 0);
+    }
+
+    #[test]
+    fn parse_timestamp_secs_space_format() {
+        let secs = parse_timestamp_secs("2026-04-01 09:30:00");
+        assert!(secs.is_some());
+    }
+
+    #[test]
+    fn parse_timestamp_secs_date_only() {
+        let secs = parse_timestamp_secs("2026-04-01");
+        assert!(secs.is_some());
+        // hour/min/sec default to 0
+        let with_time = parse_timestamp_secs("2026-04-01T00:00:00").unwrap();
+        assert_eq!(secs.unwrap(), with_time);
+    }
+
+    #[test]
+    fn parse_timestamp_secs_invalid() {
+        assert!(parse_timestamp_secs("").is_none());
+        assert!(parse_timestamp_secs("not-a-time").is_none());
+    }
+
+    #[test]
+    fn parse_timestamp_secs_ordering() {
+        let earlier = parse_timestamp_secs("2026-04-01T09:00:00").unwrap();
+        let later = parse_timestamp_secs("2026-04-01T10:00:00").unwrap();
+        assert!(later > earlier);
+    }
+
+    // ── parse_follow_add_args ────────────────────────────────────────────
+
+    #[test]
+    fn parse_follow_add_args_topic_only() {
+        let (topic, due) = parse_follow_add_args("국정감사 후속");
+        assert_eq!(topic, "국정감사 후속");
+        assert!(due.is_none());
+    }
+
+    #[test]
+    fn parse_follow_add_args_with_due() {
+        let (topic, due) = parse_follow_add_args("재판 결과 --due 2026-04-15");
+        assert_eq!(topic, "재판 결과");
+        assert_eq!(due, Some("2026-04-15".to_string()));
+    }
+
+    #[test]
+    fn parse_follow_add_args_empty_due() {
+        let (topic, due) = parse_follow_add_args("주제 --due");
+        assert_eq!(topic, "주제");
+        assert!(due.is_none());
+    }
+
+    #[test]
+    fn parse_follow_add_args_empty_input() {
+        let (topic, due) = parse_follow_add_args("");
+        assert_eq!(topic, "");
+        assert!(due.is_none());
+    }
 }
