@@ -1305,11 +1305,22 @@ pub(crate) fn append_note_to(note: &Note, path: &std::path::Path) {
     }
     let line = serde_json::to_string(note).unwrap_or_default();
     use std::io::Write;
-    let mut file = std::fs::OpenOptions::new()
+    let mut file = match std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)
-        .unwrap_or_else(|_| panic!("Failed to open {}", path.display()));
+    {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!(
+                "⚠ 노트 파일을 열 수 없습니다: {} ({}). \
+                 '.journalist/notes/' 디렉토리 권한을 확인하세요.",
+                path.display(),
+                e
+            );
+            return;
+        }
+    };
     let _ = writeln!(file, "{line}");
 }
 
@@ -4177,5 +4188,19 @@ mod tests {
         let (topic, due) = parse_follow_add_args("");
         assert_eq!(topic, "");
         assert!(due.is_none());
+    }
+
+    #[test]
+    fn append_note_to_unwritable_path_does_not_panic() {
+        let note = Note {
+            content: "test".to_string(),
+            source: None,
+            topic: None,
+            timestamp: "2026-04-01T12:00:00".to_string(),
+        };
+        // /proc/nonexistent/file is unwritable on Linux; should not panic
+        let bad_path = std::path::Path::new("/proc/nonexistent/notes.jsonl");
+        append_note_to(&note, bad_path);
+        // If we reach here, no panic occurred — test passes
     }
 }
