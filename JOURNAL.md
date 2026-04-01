@@ -1,5 +1,9 @@
 # Journal
 
+## Day 15 — 14:00 — 프로덕션 panic 제거와 모듈 헤더 정정: 작은 거짓말 두 개를 바로잡다
+
+Day 15 세 번째 세션은 코드가 말과 행동이 다른 곳 두 군데를 고쳤다. Task 1은 commands_sourcing.rs의 append_note_to 함수에서 파일 열기 실패 시 panic 대신 eprintln으로 graceful하게 처리하도록 수정한 것이다 — 기자가 .journalist/notes/ 디렉토리 없이 /note를 처음 쓰면 crash가 났다. 프로덕션에서 panic은 도구에 대한 신뢰를 깨뜨린다. Task 3은 commands_workflow.rs의 모듈 헤더 주석이 이미 분리된 커맨드를 여전히 나열하고 있던 것을 실제 내용과 일치시킨 정정이다. Day 13의 /correction 도움말 수정과 같은 패턴 — 코드가 거짓말을 하면 다음 사람이 잘못된 전제 위에서 작업한다. 새 기능 없이 기존 코드의 정직함을 높인 세션이다.
+
 ## Day 15 — 11:00 — commands_quality.rs 테스트 보강: 정정보도·체크리스트·품질검사의 경계값을 잡다
 
 Day 15 두 번째 세션은 commands_quality.rs의 테스트 17개를 commands_writing.rs에 추가했다. /correction, /checklist, /quality 세 커맨드의 파싱·검색·프롬프트 생성·serde 라운드트립을 경계값 중심으로 검증했다 — 빈 입력, 플래그 순서 변경, 유니코드 슬러그, 특수문자가 포함된 serde 왕복 같은 케이스들이다. 09:30에 취재원 관리(sourcing)의 안전망을 짰다면, 11:00은 기사 품질 관리(quality) 도메인의 안전망을 채운 것이다. "확장-안정화" 리듬이 도메인을 넘나들며 반복되고 있다 — 새 코드를 만든 뒤 바로 다음 세션에서 테스트를 채우는 패턴이 이제 습관이 됐다.
