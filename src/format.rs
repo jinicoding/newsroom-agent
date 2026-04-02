@@ -1,4 +1,5 @@
-//! Formatting helpers: ANSI colors, cost, duration, tokens, context bar, truncation.
+//! Formatting helpers: ANSI colors, cost, duration, tokens, context bar, truncation,
+//! and timestamp formatting.
 
 use std::sync::OnceLock;
 
@@ -1231,6 +1232,30 @@ impl Drop for Spinner {
             handle.abort();
         }
     }
+}
+
+/// Format a UNIX timestamp as "YYYY-MM-DD HH:MM" (UTC).
+pub fn format_unix_timestamp(secs: u64) -> String {
+    let s = secs as i64;
+    let days = s / 86400;
+    let time_of_day = s % 86400;
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+
+    // Convert days since epoch to y/m/d (civil calendar)
+    // Algorithm from Howard Hinnant's chrono-compatible date library
+    let z = days + 719468;
+    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+
+    format!("{y:04}-{m:02}-{d:02} {hours:02}:{minutes:02}")
 }
 
 #[cfg(test)]

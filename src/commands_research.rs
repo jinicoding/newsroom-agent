@@ -7,7 +7,7 @@
 use crate::commands::auto_compact_if_needed;
 use crate::commands_project::*;
 use crate::commands_workflow::{extract_story_arg, link_file_to_story, STORIES_DIR};
-use crate::commands_writing::format_unix_timestamp;
+use crate::format::format_unix_timestamp;
 use crate::format::*;
 use crate::prompt::*;
 

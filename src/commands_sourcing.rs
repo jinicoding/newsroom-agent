@@ -9,7 +9,7 @@ use crate::commands_research::{
     ensure_sources_dir_at, load_sources, news_clip_path, save_clip, strip_html_tags, NewsItem,
 };
 use crate::commands_workflow::today_date_string;
-use crate::commands_writing::format_unix_timestamp;
+use crate::format::format_unix_timestamp;
 use crate::format::*;
 use crate::prompt::*;
 

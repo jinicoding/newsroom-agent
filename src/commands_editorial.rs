@@ -2,7 +2,7 @@
 //! Commands: /desk, /collaborate, /coverage
 //! Extracted from commands_workflow.rs — organizational commands distinct from content-production workflow.
 
-use crate::commands_writing::format_unix_timestamp;
+use crate::format::format_unix_timestamp;
 use crate::format::*;
 
 // ── /desk ────────────────────────────────────────────────────────────────

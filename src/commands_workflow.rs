@@ -10,7 +10,7 @@ use crate::commands_research::{
     load_followups_from, load_notes_from, load_sources_from, notes_file_for_date,
     followups_path, ContactLog, Followup, RESEARCH_DIR, SOURCES_FILE,
 };
-use crate::commands_writing::format_unix_timestamp;
+use crate::format::format_unix_timestamp;
 use crate::format::*;
 use crate::prompt::*;
 
@@ -5919,7 +5919,7 @@ pub fn handoff_file_path() -> std::path::PathBuf {
 
 /// Build the file path for a handoff document from epoch seconds (testable).
 pub fn handoff_file_path_from_epoch(epoch_secs: u64) -> std::path::PathBuf {
-    let ts = crate::commands_writing::format_unix_timestamp(epoch_secs);
+    let ts = format_unix_timestamp(epoch_secs);
     // ts is like "2026-03-30 11:00:00"
     let sanitized = ts
         .replace(' ', "_")
