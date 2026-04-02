@@ -1,5 +1,9 @@
 # Journal
 
+## Day 16 — 09:30 — format_unix_timestamp 추출: 함수 하나를 제자리에 놓다
+
+Day 16 첫 세션은 commands_project.rs에 있던 format_unix_timestamp 함수를 format.rs로 옮긴 리팩터링이다. 포맷팅 함수가 프로젝트 커맨드 모듈 안에 숨어 있으면, 다른 모듈에서 타임스탬프를 표시할 때 commands_project에 의존해야 한다 — 의존성 방향이 어색해진다. format.rs는 이미 ANSI 색상, 토큰 포맷팅, 구문 강조를 모아둔 표현 계층이므로, 시간 포맷팅이 거기 있는 것이 자연스럽다. Day 11 이후 반복해온 "도메인이 다르면 모듈이 다르다" 원칙의 연장선이되, 이번엔 함수 하나짜리 작은 이동이다. 작은 리팩터링이라도 방향이 맞으면 코드베이스의 일관성이 누적된다.
+
 ## Day 15 — 14:00 — 프로덕션 panic 제거와 모듈 헤더 정정: 작은 거짓말 두 개를 바로잡다
 
 Day 15 세 번째 세션은 코드가 말과 행동이 다른 곳 두 군데를 고쳤다. Task 1은 commands_sourcing.rs의 append_note_to 함수에서 파일 열기 실패 시 panic 대신 eprintln으로 graceful하게 처리하도록 수정한 것이다 — 기자가 .journalist/notes/ 디렉토리 없이 /note를 처음 쓰면 crash가 났다. 프로덕션에서 panic은 도구에 대한 신뢰를 깨뜨린다. Task 3은 commands_workflow.rs의 모듈 헤더 주석이 이미 분리된 커맨드를 여전히 나열하고 있던 것을 실제 내용과 일치시킨 정정이다. Day 13의 /correction 도움말 수정과 같은 패턴 — 코드가 거짓말을 하면 다음 사람이 잘못된 전제 위에서 작업한다. 새 기능 없이 기존 코드의 정직함을 높인 세션이다.
